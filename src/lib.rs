@@ -7,7 +7,7 @@ use subtle::{self, ConditionallySelectable, ConstantTimeEq, ConstantTimeGreater}
 use zeroize;
 
 // Arithmetic on u32 is assumed to be constant-time.
-type LimbType = u32;
+type LimbType = u64;
 const LIMB_BITS: u32 = LimbType::BITS;
 const HALF_LIMB_BITS: u32 = LIMB_BITS / 2;
 const HALF_LIMB_MASK: LimbType = (1 << HALF_LIMB_BITS) - 1;
@@ -56,11 +56,11 @@ fn ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
 fn test_ct_add_l_l() {
     assert_eq!(ct_add_l_l(0, 0), (0, 0));
     assert_eq!(ct_add_l_l(1, 0), (0, 1));
-    assert_eq!(ct_add_l_l(0xffff_fffeu32, 0x0000_0001u32), (0, 0xffff_ffffu32));
-    assert_eq!(ct_add_l_l(0xffff_ffffu32, 0x0000_0001u32), (1, 0));
-    assert_eq!(ct_add_l_l(0x8000_0000u32, 0x8000_0000u32), (1, 0));
-    assert_eq!(ct_add_l_l(0xffff_ffffu32, 0x8000_0000u32), (1, 0x7fff_ffffu32));
-    assert_eq!(ct_add_l_l(0xffff_ffffu32, 0xffff_ffffu32), (1, 0xffff_fffeu32));
+    assert_eq!(ct_add_l_l(!0 - 1, 1), (0, !0));
+    assert_eq!(ct_add_l_l(!0, 1), (1, 0));
+    assert_eq!(ct_add_l_l(1 << (LIMB_BITS - 1), 1 << (LIMB_BITS - 1)), (1, 0));
+    assert_eq!(ct_add_l_l(!0, 1 << (LIMB_BITS - 1)), (1, (1 << (LIMB_BITS - 1)) - 1));
+    assert_eq!(ct_add_l_l(!0, !0), (1, !0 - 1));
 }
 
 fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
@@ -75,10 +75,10 @@ fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
 fn test_ct_sub_l_l() {
     assert_eq!(ct_sub_l_l(0, 0), (0, 0));
     assert_eq!(ct_sub_l_l(1, 0), (0, 1));
-    assert_eq!(ct_sub_l_l(0, 1), (1, 0xffff_ffffu32));
-    assert_eq!(ct_sub_l_l(0x8000_0000u32, 0x8000_0000u32), (0, 0));
-    assert_eq!(ct_sub_l_l(0, 0x8000_0000u32), (1, 0x8000_0000u32));
-    assert_eq!(ct_sub_l_l(0x8000_0000u32, 0x8000_0001u32), (1, 0xffff_ffffu32));
+    assert_eq!(ct_sub_l_l(0, 1), (1, !0));
+    assert_eq!(ct_sub_l_l(1 << (LIMB_BITS - 1), 1 << (LIMB_BITS - 1)), (0, 0));
+    assert_eq!(ct_sub_l_l(0, 1 << (LIMB_BITS - 1)), (1, 1 << (LIMB_BITS - 1)));
+    assert_eq!(ct_sub_l_l(1 << (LIMB_BITS - 1), ((1 << (LIMB_BITS - 1)) + 1)), (1, !0));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -273,46 +273,46 @@ fn test_div_dl_l() {
     mul_div_cmp(
         DoubleLimb::new(0, 0),
         0,
-        0xffff_ffffu32
+        !0
     );
 
     mul_div_cmp(
         DoubleLimb::new(0, 0),
-        0xffff_fffeu32,
-        0xffff_ffffu32,
+        !0 - 1,
+        !0,
     );
 
 
     mul_div_cmp(
-        DoubleLimb::new(0x1, 0xffff_ffffu32),
+        DoubleLimb::new(0x1, !0),
         0,
-        0x8000_0000u32,
+        1 << (LIMB_BITS - 1),
     );
 
     mul_div_cmp(
-        DoubleLimb::new(0x1, 0xffff_ffffu32),
-        0x7fff_ffffu32,
-        0x8000_0000u32,
+        DoubleLimb::new(0x1, !0),
+        (1 << (LIMB_BITS - 1)) - 1,
+        1 << (LIMB_BITS - 1),
     );
 
 
     mul_div_cmp(
         DoubleLimb::new(0x1, 0x1),
         0,
-        0xffff_ffff
+        !0
     );
 
 
     mul_div_cmp(
         DoubleLimb::new(0, 0x1),
         0,
-        0xffff_fffe
+        !0 - 1
     );
 
     mul_div_cmp(
         DoubleLimb::new(0, 0x1),
         1,
-        0xffff_fffe
+        !0 - 1
     );
 
 
