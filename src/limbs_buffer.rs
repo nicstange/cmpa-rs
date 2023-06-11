@@ -5,6 +5,8 @@
 //! This helper module provides a couple of utilities for accessing these byte buffers in units of
 //! [`LimbType`].
 
+use core::convert;
+
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize as _;
 
@@ -331,10 +333,9 @@ fn test_mp_be_store_l() {
 }
 
 
-/// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
+/// Internal data structure describing a single one of a [`CompositeLimbsBufferImpl`]'s constituting
 /// segments.
-///
-struct CompositeLimbsBufferSegment<'a> {
+struct CompositeLimbsBufferSegment<ST: convert::AsRef<[u8]>> {
     /// The total number of limbs whose least significant bytes are held in this or less significant
     /// segments each (note that a limb may span multiple segments).
     end: usize,
@@ -345,40 +346,24 @@ struct CompositeLimbsBufferSegment<'a> {
     /// whose least significant byte is found in this segment. That is, the slice's last byte
     /// (in memory order) corresponds to the least significant byte of the least significant limb.
     ///
-    segment: &'a mut [u8],
+    segment: ST,
     /// Continuation bytes of this or preceeding, less significant segment's most significant limb.
     ///
     /// A segment's most significant limb might be covered only partially by it and extend across
     /// one or more subsequent, more significant segments. In this case its remaining, more
     /// significant continutation bytes are collected from this and the subsequent, more significant
     /// segments' `high_next_partial` slices.
-    high_next_partial: &'a mut [u8],
+    high_next_partial: ST,
 }
 
-/// Access multiprecision integers composed of multiple virtually concatenated big-endian byte
-/// buffers in units of [`LimbType`].
-///
-/// A [`CompositeLimbsBuffer`] provides a composed multiprecision integer big-endian byte buffer
-/// view on `N_SEGMENTS` virtually concatenated big-endian byte slices. Primitives are provided
-/// alongside for accessing the composed integer in units of [`LimbType`].
-///
-/// Certain applications need to truncate the result of some multiprecision integer arithmetic
-/// operation result and dismiss the rest. An example would be key generation modulo some large
-/// integer by the method of oversampling. A `CompositeLimbsBuffer` helps such applications to
-/// reduce the memory footprint of the truncation operation: instead of allocating a smaller
-/// destination buffer and copying the to be retained parts over from the result, the arithmetic
-/// primitive can, if supported, operate directly on a multiprecision integer big-endian byte buffer
-/// composed of several independent smaller slices by virtual concatenation. Assuming the individual
-/// segments' slice lengths align properly with the needed and unneeded parts of the result, the
-/// latter ones can get truncated away trivially when done by simply dismissing the corresponding
-/// underlying buffers.
-///
-pub struct  CompositeLimbsBuffer<'a, const N_SEGMENTS: usize> {
+/// The implementation underlying [`CompositeLimbsMutBuffer`] and [`CompositeLimbsBuffer`], which
+/// differ only in mutability.
+struct CompositeLimbsBufferImpl<ST: convert::AsRef<[u8]>, const N_SEGMENTS: usize> {
     /// The composed view's individual segments, ordered from least to most significant.
-    segments: [CompositeLimbsBufferSegment<'a>; N_SEGMENTS]
+    segments: [CompositeLimbsBufferSegment<ST>; N_SEGMENTS]
 }
 
-impl<'a, const N_SEGMENTS: usize>  CompositeLimbsBuffer<'a, N_SEGMENTS> {
+impl<ST: convert::AsRef<[u8]>, const N_SEGMENTS: usize> CompositeLimbsBufferImpl<ST, N_SEGMENTS> {
     /// Construct a `CompositeLimbsBuffer` view from the individual big-endian byte buffer segments.
     ///
     /// # Arguments
@@ -388,33 +373,37 @@ impl<'a, const N_SEGMENTS: usize>  CompositeLimbsBuffer<'a, N_SEGMENTS> {
     ///                to most significant relative with respect to their position within the
     ///                resulting view.
     ///
-    pub fn new(segments: [&'a mut [u8]; N_SEGMENTS]) -> Self {
-        let mut segments = <[&'a mut [u8]; N_SEGMENTS] as IntoIterator>::into_iter(segments);
-        let mut segments: [Option<&'a mut [u8]>; N_SEGMENTS]
+    fn new<SA>(segments: [ST; N_SEGMENTS], split_at: SA) -> Self
+    where SA: Fn(ST, usize) -> (ST, ST)
+    {
+        let mut segments = <[ST; N_SEGMENTS] as IntoIterator>::into_iter(segments);
+        let mut segments: [Option<ST>; N_SEGMENTS]
             = core::array::from_fn(|_| segments.next());
         let mut n_bytes_total = 0;
         let mut create_segment = |i: usize| {
             let segment = segments[i].take().unwrap();
-            n_bytes_total += segment.len();
+            n_bytes_total += <ST as convert::AsRef<[u8]>>::as_ref(&segment).len();
 
             let n_high_partial = n_bytes_total % LIMB_BYTES;
             let (segment, high_next_partial) = if i + 1 != segments.len() && n_high_partial != 0 {
                 let next_segment = segments[i + 1].take().unwrap();
-                let n_from_next = (LIMB_BYTES - n_high_partial).min(next_segment.len());
-                let (next_segment, high_next_partial) = next_segment.split_at_mut(next_segment.len() - n_from_next);
+                let next_segment_len = <ST as convert::AsRef<[u8]>>::as_ref(&next_segment).len();
+                let n_from_next = (LIMB_BYTES - n_high_partial).min(next_segment_len);
+                let (next_segment, high_next_partial) = split_at(next_segment, next_segment_len - n_from_next);
                 segments[i + 1] = Some(next_segment);
                 (segment, high_next_partial)
             } else {
-                let (high_next_partial, segment) = segment.split_at_mut(0);
+                let (high_next_partial, segment) = split_at(segment, 0);
                 (segment, high_next_partial)
             };
 
-            n_bytes_total += high_next_partial.len();
+            let high_next_partial_len = <ST as convert::AsRef<[u8]>>::as_ref(&high_next_partial).len();
+            n_bytes_total += high_next_partial_len;
             let end = mp_ct_nlimbs(n_bytes_total);
             CompositeLimbsBufferSegment { end, segment, high_next_partial }
         };
 
-        let segments: [CompositeLimbsBufferSegment; N_SEGMENTS] = core::array::from_fn(&mut create_segment);
+        let segments: [CompositeLimbsBufferSegment<ST>; N_SEGMENTS] = core::array::from_fn(&mut create_segment);
         Self { segments }
     }
 
@@ -452,27 +441,125 @@ impl<'a, const N_SEGMENTS: usize>  CompositeLimbsBuffer<'a, N_SEGMENTS> {
     ///
     /// * `i` - The index of the limb to load, counted from least to most significant.
     ///
-    pub fn load(&self, i: usize) -> LimbType {
+    fn load(&self, i: usize) -> LimbType {
         let (segment_index, segment_offset) = self.limb_index_to_segment(i);
         let segment = &self.segments[segment_index];
+        let segment_slice = <ST as convert::AsRef<[u8]>>::as_ref(&segment.segment);
         if i != segment.end - 1 {
-            mp_be_load_l_full(segment.segment, i - segment_offset)
-        } else if segment_index + 1 == N_SEGMENTS || segment.segment.len() % LIMB_BYTES == 0 {
+            mp_be_load_l_full(segment_slice, i - segment_offset)
+        } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
             // The last (highest) segment's most significant bytes don't necessarily occupy a full
             // limb.
-            mp_be_load_l(segment.segment, i - segment_offset)
+            mp_be_load_l(segment_slice, i - segment_offset)
         } else {
-            let mut npartial = segment.segment.len() % LIMB_BYTES;
-            let mut value = _mp_be_load_l_high_partial(segment.segment, npartial);
+            let mut npartial = segment_slice.len() % LIMB_BYTES;
+            let mut value = _mp_be_load_l_high_partial(segment_slice, npartial);
             let mut segment_index = segment_index;
             while npartial != LIMB_BYTES && segment_index < self.segments.len() {
                 let partial = &self.segments[segment_index].high_next_partial;
+                let partial = <ST as convert::AsRef<[u8]>>::as_ref(partial);
                 value |= _mp_be_load_l_high_partial(partial, partial.len()) << (npartial * 8);
                 npartial += partial.len();
                 segment_index += 1;
             }
             value
         }
+    }
+}
+
+impl<ST: convert::AsRef<[u8]> + convert::AsMut<[u8]>, const N_SEGMENTS: usize>
+    CompositeLimbsBufferImpl<ST, N_SEGMENTS> {
+    /// Update a limb in the composed multiprecision integer big-endian byte buffer.
+    ///
+    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
+    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
+    /// is concerned.
+    ///
+    /// * `i` - The index of the limb to update, counted from least to most significant.
+    /// * `value` - The value to store in the i'th limb.
+    ///
+    fn store(&mut self, i: usize, value: LimbType) {
+        let (segment_index, segment_offset) = self.limb_index_to_segment(i);
+        let segment = &mut self.segments[segment_index];
+        let segment_slice = <ST as convert::AsMut<[u8]>>::as_mut(&mut segment.segment);
+        if i != segment.end - 1 {
+            mp_be_store_l_full(segment_slice, i - segment_offset, value);
+        } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
+            // The last (highest) part's most significant bytes don't necessarily occupy a full
+            // limb.
+            mp_be_store_l(segment_slice, i - segment_offset, value)
+        } else {
+            let mut value = value;
+            let mut npartial = segment_slice.len() % LIMB_BYTES;
+            _mp_be_store_l_high_partial(segment_slice, npartial, value);
+            value >>= npartial * 8;
+            let mut segment_index = segment_index;
+            while npartial != LIMB_BYTES && segment_index < self.segments.len() {
+                let partial = &mut self.segments[segment_index].high_next_partial;
+                let partial = <ST as convert::AsMut<[u8]>>::as_mut(partial);
+                _mp_be_store_l_high_partial(partial, partial.len(), value);
+                value >>= partial.len() * 8;
+                npartial += partial.len();
+                segment_index += 1;
+            }
+            debug_assert!(value == 0);
+        }
+    }
+}
+
+/// Mutably access multiprecision integers composed of multiple virtually concatenated big-endian
+/// byte buffers in units of [`LimbType`].
+///
+/// A [`CompositeLimbsMutBuffer`] provides a composed multiprecision integer big-endian byte buffer
+/// view on `N_SEGMENTS` virtually concatenated big-endian byte slices. Primitives are provided
+/// alongside for accessing the composed integer in units of [`LimbType`].
+///
+/// Certain applications need to truncate the result of some multiprecision integer arithmetic
+/// operation result and dismiss the rest. An example would be key generation modulo some large
+/// integer by the method of oversampling. A `CompositeLimbsMutBuffer` helps such applications to
+/// reduce the memory footprint of the truncation operation: instead of allocating a smaller
+/// destination buffer and copying the to be retained parts over from the result, the arithmetic
+/// primitive can, if supported, operate directly on a multiprecision integer big-endian byte buffer
+/// composed of several independent smaller slices by virtual concatenation. Assuming the individual
+/// segments' slice lengths align properly with the needed and unneeded parts of the result, the
+/// latter ones can get truncated away trivially when done by simply dismissing the corresponding
+/// underlying buffers.
+///
+/// See also [`CompositeLimbsBuffer`] for a non-mutable variant.
+///
+pub struct CompositeLimbsMutBuffer<'a, const N_SEGMENTS: usize> {
+    imp: CompositeLimbsBufferImpl<&'a mut [u8], N_SEGMENTS>
+}
+
+impl<'a, const N_SEGMENTS: usize> CompositeLimbsMutBuffer<'a, N_SEGMENTS> {
+    /// Construct a `CompositeLimbsMutBuffer` view from the individual big-endian byte buffer segments.
+    ///
+    /// # Arguments
+    ///
+    /// * `segments` - An array of `N_SEGMENTS` byte slices to compose the multiprecision integer
+    ///                big-endian byte buffer view from by virtual concatenation. Ordered from least
+    ///                to most significant relative with respect to their position within the
+    ///                resulting view.
+    ///
+    pub fn new(segments: [&'a mut [u8]; N_SEGMENTS]) -> Self {
+        Self {
+            imp: CompositeLimbsBufferImpl::<&'a mut [u8], N_SEGMENTS>::new(
+                segments,
+                <[u8]>::split_at_mut
+            )
+        }
+    }
+
+    /// Load a limb from the composed multiprecision integer big-endian byte buffer.
+    ///
+    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
+    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
+    /// is concerned.
+    ///
+    /// * `i` - The index of the limb to load, counted from least to most significant.
+    ///
+    pub fn load(&self, i: usize) -> LimbType {
+        self.imp.load(i)
     }
 
     /// Update a limb in the composed multiprecision integer big-endian byte buffer.
@@ -485,31 +572,55 @@ impl<'a, const N_SEGMENTS: usize>  CompositeLimbsBuffer<'a, N_SEGMENTS> {
     /// * `value` - The value to store in the i'th limb.
     ///
     pub fn store(&mut self, i: usize, value: LimbType) {
-        let (segment_index, segment_offset) = self.limb_index_to_segment(i);
-        let segment = &mut self.segments[segment_index];
-        if i != segment.end - 1 {
-            mp_be_store_l_full(segment.segment, i - segment_offset, value);
-        } else if segment_index + 1 == N_SEGMENTS || segment.segment.len() % LIMB_BYTES == 0 {
-            // The last (highest) part's most significant bytes don't necessarily occupy a full
-            // limb.
-            mp_be_store_l(segment.segment, i - segment_offset, value)
-        } else {
-            let mut value = value;
-            let mut npartial = segment.segment.len() % LIMB_BYTES;
-            _mp_be_store_l_high_partial(segment.segment, npartial, value);
-            value >>= npartial * 8;
-            let mut segment_index = segment_index;
-            while npartial != LIMB_BYTES && segment_index < self.segments.len() {
-                let partial = &mut self.segments[segment_index].high_next_partial;
-                _mp_be_store_l_high_partial(partial, partial.len(), value);
-                value >>= partial.len() * 8;
-                npartial += partial.len();
-                segment_index += 1;
-            }
-            debug_assert!(value == 0);
-        }
+        self.imp.store(i, value)
     }
 }
+
+/// Access multiprecision integers composed of multiple virtually concatenated big-endian
+/// byte buffers in units of [`LimbType`].
+///
+/// A [`CompositeLimbsBuffer`] provides a composed multiprecision integer big-endian byte buffer
+/// view on `N_SEGMENTS` virtually concatenated big-endian byte slices. Primitives are provided
+/// alongside for accessing the composed integer in units of [`LimbType`].
+///
+/// Refer to [`CompositeLimbsMutBuffer`] for more details.
+///
+pub struct CompositeLimbsBuffer<'a, const N_SEGMENTS: usize> {
+    imp: CompositeLimbsBufferImpl<&'a [u8], N_SEGMENTS>
+}
+
+impl<'a, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, N_SEGMENTS> {
+    /// Construct a `CompositeLimbsMutBuffer` view from the individual big-endian byte buffer segments.
+    ///
+    /// # Arguments
+    ///
+    /// * `segments` - An array of `N_SEGMENTS` byte slices to compose the multiprecision integer
+    ///                big-endian byte buffer view from by virtual concatenation. Ordered from least
+    ///                to most significant relative with respect to their position within the
+    ///                resulting view.
+    ///
+    pub fn new(segments: [&'a [u8]; N_SEGMENTS]) -> Self {
+        Self {
+            imp: CompositeLimbsBufferImpl::<&'a [u8], N_SEGMENTS>::new(
+                segments,
+                <[u8]>::split_at
+            )
+        }
+    }
+
+    /// Load a limb from the composed multiprecision integer big-endian byte buffer.
+    ///
+    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
+    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
+    /// is concerned.
+    ///
+    /// * `i` - The index of the limb to load, counted from least to most significant.
+    ///
+    pub fn load(&self, i: usize) -> LimbType {
+        self.imp.load(i)
+    }
+}
+
 
 #[test]
 fn test_composite_limbs_buffer_load() {
@@ -537,7 +648,7 @@ fn test_composite_limbs_buffer_load() {
     // 0x00 .. 00 0x0a
     buf2[0] = 0xa;
 
-    let limbs =  CompositeLimbsBuffer::new([buf0.as_mut_slice(), buf1.as_mut_slice(), buf2.as_mut_slice()]);
+    let limbs =  CompositeLimbsMutBuffer::new([buf0.as_mut_slice(), buf1.as_mut_slice(), buf2.as_mut_slice()]);
 
     let l0 = limbs.load(0);
     assert_eq!(l0, 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8);
@@ -556,7 +667,7 @@ fn test_composite_limbs_buffer_store() {
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let mut buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
-    let mut limbs =  CompositeLimbsBuffer::new([buf0.as_mut_slice(), buf1.as_mut_slice(), buf2.as_mut_slice()]);
+    let mut limbs =  CompositeLimbsMutBuffer::new([buf0.as_mut_slice(), buf1.as_mut_slice(), buf2.as_mut_slice()]);
 
     let l0 = 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8;
     let l1 = 0x0504 << LIMB_BITS - 16 | 0x3 << LIMB_BITS / 2 - 8;

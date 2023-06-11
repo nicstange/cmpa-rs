@@ -5,7 +5,7 @@ use crate::limbs_buffer::mp_be_store_l;
 
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb,
                   ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_sub_l_l, ct_mul_l_l, ct_div_dl_l, CtDivDlLNormalizedDivisor};
-use super::limbs_buffer::{CompositeLimbsBuffer, mp_be_load_l, mp_be_load_l_full, mp_ct_nlimbs};
+use super::limbs_buffer::{CompositeLimbsMutBuffer, mp_be_load_l, mp_be_load_l_full, mp_ct_nlimbs};
 use super::zeroize::Zeroizing;
 
 #[derive(Debug)]
@@ -74,7 +74,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
     };
     let mut _u_pad: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let u_pad = &mut _u_pad[0..LIMB_BYTES + u_pad_len];
-    let mut u_parts =  CompositeLimbsBuffer::new([u_l, u_h, u_pad]);
+    let mut u_parts =  CompositeLimbsMutBuffer::new([u_l, u_h, u_pad]);
 
     // Normalize divisor's high limb. Calculate 2^LIMB_BITS / (v_high + 1)
     let scaling = {
@@ -124,7 +124,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
     // The extra high limb in u_h_pad, initialized to zero, would have absorbed the last carry.
     debug_assert_eq!(carry, 0);
 
-    let u_sub_scaled_qv_at = |u_parts: &mut  CompositeLimbsBuffer<'_, 3>, j: usize, q: LimbType| -> LimbType {
+    let u_sub_scaled_qv_at = |u_parts: &mut  CompositeLimbsMutBuffer<'_, 3>, j: usize, q: LimbType| -> LimbType {
         let mut scaled_v_carry = 0;
         let mut qv_carry = 0;
         let mut u_borrow = 0;
@@ -159,7 +159,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
         u_borrow
     };
 
-    let u_cond_add_scaled_v_at = |u_parts: &mut  CompositeLimbsBuffer<'_, 3>, j: usize, cond: subtle::Choice| -> LimbType {
+    let u_cond_add_scaled_v_at = |u_parts: &mut  CompositeLimbsMutBuffer<'_, 3>, j: usize, cond: subtle::Choice| -> LimbType {
         let mut scaled_v_carry = 0;
         let mut u_carry = 0;
         for i in 0..v_nlimbs {
