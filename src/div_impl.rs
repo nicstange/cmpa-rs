@@ -1,11 +1,11 @@
 use core::ops::Deref as _;
 use subtle::{self, ConditionallySelectable as _};
 use crate::limb::ct_l_to_subtle_choice;
-use crate::limbs_buffer::mp_be_store_l;
 
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb,
-                  ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_sub_l_l, ct_mul_l_l, ct_div_dl_l, CtDivDlLNormalizedDivisor};
-use super::limbs_buffer::{CompositeLimbsMutBuffer, mp_be_load_l, mp_be_load_l_full, mp_ct_nlimbs};
+                  ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_sub_l_l, ct_mul_l_l, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l};
+use super::limbs_buffer::{MPEndianess, CompositeLimbsMutBuffer, mp_ct_nlimbs,
+                          mp_find_last_set_byte_mp, MPBigEndianOrder, MPLittleEndianOrder};
 use super::zeroize::Zeroizing;
 
 #[derive(Debug)]
@@ -14,33 +14,17 @@ pub enum CtMpDivisionError {
     InsufficientQuotientSpace,
 }
 
-pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Option<&mut [u8]>) -> Result<(), CtMpDivisionError> {
+pub fn mp_ct_div_mp_mp<UE: MPEndianess, VE: MPEndianess, QE: MPEndianess>(
+    u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Option<&mut [u8]>
+) -> Result<(), CtMpDivisionError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer Programming", vol 2.
     //
     // Find the index of the highest set limb in v. For divisors, constant time evaluation doesn't
     // really matter, probably. Also, the long division algorithm's runtime depends highly on the
     // divisor's length anyway.
-    let mut v_nlimbs = mp_ct_nlimbs(v.len());
-    while v_nlimbs > 0 {
-        let limb = mp_be_load_l(v, v_nlimbs - 1);
-        if limb != 0 {
-            break;
-        }
-        v_nlimbs -= 1;
-    }
-    let v_nlimbs = v_nlimbs;
-    if v_nlimbs == 0 {
-        return Err(CtMpDivisionError::DivisionByZero);
-    }
-    let v_high = mp_be_load_l(v, v_nlimbs - 1);
-    // Determine the effective length of v in terms of bytes.
-    let mut v_len = 1;
-    for i in 1..LIMB_BYTES {
-        if v_high >> 8 * i != 0 {
-            v_len += 1;
-        }
-    }
-    let v_len = v_len + (v_nlimbs - 1) * LIMB_BYTES;
+    let v_len = mp_find_last_set_byte_mp::<VE>(v);
+    let v_nlimbs = mp_ct_nlimbs(v_len);
+    let v_high = VE::load_l(v, v_nlimbs - 1);
 
     // If u_h is None, set it to an empty slice for code uniformity.
     let mut _u_h: [u8; 0] = [0; 0];
@@ -48,7 +32,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
     let u_len = u_l.len() + u_h.len();
     if u_len < v_len {
         if let Some(q_out) = q_out {
-            q_out.fill(0);
+            QE::zeroize_bytes_above(q_out, 0);
         }
         return Ok(())
     }
@@ -60,7 +44,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
         if q_out.len() < q_out_len {
             return Err(CtMpDivisionError::InsufficientQuotientSpace);
         }
-        q_out.fill(0);
+        QE::zeroize_bytes_above(q_out, 0);
     };
 
     // Create a padding buffer extending u at its more significant end:
@@ -74,7 +58,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
     };
     let mut _u_pad: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let u_pad = &mut _u_pad[0..LIMB_BYTES + u_pad_len];
-    let mut u_parts =  CompositeLimbsMutBuffer::new([u_l, u_h, u_pad]);
+    let mut u_parts =  CompositeLimbsMutBuffer::<'_, UE, 3>::new([u_l, u_h, u_pad]);
 
     // Normalize divisor's high limb. Calculate 2^LIMB_BITS / (v_high + 1)
     let scaling = {
@@ -99,7 +83,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
     let mut carry = 0;
     let mut scaled_v_tail_high = 0; // scaled v[n - 2]
     for i in 0..v_nlimbs - 1 {
-        let scaled: Zeroizing<DoubleLimb> = ct_mul_l_l(mp_be_load_l_full(v, i), scaling).into();
+        let scaled: Zeroizing<DoubleLimb> = ct_mul_l_l(VE::load_l_full(v, i), scaling).into();
         let (carry0, scaled_v_low) = ct_add_l_l(scaled.low(), carry);
         scaled_v_tail_high = scaled_v_low;
         let (carry1, carry0) = ct_add_l_l(scaled.high(), carry0);
@@ -124,12 +108,12 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
     // The extra high limb in u_h_pad, initialized to zero, would have absorbed the last carry.
     debug_assert_eq!(carry, 0);
 
-    let u_sub_scaled_qv_at = |u_parts: &mut  CompositeLimbsMutBuffer<'_, 3>, j: usize, q: LimbType| -> LimbType {
+    let u_sub_scaled_qv_at = |u_parts: &mut  CompositeLimbsMutBuffer<'_, UE, 3>, j: usize, q: LimbType| -> LimbType {
         let mut scaled_v_carry = 0;
         let mut qv_carry = 0;
         let mut u_borrow = 0;
         for i in 0..v_nlimbs {
-            let scaled_v: Zeroizing<DoubleLimb> = ct_mul_l_l(mp_be_load_l(v, i), scaling).into();
+            let scaled_v: Zeroizing<DoubleLimb> = ct_mul_l_l(VE::load_l(v, i), scaling).into();
             let (carry0, scaled_v_low) = ct_add_l_l(scaled_v.low(), scaled_v_carry);
             let (carry1, carry0) = ct_add_l_l(scaled_v.high(), carry0);
             scaled_v_carry = carry0;
@@ -159,11 +143,11 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
         u_borrow
     };
 
-    let u_cond_add_scaled_v_at = |u_parts: &mut  CompositeLimbsMutBuffer<'_, 3>, j: usize, cond: subtle::Choice| -> LimbType {
+    let u_cond_add_scaled_v_at = |u_parts: &mut  CompositeLimbsMutBuffer<'_, UE, 3>, j: usize, cond: subtle::Choice| -> LimbType {
         let mut scaled_v_carry = 0;
         let mut u_carry = 0;
         for i in 0..v_nlimbs {
-            let scaled_v: Zeroizing<DoubleLimb> = ct_mul_l_l(mp_be_load_l(v, i), scaling).into();
+            let scaled_v: Zeroizing<DoubleLimb> = ct_mul_l_l(VE::load_l(v, i), scaling).into();
             let (carry0, scaled_v_low) = ct_add_l_l(scaled_v.low(), scaled_v_carry);
             let (carry1, carry0) = ct_add_l_l(scaled_v.high(), carry0);
             scaled_v_carry = carry0;
@@ -262,7 +246,7 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
         u_cond_add_scaled_v_at(&mut u_parts, j, over_estimated);
         if let Some(q_out) = &mut q_out {
             let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
-            mp_be_store_l(q_out, j, q);
+            QE::store_l(q_out, j, q);
         }
     }
 
@@ -285,78 +269,83 @@ pub fn mp_ct_div(u_h: Option<&mut [u8]>, u_l: &mut [u8], v: &[u8], mut q_out: Op
     Ok(())
 }
 
-#[test]
-fn test_mp_ct_div() {
-    fn div_and_check(u: &[u8], v: &[u8], split_u: bool) {
-        use super::add_impl::mp_ct_add;
-        use super::mul_impl::mp_ct_mul_trunc_cond;
+#[cfg(test)]
+fn test_mp_ct_div_mp_mp<UE: MPEndianess, VE: MPEndianess, QE: MPEndianess>() {
+    fn div_and_check<UE: MPEndianess, VE: MPEndianess, QE: MPEndianess>(u: &[u8], v: &[u8], split_u: bool) {
+        use super::add_impl::mp_ct_add_mp_mp;
+        use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
 
-        let v_begin = v.iter().enumerate().find(|(_, v)| **v != 0).map(|(i, _)| i).unwrap();
-        let v = &v[v_begin..];
-        let q_len = if u.len() >= v.len() {
-            u.len() - v.len() + 1
+        let v_len = mp_find_last_set_byte_mp::<VE>(v);
+        let q_len = if u.len() >= v_len {
+            u.len() - v_len + 1
         } else {
             0
         };
         let mut q = vec![0xffu8; q_len];
         let mut rem = u.to_vec();
         let (rem_h, rem_l) = if split_u {
-            let (rem_h, rem_l) = rem.split_at_mut((LIMB_BYTES + 1).min(u.len()));
+            let (rem_h, rem_l) = UE::split_at_mut(&mut rem, (LIMB_BYTES + 1).min(u.len()));
             (Some(rem_h), rem_l)
         } else {
             (None, rem.as_mut_slice())
         };
-        mp_ct_div(rem_h, rem_l, v, Some(&mut q)).unwrap();
+        mp_ct_div_mp_mp::<UE, VE, QE> (rem_h, rem_l, v, Some(&mut q)).unwrap();
 
         // Multiply q by v again and add the remainder back, the result should match the initial u.
         let mut result = vec![0u8; u.len()];
-        result[u.len() - q_len..].copy_from_slice(&q);
-        mp_ct_mul_trunc_cond(&mut result, q_len, v, subtle::Choice::from(1));
-        let carry = mp_ct_add(&mut result, &rem);
+        UE::copy_from::<QE>(&mut result, &q);
+        mp_ct_mul_trunc_cond_mp_mp::<UE, VE>(&mut result, q_len, v, subtle::Choice::from(1));
+        let carry = mp_ct_add_mp_mp::<UE, UE>(&mut result, &rem);
         assert_eq!(carry, 0);
         assert_eq!(u, &result);
     }
 
-    let u = vec![1, 0];
-    let v = vec![1];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    fn limbs_from_be_bytes<E: MPEndianess, const N: usize>(bytes: [u8; N]) -> [u8; N] {
+        let mut limbs: [u8; N] = [0; N];
+        E::copy_from::<MPBigEndianOrder>(&mut limbs, &bytes);
+        limbs
+    }
 
-    let u = vec![1, 0];
-    let v = vec![3];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UE, 2>([1, 0]);
+    let v = limbs_from_be_bytes::<VE, 1>([1]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
+
+    let u = limbs_from_be_bytes::<UE, 2>([1, 0]);
+    let v = limbs_from_be_bytes::<VE, 1>([3]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
 
 
-    let u = vec![!0, !0, !1, !0, !0, !0];
-    let v = vec![!0, !0, !0];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    let u = limbs_from_be_bytes::<UE, 6>([!0, !0, !1, !0, !0, !0]);
+    let v = limbs_from_be_bytes::<VE, 3>([!0, !0, !0]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
 
-    let u = vec![!0, !0, !1, !0, !0, !1];
-    let v = vec![!0, !0, !0];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    let u = limbs_from_be_bytes::<UE, 6>([!0, !0, !1, !0, !0, !1]);
+    let v = limbs_from_be_bytes::<VE, 3>([!0, !0, !0]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
 
-    let u = vec![0, 0, 0, 0, 0, 0];
-    let v = vec![!0, !0, !0];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    let u = limbs_from_be_bytes::<UE, 6>([0, 0, 0, 0, 0, 0]);
+    let v = limbs_from_be_bytes::<VE, 3>([!0, !0, !0]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
 
-    let u = vec![0, 0, 0, 0, 0, !1];
-    let v = vec![!0, !0, !0];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    let u = limbs_from_be_bytes::<UE, 6>([0, 0, 0, 0, 0, !1]);
+    let v = limbs_from_be_bytes::<VE, 3>([!0, !0, !0]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
 
-    let u = vec![!0, !0, !0, !0, !0, 0];
-    let v = vec![0, 1, 0];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    let u = limbs_from_be_bytes::<UE, 6>([!0, !0, !0, !0, !0, 0]);
+    let v = limbs_from_be_bytes::<VE, 3>([0, 1, 0]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
 
-    let u = vec![!0, !0, !0, !0, !1, 0];
-    let v = vec![0, 2, 0];
-    div_and_check(&u, &v, false);
-    div_and_check(&u, &v, true);
+    let u = limbs_from_be_bytes::<UE, 6>([!0, !0, !0, !0, !1, 0]);
+    let v = limbs_from_be_bytes::<VE, 3>([0, 2, 0]);
+    div_and_check::<UE, VE, QE>(&u, &v, false);
+    div_and_check::<UE, VE, QE>(&u, &v, true);
 
     use super::limb::LIMB_BITS;
     const N_MAX_LIMBS: u32 = 3;
@@ -366,13 +355,13 @@ fn test_mp_ct_div() {
         if i != 0 {
             let u_nlimbs = mp_ct_nlimbs(u_len);
             for k in 0..u_nlimbs - 1 {
-                mp_be_store_l(u.as_mut_slice(), k, !0);
+                UE::store_l(u.as_mut_slice(), k, !0);
             }
             if i % LIMB_BITS != 0 {
                 let i = i % LIMB_BITS;
-                mp_be_store_l(u.as_mut_slice(), u_nlimbs - 1, !0 >> (LIMB_BITS - i));
+                UE::store_l(u.as_mut_slice(), u_nlimbs - 1, !0 >> (LIMB_BITS - i));
             } else  {
-                mp_be_store_l(u.as_mut_slice(), u_nlimbs - 1, !0);
+                UE::store_l(u.as_mut_slice(), u_nlimbs - 1, !0);
             }
         }
 
@@ -380,11 +369,67 @@ fn test_mp_ct_div() {
             for j2 in 0..j1 + 1 {
                 let v_len = ((j1 + 1) as usize + 8 - 1) / 8;
                 let mut v = vec![0u8; v_len];
-                mp_be_store_l(&mut v, (j1 / LIMB_BITS) as usize, 1 << (j1 % LIMB_BITS));
-                mp_be_store_l(&mut v, (j2 / LIMB_BITS) as usize, 1 << (j2 % LIMB_BITS));
-                div_and_check(&u, &v, false);
-                div_and_check(&u, &v, true);
+                VE::store_l(&mut v, (j1 / LIMB_BITS) as usize, 1 << (j1 % LIMB_BITS));
+                VE::store_l(&mut v, (j2 / LIMB_BITS) as usize, 1 << (j2 % LIMB_BITS));
+                div_and_check::<UE, VE, QE>(&u, &v, false);
+                div_and_check::<UE, VE, QE>(&u, &v, true);
             }
         }
     }
+}
+
+#[test]
+fn test_mp_ct_div_be_be_be() {
+    test_mp_ct_div_mp_mp::<MPBigEndianOrder, MPBigEndianOrder, MPBigEndianOrder>()
+}
+
+#[test]
+fn test_mp_ct_div_le_le_le() {
+    test_mp_ct_div_mp_mp::<MPLittleEndianOrder, MPLittleEndianOrder, MPBigEndianOrder>()
+}
+
+// Compute the modulo of a multiprecision integer modulo a [`LimbType`] divisisor.
+pub fn mp_ct_mod_mp_l<UE: MPEndianess, QE: MPEndianess>(
+    u: &[u8], v: LimbType, mut q_out: Option<&mut [u8]>
+) -> Result<LimbType, CtMpDivisionError> {
+    if v == 0 {
+        return Err(CtMpDivisionError::DivisionByZero);
+    }
+
+    let u_nlimbs = mp_ct_nlimbs(u.len());
+    if u_nlimbs == 0 {
+        return Ok(0);
+    }
+
+    if let Some(q_out) = &mut q_out {
+        let v_len = ct_find_last_set_byte_l(v);
+        if u.len() < v_len {
+            QE::zeroize_bytes_above(q_out, 0);
+            return Ok(UE::load_l(u, 0));
+        } else if q_out.len() < u.len() - v_len + 1 {
+            return Err(CtMpDivisionError::InsufficientQuotientSpace);
+        }
+        QE::zeroize_bytes_above(q_out, 0);
+    }
+
+    let normalized_v: Zeroizing<CtDivDlLNormalizedDivisor> =
+        CtDivDlLNormalizedDivisor::new(v).into();
+
+    let mut u_h = 0;
+    let mut j = u_nlimbs;
+    while j > 0 {
+        j -= 1;
+        let u_l = UE::load_l(u, j);
+        let (q_val, r) = |(q_val, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
+            (q_val.into(), r)
+        }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), normalized_v.deref()));
+        debug_assert_eq!(q_val.high(), 0);
+
+        if let Some(q_out) = &mut q_out {
+            QE::store_l(q_out, j, q_val.low())
+        }
+        u_h = r;
+    }
+
+    Ok(u_h)
 }

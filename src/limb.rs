@@ -530,3 +530,37 @@ fn test_ct_div_dl_l() {
         }
     }
 }
+
+// Position of MSB + 1, if any, zero otherwise.
+pub fn ct_find_last_set_bit_l(mut v: LimbType) -> u32 {
+    let mut bits = LIMB_BITS;
+    assert!(bits != 0);
+    assert!(bits & bits - 1 == 0); // Is a power of two.
+    let mut count: u32 = 0;
+    while bits > 1 {
+        bits /= 2;
+        let v_l = v & (1 << bits) - 1;
+        let v_h = v >> bits;
+        let upper = ct_neq_l_l(v_h, 0);
+        count += u32::conditional_select(&0, &bits, upper);
+        v = LimbType::conditional_select(&v_l, &v_h, upper);
+    }
+    debug_assert!(v <= 1);
+    count += v as u32;
+    count
+}
+
+#[test]
+fn test_ct_find_last_set_bit_l() {
+    assert_eq!(ct_find_last_set_bit_l(0), 0);
+
+    for i in 0..LIMB_BITS {
+        let v = 1 << i;
+        assert_eq!(ct_find_last_set_bit_l(v), i + 1);
+        assert_eq!(ct_find_last_set_bit_l(v - 1), i);
+    }
+}
+
+pub fn ct_find_last_set_byte_l(mut v: LimbType) -> usize {
+    ((ct_find_last_set_bit_l(v) + 8 - 1) / 8) as usize
+}
