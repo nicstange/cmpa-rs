@@ -5,12 +5,12 @@
 //! This helper module provides a couple of utilities for accessing these byte buffers in units of
 //! [`LimbType`].
 
-use core::{convert, marker};
+use core::{self, convert, marker};
 
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize as _;
 
-use super::limb::{LimbType, LIMB_BITS, LIMB_BYTES, ct_find_last_set_byte_l};
+use super::limb::{LimbType, LIMB_BYTES, ct_find_last_set_byte_l};
 use super::zeroize::Zeroizing;
 
 /// Determine the number of [`LimbType`] limbs stored in a multiprecision integer big-endian byte
@@ -142,6 +142,8 @@ fn mp_be_load_l(limbs: &[u8], i: usize) -> LimbType {
 
 #[test]
 fn test_mp_be_load_l() {
+    use super::limb::LIMB_BITS;
+
     let limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     assert_eq!(mp_be_load_l(&limbs, 0), 0);
     assert_eq!(mp_be_load_l(&limbs, 1), 0);
@@ -289,6 +291,8 @@ fn mp_be_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
 
 #[test]
 fn test_mp_be_store_l() {
+    use super::limb::LIMB_BITS;
+
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     mp_be_store_l(&mut limbs, 0, 1 << (LIMB_BITS - 1));
     mp_be_store_l(&mut limbs, 1, 1);
@@ -460,6 +464,8 @@ fn mp_le_load_l(limbs: &[u8], i: usize) -> LimbType {
 
 #[test]
 fn test_mp_le_load_l() {
+    use super::limb::LIMB_BITS;
+
     let limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     assert_eq!(mp_le_load_l(&limbs, 0), 0);
     assert_eq!(mp_le_load_l(&limbs, 1), 0);
@@ -606,6 +612,8 @@ fn mp_le_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
 
 #[test]
 fn test_mp_le_store_l() {
+    use super::limb::LIMB_BITS;
+
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     mp_le_store_l(&mut limbs, 0, 1 << (LIMB_BITS - 1));
     mp_le_store_l(&mut limbs, 1, 1);
@@ -776,16 +784,301 @@ impl MPEndianess for MPLittleEndianOrder {
     }
 }
 
-pub fn mp_find_last_set_limb_mp<E: MPEndianess>(limbs: &[u8]) -> usize {
-    let mut nlimbs = mp_ct_nlimbs(limbs.len());
+pub trait MPIntByteSlice<'a>: Sized {
+    type MPIntByteSlice<'b>: MPIntByteSlice<'b> where Self: 'b;
+
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+
+    fn load_l_full(&self, i: usize) -> LimbType;
+    fn load_l(&self, i: usize) -> LimbType;
+    fn take(self, nbytes: usize) -> (Self, Self);
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    where Self: 'b;
+}
+
+pub trait MPIntByteSliceFactory {
+    type SelfT<'a>: MPIntByteSlice<'a> + MPIntByteSliceFactory;
+    type FromBytesError: core::fmt::Debug;
+
+    fn from_bytes<'a, 'b: 'a>(bytes: &'b [u8]) -> Result<Self::SelfT<'a>, Self::FromBytesError>;
+    fn coerce_lifetime<'a>(self: &'a Self) -> Self::SelfT<'a>;
+}
+
+pub trait MPIntMutByteSlice<'a>: MPIntByteSlice<'a> {
+    fn store_l_full(&mut self, i: usize, value: LimbType);
+    fn store_l(&mut self, i: usize, value: LimbType);
+    fn zeroize_bytes_above(&mut self, nbytes: usize);
+
+    fn copy_from<'b, S: MPIntByteSlice<'b>>(&'_ mut self, src: &S) {
+        debug_assert!(self.len() >= src.len());
+        let src_nlimbs = mp_ct_nlimbs(src.len());
+
+        if src_nlimbs == 0 {
+            self.zeroize_bytes_above(0);
+            return;
+        }
+        for i in 0..src_nlimbs - 1 {
+            self.store_l_full(i, src.load_l_full(i));
+        }
+        self.store_l(src_nlimbs - 1, src.load_l(src_nlimbs - 1));
+        self.zeroize_bytes_above(src.len());
+    }
+}
+
+pub trait MPIntMutByteSliceFactory {
+    type SelfT<'a>: MPIntMutByteSlice<'a> + MPIntMutByteSliceFactory;
+    type FromBytesError: core::fmt::Debug;
+
+    fn from_bytes<'a, 'b: 'a>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'a>, Self::FromBytesError>;
+    fn coerce_lifetime<'a>(self: &'a mut Self) -> Self::SelfT<'a>;
+    fn split_at_mut<'a>(&'a mut self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>);
+}
+
+pub struct MPBigEndianByteSlice<'a> {
+    bytes: &'a [u8]
+}
+
+impl<'a> MPIntByteSlice<'a> for MPBigEndianByteSlice<'a> {
+    type MPIntByteSlice<'b> = MPBigEndianByteSlice<'b> where Self: 'b;
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn load_l_full(&self, i: usize) -> LimbType {
+        mp_be_load_l_full(self.bytes, i)
+    }
+
+    fn load_l(&self, i: usize) -> LimbType {
+        mp_be_load_l(self.bytes, i)
+    }
+
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+
+    fn split_at<'b>(&self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    where Self: 'b
+    {
+        let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
+        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+    }
+}
+
+impl<'a> MPIntByteSliceFactory for MPBigEndianByteSlice<'a> {
+    type SelfT<'b> = MPBigEndianByteSlice<'b>;
+    type FromBytesError = convert::Infallible;
+
+    fn from_bytes<'b, 'c: 'b>(bytes: &'c [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
+        Ok(Self::SelfT::<'b> { bytes })
+    }
+
+    fn coerce_lifetime<'b>(self: &'b Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes).unwrap()
+    }
+}
+
+pub struct MPBigEndianMutByteSlice<'a> {
+    bytes: &'a mut [u8]
+}
+
+impl<'a> MPIntByteSlice<'a> for MPBigEndianMutByteSlice<'a> {
+    type MPIntByteSlice<'b> = MPBigEndianByteSlice<'b> where Self: 'b;
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn load_l_full(&self, i: usize) -> LimbType {
+        mp_be_load_l_full(self.bytes, i)
+    }
+
+    fn load_l(&self, i: usize) -> LimbType {
+        mp_be_load_l(self.bytes, i)
+    }
+
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    where Self: 'b
+    {
+        let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
+        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+    }
+}
+
+impl<'a> MPIntMutByteSlice<'a> for MPBigEndianMutByteSlice<'a> {
+    fn store_l_full(&mut self, i: usize, value: LimbType) {
+        mp_be_store_l_full(self.bytes, i, value)
+    }
+
+    fn store_l(&mut self, i: usize, value: LimbType) {
+        mp_be_store_l(self.bytes, i, value)
+    }
+
+    fn zeroize_bytes_above(&mut self, nbytes: usize) {
+        mp_be_zeroize_bytes_above(self.bytes, nbytes)
+    }
+}
+
+impl<'a> MPIntMutByteSliceFactory for MPBigEndianMutByteSlice<'a> {
+    type SelfT<'b> = MPBigEndianMutByteSlice<'b>;
+    type FromBytesError = convert::Infallible;
+
+    fn from_bytes<'b, 'c: 'b>(bytes: &'c mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
+        Ok(Self::SelfT::<'b> { bytes })
+    }
+
+    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes.as_mut()).unwrap()
+    }
+
+    fn split_at_mut<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>) {
+        let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
+        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
+    }
+}
+
+pub struct MPLittleEndianByteSlice<'a> {
+    bytes: &'a [u8]
+}
+
+impl<'a> MPIntByteSlice<'a> for MPLittleEndianByteSlice<'a> {
+    type MPIntByteSlice<'b> = MPLittleEndianByteSlice<'b> where Self: 'b;
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn load_l_full(&self, i: usize) -> LimbType {
+        mp_le_load_l_full(self.bytes, i)
+    }
+
+    fn load_l(&self, i: usize) -> LimbType {
+        mp_le_load_l(self.bytes, i)
+    }
+
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (l, h) = self.bytes.split_at(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    where Self: 'b
+    {
+        let (l, h) = self.bytes.split_at(nbytes);
+        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+    }
+}
+
+impl<'a> MPIntByteSliceFactory for MPLittleEndianByteSlice<'a> {
+    type SelfT<'b> = MPLittleEndianByteSlice<'b>;
+    type FromBytesError = convert::Infallible;
+
+    fn from_bytes<'b, 'c: 'b>(bytes: &'c [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
+        Ok(Self::SelfT::<'b> { bytes })
+    }
+
+    fn coerce_lifetime<'b>(self: &'b Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes).unwrap()
+    }
+}
+
+pub struct MPLittleEndianMutByteSlice<'a> {
+    bytes: &'a mut [u8]
+}
+
+impl<'a> MPIntByteSlice<'a> for MPLittleEndianMutByteSlice<'a> {
+    type MPIntByteSlice<'b> = MPLittleEndianByteSlice<'b> where Self: 'b;
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn load_l_full(&self, i: usize) -> LimbType {
+        mp_le_load_l_full(self.bytes, i)
+    }
+
+    fn load_l(&self, i: usize) -> LimbType {
+        mp_le_load_l(self.bytes, i)
+    }
+
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    where Self: 'b
+    {
+        let (l, h) = self.bytes.split_at(nbytes);
+        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+    }
+}
+
+impl<'a> MPIntMutByteSlice<'a> for MPLittleEndianMutByteSlice<'a> {
+    fn store_l_full(&mut self, i: usize, value: LimbType) {
+        mp_le_store_l_full(self.bytes, i, value)
+    }
+
+    fn store_l(&mut self, i: usize, value: LimbType) {
+        mp_le_store_l(self.bytes, i, value)
+    }
+
+    fn zeroize_bytes_above(&mut self, nbytes: usize) {
+        mp_le_zeroize_bytes_above(self.bytes, nbytes)
+    }
+}
+
+impl<'a> MPIntMutByteSliceFactory for MPLittleEndianMutByteSlice<'a> {
+    type SelfT<'b> = MPLittleEndianMutByteSlice<'b>;
+    type FromBytesError = convert::Infallible;
+
+    fn from_bytes<'b, 'c: 'b>(bytes: &'c mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
+        Ok(Self::SelfT::<'b> { bytes })
+    }
+
+    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes.as_mut()).unwrap()
+    }
+
+    fn split_at_mut<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>) {
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
+    }
+}
+
+pub fn mp_find_last_set_limb_mp<'a, T0: MPIntByteSlice<'a>>(op0: &T0) -> usize {
+    let mut nlimbs = mp_ct_nlimbs(op0.len());
     if nlimbs == 0 {
         return 0;
     }
 
-    if E::load_l(limbs, nlimbs - 1) == 0 {
+    if op0.load_l(nlimbs - 1) == 0 {
         nlimbs -= 1;
         while nlimbs > 0 {
-            if E::load_l_full(limbs, nlimbs - 1) != 0 {
+            if op0.load_l_full(nlimbs - 1) != 0 {
                 break;
             }
             nlimbs -= 1;
@@ -795,87 +1088,74 @@ pub fn mp_find_last_set_limb_mp<E: MPEndianess>(limbs: &[u8]) -> usize {
     nlimbs
 }
 
-pub fn mp_find_last_set_limb_be(limbs: &[u8]) -> usize {
-   mp_find_last_set_limb_mp::<MPBigEndianOrder>(limbs)
-}
-
-pub fn mp_find_last_set_limb_le(limbs: &[u8]) -> usize {
-   mp_find_last_set_limb_mp::<MPLittleEndianOrder>(limbs)
-}
-
 #[cfg(test)]
-fn test_mp_find_last_set_limb_mp<E: MPEndianess>()  {
-    let limbs: [u8; 0] = [0; 0];
-    assert_eq!(mp_find_last_set_limb_mp::<E>(&limbs), 0);
+fn test_mp_find_last_set_limb_mp<F0: MPIntMutByteSliceFactory>()  {
+    let mut op0: [u8; 0] = [0; 0];
+    let op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 0);
 
-    let mut limbs: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
-    E::store_l(&mut limbs, 0, 1);
-    assert_eq!(mp_find_last_set_limb_mp::<E>(&limbs), 1);
+    let mut op0: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
+    let mut op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    op0.store_l(0, 1);
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 1);
 
-    E::store_l(&mut limbs, 1, 1);
-    assert_eq!(mp_find_last_set_limb_mp::<E>(&limbs), 2);
+    op0.store_l(1, 1);
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 2);
 
-    E::store_l(&mut limbs, 2, 1);
-    assert_eq!(mp_find_last_set_limb_mp::<E>(&limbs), 3);
+    op0.store_l(2, 1);
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 3);
 }
-
 
 #[test]
 fn test_mp_find_last_set_limb_be()  {
-    test_mp_find_last_set_limb_mp::<MPBigEndianOrder>();
+    test_mp_find_last_set_limb_mp::<MPBigEndianMutByteSlice>();
 }
 
 #[test]
 fn test_mp_find_last_set_limb_le()  {
-    test_mp_find_last_set_limb_mp::<MPLittleEndianOrder>();
+    test_mp_find_last_set_limb_mp::<MPLittleEndianMutByteSlice>();
 }
 
-pub fn mp_find_last_set_byte_mp<E: MPEndianess>(limbs: &[u8]) -> usize {
-    let nlimbs = mp_find_last_set_limb_mp::<E>(limbs);
+pub fn mp_find_last_set_byte_mp<'a, T0: MPIntByteSlice<'a>>(op0: &T0) -> usize {
+    let nlimbs = mp_find_last_set_limb_mp(op0);
     if nlimbs == 0 {
         return 0;
     }
     let nlimbs = nlimbs - 1;
-    nlimbs * LIMB_BYTES + ct_find_last_set_byte_l(E::load_l(limbs, nlimbs))
-}
-
-pub fn mp_find_last_set_byte_be(limbs: &[u8]) -> usize {
-    mp_find_last_set_byte_mp::<MPBigEndianOrder>(limbs)
-}
-
-pub fn mp_find_last_set_byte_le(limbs: &[u8]) -> usize {
-    mp_find_last_set_byte_mp::<MPLittleEndianOrder>(limbs)
+    nlimbs * LIMB_BYTES + ct_find_last_set_byte_l(op0.load_l(nlimbs))
 }
 
 #[cfg(test)]
-fn test_mp_find_last_set_byte_mp<E: MPEndianess>()  {
-    let limbs: [u8; 0] = [0; 0];
-    assert_eq!(mp_find_last_set_byte_mp::<E>(&limbs), 0);
+fn test_mp_find_last_set_byte_mp<F0: MPIntMutByteSliceFactory>() {
+    let mut op0: [u8; 0] = [0; 0];
+    let op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    assert_eq!(mp_find_last_set_byte_mp(&op0), 0);
 
-    let mut limbs: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
-    E::store_l(&mut limbs, 0, 1);
-    assert_eq!(mp_find_last_set_byte_mp::<E>(&limbs), 1);
+    let mut op0: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
+    let mut op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    op0.store_l(0, 1);
+    assert_eq!(mp_find_last_set_byte_mp(&op0), 1);
 
-    E::store_l(&mut limbs, 1, 1);
-    assert_eq!(mp_find_last_set_byte_mp::<E>(&limbs), LIMB_BYTES + 1);
+    op0.store_l(1, 1);
+    assert_eq!(mp_find_last_set_byte_mp(&op0), LIMB_BYTES + 1);
 
-    E::store_l(&mut limbs, 2, 1);
-    assert_eq!(mp_find_last_set_byte_mp::<E>(&limbs), 2 * LIMB_BYTES + 1);
+    op0.store_l(2, 1);
+    assert_eq!(mp_find_last_set_byte_mp(&op0), 2 * LIMB_BYTES + 1);
 }
 
 #[test]
 fn test_mp_find_last_set_byte_be() {
-    test_mp_find_last_set_byte_mp::<MPBigEndianOrder>()
+    test_mp_find_last_set_byte_mp::<MPBigEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_find_last_set_byte_le() {
-    test_mp_find_last_set_byte_mp::<MPLittleEndianOrder>()
+    test_mp_find_last_set_byte_mp::<MPLittleEndianMutByteSlice>()
 }
 
-/// Internal data structure describing a single one of a [`CompositeLimbsBufferImpl`]'s constituting
+/// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
 /// segments.
-struct CompositeLimbsBufferSegment<ST: convert::AsRef<[u8]>> {
+struct CompositeLimbsBufferSegment<'a, ST: MPIntByteSlice<'a>> {
     /// The total number of limbs whose least significant bytes are held in this or less significant
     /// segments each (note that a limb may span multiple segments).
     end: usize,
@@ -894,17 +1174,37 @@ struct CompositeLimbsBufferSegment<ST: convert::AsRef<[u8]>> {
     /// significant continutation bytes are collected from this and the subsequent, more significant
     /// segments' `high_next_partial` slices.
     high_next_partial: ST,
+
+    _phantom: marker::PhantomData<&'a [u8]>
 }
 
-/// The implementation underlying [`CompositeLimbsMutBuffer`] and [`CompositeLimbsBuffer`], which
-/// differ only in mutability.
-struct CompositeLimbsBufferImpl<ST: convert::AsRef<[u8]>, E: MPEndianess, const N_SEGMENTS: usize> {
+/// Access multiprecision integers composed of multiple virtually concatenated byte buffers in units
+/// of [`LimbType`].
+///
+/// A [`CompositeLimbsBuffer`] provides a composed multiprecision integer byte buffer view on
+/// `N_SEGMENTS` virtually concatenated byte slices, of endianess as specified by the `E` generic
+/// parameter each. Primitives are provided alongside for accessing the composed integer in units of
+/// [`LimbType`].
+///
+/// Certain applications need to truncate the result of some multiprecision integer arithmetic
+/// operation result and dismiss the rest. An example would be key generation modulo some large
+/// integer by the method of oversampling. A `CompositeLimbsBuffer` helps such applications to
+/// reduce the memory footprint of the truncation operation: instead of allocating a smaller
+/// destination buffer and copying the to be retained parts over from the result, the arithmetic
+/// primitive can, if supported, operate directly on a multiprecision integer byte buffer composed
+/// of several independent smaller slices by virtual concatenation. Assuming the individual
+/// segments' slice lengths align properly with the needed and unneeded parts of the result, the
+/// latter ones can get truncated away trivially when done by simply dismissing the corresponding
+/// underlying buffers.
+///
+/// See also [`CompositeLimbsBuffer`] for a non-mutable variant.
+///
+pub struct CompositeLimbsBuffer<'a, ST: MPIntByteSlice<'a>, const N_SEGMENTS: usize> {
     /// The composed view's individual segments, ordered from least to most significant.
-    segments: [CompositeLimbsBufferSegment<ST>; N_SEGMENTS],
-    _phantom_e: marker::PhantomData<E>,
+    segments: [CompositeLimbsBufferSegment<'a, ST>; N_SEGMENTS],
 }
 
-impl<ST: convert::AsRef<[u8]>, E: MPEndianess, const N_SEGMENTS: usize> CompositeLimbsBufferImpl<ST, E, N_SEGMENTS> {
+impl<'a, ST: MPIntByteSlice<'a>, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
     /// Construct a `CompositeLimbsBuffer` view from the individual byte buffer segments.
     ///
     /// # Arguments
@@ -914,8 +1214,7 @@ impl<ST: convert::AsRef<[u8]>, E: MPEndianess, const N_SEGMENTS: usize> Composit
     ///                significant relative with respect to their position within the resulting
     ///                view.
     ///
-    fn new<SA>(segments: [ST; N_SEGMENTS], split_at: SA) -> Self
-    where SA: Fn(ST, usize) -> (ST, ST)
+    pub fn new(segments: [ST; N_SEGMENTS]) -> Self
     {
         let mut segments = <[ST; N_SEGMENTS] as IntoIterator>::into_iter(segments);
         let mut segments: [Option<ST>; N_SEGMENTS]
@@ -923,37 +1222,30 @@ impl<ST: convert::AsRef<[u8]>, E: MPEndianess, const N_SEGMENTS: usize> Composit
         let mut n_bytes_total = 0;
         let mut create_segment = |i: usize| {
             let segment = segments[i].take().unwrap();
-            n_bytes_total += <ST as convert::AsRef<[u8]>>::as_ref(&segment).len();
+            let segment_len = segment.len();
+            n_bytes_total += segment_len;
 
             let n_high_partial = n_bytes_total % LIMB_BYTES;
-            let (segment, high_next_partial) = if i + 1 != segments.len() && n_high_partial != 0 {
+            let (high_next_partial, segment) = if i + 1 != segments.len() && n_high_partial != 0 {
                 let next_segment = segments[i + 1].take().unwrap();
-                let next_segment_len = <ST as convert::AsRef<[u8]>>::as_ref(&next_segment).len();
+                let next_segment_len = next_segment.len();
                 let n_from_next = (LIMB_BYTES - n_high_partial).min(next_segment_len);
-                let (next_segment, high_next_partial) = match E::INTER_LIMB_ORDER {
-                    MPInterLimbOrder::MostSignificantFirst => {
-                        split_at(next_segment, next_segment_len - n_from_next)
-                    },
-                    MPInterLimbOrder::LeastSignigicantFirst => {
-                        let (high_next_partial, next_segment) = split_at(next_segment, n_from_next);
-                        (next_segment, high_next_partial)
-                    }
-                };
+                let (next_segment, high_next_partial) = next_segment.take(n_from_next);
                 segments[i + 1] = Some(next_segment);
-                (segment, high_next_partial)
+                (high_next_partial, segment)
             } else {
-                let (high_next_partial, segment) = split_at(segment, 0);
-                (segment, high_next_partial)
+                let (high_next_partial, segment) = segment.take(segment_len);
+                (high_next_partial, segment)
             };
 
-            let high_next_partial_len = <ST as convert::AsRef<[u8]>>::as_ref(&high_next_partial).len();
+            let high_next_partial_len = high_next_partial.len();
             n_bytes_total += high_next_partial_len;
             let end = mp_ct_nlimbs(n_bytes_total);
-            CompositeLimbsBufferSegment { end, segment, high_next_partial }
+            CompositeLimbsBufferSegment { end, segment, high_next_partial, _phantom: marker::PhantomData }
         };
 
-        let segments: [CompositeLimbsBufferSegment<ST>; N_SEGMENTS] = core::array::from_fn(&mut create_segment);
-        Self { segments, _phantom_e: marker::PhantomData }
+        let segments: [CompositeLimbsBufferSegment<'a, ST>; N_SEGMENTS] = core::array::from_fn(&mut create_segment);
+        Self { segments }
     }
 
     /// Lookup the least significant buffer segment holding the specified limb's least significant
@@ -990,25 +1282,24 @@ impl<ST: convert::AsRef<[u8]>, E: MPEndianess, const N_SEGMENTS: usize> Composit
     ///
     /// * `i` - The index of the limb to load, counted from least to most significant.
     ///
-    fn load(&self, i: usize) -> LimbType {
+    pub fn load<'b>(&'b self, i: usize) -> LimbType {
         let (segment_index, segment_offset) = self.limb_index_to_segment(i);
         let segment = &self.segments[segment_index];
-        let segment_slice = <ST as convert::AsRef<[u8]>>::as_ref(&segment.segment);
+        let segment_slice = &segment.segment;
         if i != segment.end - 1 {
-            E::load_l_full(segment_slice, i - segment_offset)
+            segment_slice.load_l_full(i - segment_offset)
         } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
             // The last (highest) segment's most significant bytes don't necessarily occupy a full
             // limb.
-            E::load_l(segment_slice, i - segment_offset)
+            segment_slice.load_l(i - segment_offset)
         } else {
             let mut npartial = segment_slice.len() % LIMB_BYTES;
-            let mut value = E::load_l(segment_slice, i - segment_offset);
+            let mut value = segment_slice.load_l(i - segment_offset);
             let mut segment_index = segment_index;
             while npartial != LIMB_BYTES && segment_index < self.segments.len() {
                 let partial = &self.segments[segment_index].high_next_partial;
-                let partial = <ST as convert::AsRef<[u8]>>::as_ref(partial);
                 if !partial.is_empty() {
-                    value |= E::load_l(partial, 0) << (8 * npartial);
+                    value |= partial.load_l(0) << (8 * npartial);
                     npartial += partial.len();
                 }
                 segment_index += 1;
@@ -1018,106 +1309,7 @@ impl<ST: convert::AsRef<[u8]>, E: MPEndianess, const N_SEGMENTS: usize> Composit
     }
 }
 
-impl<ST: convert::AsRef<[u8]> + convert::AsMut<[u8]>, E: MPEndianess, const N_SEGMENTS: usize>
-    CompositeLimbsBufferImpl<ST, E, N_SEGMENTS> {
-    /// Update a limb in the composed multiprecision integer byte buffer.
-    ///
-    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
-    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
-    /// is concerned.
-    ///
-    /// * `i` - The index of the limb to update, counted from least to most significant.
-    /// * `value` - The value to store in the i'th limb.
-    ///
-    fn store(&mut self, i: usize, value: LimbType) {
-        let (segment_index, segment_offset) = self.limb_index_to_segment(i);
-        let segment = &mut self.segments[segment_index];
-        let segment_slice = <ST as convert::AsMut<[u8]>>::as_mut(&mut segment.segment);
-        if i != segment.end - 1 {
-            E::store_l_full(segment_slice, i - segment_offset, value);
-        } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
-            // The last (highest) part's most significant bytes don't necessarily occupy a full
-            // limb.
-            E::store_l(segment_slice, i - segment_offset, value)
-        } else {
-            let mut value = value;
-            let mut npartial = segment_slice.len() % LIMB_BYTES;
-            let value_mask = (1 << 8 * npartial) - 1;
-            E::store_l(segment_slice, i - segment_offset, value & value_mask);
-            value >>= 8 * npartial;
-            let mut segment_index = segment_index;
-            while npartial != LIMB_BYTES && segment_index < self.segments.len() {
-                let partial = &mut self.segments[segment_index].high_next_partial;
-                let partial = <ST as convert::AsMut<[u8]>>::as_mut(partial);
-                if !partial.is_empty() {
-                    let value_mask = (1 << 8 * partial.len()) - 1;
-                    E::store_l(partial, 0, value & value_mask);
-                    value >>= 8 * partial.len();
-                    npartial += partial.len();
-                }
-                segment_index += 1;
-            }
-            debug_assert!(value == 0);
-        }
-    }
-}
-
-/// Mutably access multiprecision integers composed of multiple virtually concatenated byte buffers
-/// in units of [`LimbType`].
-///
-/// A [`CompositeLimbsMutBuffer`] provides a composed multiprecision integer byte buffer view on
-/// `N_SEGMENTS` virtually concatenated byte slices, of endianess as specified by the `E` generic
-/// parameter each. Primitives are provided alongside for accessing the composed integer in units of
-/// [`LimbType`].
-///
-/// Certain applications need to truncate the result of some multiprecision integer arithmetic
-/// operation result and dismiss the rest. An example would be key generation modulo some large
-/// integer by the method of oversampling. A `CompositeLimbsMutBuffer` helps such applications to
-/// reduce the memory footprint of the truncation operation: instead of allocating a smaller
-/// destination buffer and copying the to be retained parts over from the result, the arithmetic
-/// primitive can, if supported, operate directly on a multiprecision integer byte buffer composed
-/// of several independent smaller slices by virtual concatenation. Assuming the individual
-/// segments' slice lengths align properly with the needed and unneeded parts of the result, the
-/// latter ones can get truncated away trivially when done by simply dismissing the corresponding
-/// underlying buffers.
-///
-/// See also [`CompositeLimbsBuffer`] for a non-mutable variant.
-///
-pub struct CompositeLimbsMutBuffer<'a, E: MPEndianess, const N_SEGMENTS: usize> {
-    imp: CompositeLimbsBufferImpl<&'a mut [u8], E, N_SEGMENTS>
-}
-
-impl<'a, E: MPEndianess, const N_SEGMENTS: usize> CompositeLimbsMutBuffer<'a, E, N_SEGMENTS> {
-    /// Construct a `CompositeLimbsMutBuffer` view from the individual byte buffer segments.
-    ///
-    /// # Arguments
-    ///
-    /// * `segments` - An array of `N_SEGMENTS` byte slices to compose the multiprecision integer
-    ///                byte buffer view from by virtual concatenation. Ordered from least to most
-    ///                significant relative with respect to their position within the resulting
-    ///                view.
-    ///
-    pub fn new(segments: [&'a mut [u8]; N_SEGMENTS]) -> Self {
-        Self {
-            imp: CompositeLimbsBufferImpl::<&'a mut [u8], E, N_SEGMENTS>::new(
-                segments,
-                <[u8]>::split_at_mut
-            )
-        }
-    }
-
-    /// Load a limb from the composed multiprecision integer byte buffer.
-    ///
-    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
-    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
-    /// is concerned.
-    ///
-    /// * `i` - The index of the limb to load, counted from least to most significant.
-    ///
-    pub fn load(&self, i: usize) -> LimbType {
-        self.imp.load(i)
-    }
-
+impl<'a, ST: MPIntMutByteSlice<'a>, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
     /// Update a limb in the composed multiprecision integer byte buffer.
     ///
     /// Execution time depends on the composed multiprecision integer's underlying segment layout as
@@ -1128,58 +1320,41 @@ impl<'a, E: MPEndianess, const N_SEGMENTS: usize> CompositeLimbsMutBuffer<'a, E,
     /// * `value` - The value to store in the i'th limb.
     ///
     pub fn store(&mut self, i: usize, value: LimbType) {
-        self.imp.store(i, value)
-    }
-}
-
-/// Access multiprecision integers composed of multiple virtually concatenated byte buffers in units
-/// of [`LimbType`].
-///
-/// A [`CompositeLimbsBuffer`] provides a composed multiprecision integer byte buffer view on
-/// `N_SEGMENTS` virtually concatenated byte slices, of endianess as specified by the `E` generic
-/// parameter each. Primitives are provided alongside for accessing the composed integer in units of
-/// [`LimbType`].
-///
-/// Refer to [`CompositeLimbsMutBuffer`] for more details.
-///
-pub struct CompositeLimbsBuffer<'a, E: MPEndianess, const N_SEGMENTS: usize> {
-    imp: CompositeLimbsBufferImpl<&'a [u8], E, N_SEGMENTS>
-}
-
-impl<'a, E: MPEndianess, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, E, N_SEGMENTS> {
-    /// Construct a `CompositeLimbsMutBuffer` view from the individual byte buffer segments.
-    ///
-    /// # Arguments
-    ///
-    /// * `segments` - An array of `N_SEGMENTS` byte slices to compose the multiprecision integer
-    ///                byte buffer view from by virtual concatenation. Ordered from least to most
-    ///                significant relative with respect to their position within the resulting
-    ///                view.
-    ///
-    pub fn new(segments: [&'a [u8]; N_SEGMENTS]) -> Self {
-        Self {
-            imp: CompositeLimbsBufferImpl::<&'a [u8], E, N_SEGMENTS>::new(
-                segments,
-                <[u8]>::split_at
-            )
+        let (segment_index, segment_offset) = self.limb_index_to_segment(i);
+        let segment = &mut self.segments[segment_index];
+        let segment_slice = &mut segment.segment;
+        if i != segment.end - 1 {
+            segment_slice.store_l_full(i - segment_offset, value);
+        } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
+            // The last (highest) part's most significant bytes don't necessarily occupy a full
+            // limb.
+            segment_slice.store_l(i - segment_offset, value)
+        } else {
+            let mut value = value;
+            let mut npartial = segment_slice.len() % LIMB_BYTES;
+            let value_mask = (1 << 8 * npartial) - 1;
+            segment_slice.store_l(i - segment_offset, value & value_mask);
+            value >>= 8 * npartial;
+            let mut segment_index = segment_index;
+            while npartial != LIMB_BYTES && segment_index < self.segments.len() {
+                let partial = &mut self.segments[segment_index].high_next_partial;
+                if !partial.is_empty() {
+                    let value_mask = (1 << 8 * partial.len()) - 1;
+                    partial.store_l(0, value & value_mask);
+                    value >>= 8 * partial.len();
+                    npartial += partial.len();
+                }
+                segment_index += 1;
+            }
+            debug_assert!(value == 0);
         }
-    }
-
-    /// Load a limb from the composed multiprecision integer byte buffer.
-    ///
-    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
-    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
-    /// is concerned.
-    ///
-    /// * `i` - The index of the limb to load, counted from least to most significant.
-    ///
-    pub fn load(&self, i: usize) -> LimbType {
-        self.imp.load(i)
     }
 }
 
 #[test]
 fn test_composite_limbs_buffer_load_be() {
+    use super::limb::LIMB_BITS;
+
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let mut buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
@@ -1204,8 +1379,11 @@ fn test_composite_limbs_buffer_load_be() {
     // 0x00 .. 00 0x0a
     buf2[0] = 0xa;
 
-    let limbs =  CompositeLimbsMutBuffer::<'_, MPBigEndianOrder, 3>::new(
-        [buf0.as_mut_slice(), buf1.as_mut_slice(), buf2.as_mut_slice()]
+    let buf0 = MPBigEndianByteSlice::from_bytes(buf0.as_slice()).unwrap();
+    let buf1 = MPBigEndianByteSlice::from_bytes(buf1.as_slice()).unwrap();
+    let buf2 = MPBigEndianByteSlice::from_bytes(buf2.as_slice()).unwrap();
+    let limbs =  CompositeLimbsBuffer::new(
+        [buf0, buf1, buf2]
     );
 
     let l0 = limbs.load(0);
@@ -1222,8 +1400,10 @@ fn test_composite_limbs_buffer_load_be() {
 
 #[test]
 fn test_composite_limbs_buffer_load_le() {
+    use super::limb::LIMB_BITS;
+
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    let mut buf1: [u8; 0] = [0; 0];
+    let buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
 
     // 0x00 .. 00 01 00 .. 00 02
@@ -1246,8 +1426,11 @@ fn test_composite_limbs_buffer_load_le() {
     // 0x00 .. 00 0x0a
     buf2[1 + 2 * LIMB_BYTES] = 0xa;
 
-    let limbs =  CompositeLimbsMutBuffer::<'_, MPLittleEndianOrder, 3>::new(
-        [buf0.as_mut_slice(), buf1.as_mut_slice(), buf2.as_mut_slice()]
+    let buf0 = MPLittleEndianByteSlice::from_bytes(buf0.as_slice()).unwrap();
+    let buf1 = MPLittleEndianByteSlice::from_bytes(buf1.as_slice()).unwrap();
+    let buf2 = MPLittleEndianByteSlice::from_bytes(buf2.as_slice()).unwrap();
+    let limbs =  CompositeLimbsBuffer::new(
+        [buf0, buf1, buf2]
     );
 
     let l0 = limbs.load(0);
@@ -1263,12 +1446,17 @@ fn test_composite_limbs_buffer_load_le() {
 }
 
 #[cfg(test)]
-fn test_composite_limbs_buffer_store<E: MPEndianess>() {
+fn test_composite_limbs_buffer_store<SF: MPIntMutByteSliceFactory>() {
+    use super::limb::LIMB_BITS;
+
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let mut buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
-    let mut limbs =  CompositeLimbsMutBuffer::<'_, E, 3>::new(
-        [buf0.as_mut_slice(), buf1.as_mut_slice(), buf2.as_mut_slice()]
+    let buf0 = SF::from_bytes(&mut buf0).unwrap();
+    let buf1 = SF::from_bytes(&mut buf1).unwrap();
+    let buf2 = SF::from_bytes(&mut buf2).unwrap();
+    let mut limbs =  CompositeLimbsBuffer::new(
+        [buf0, buf1, buf2]
     );
 
     let l0 = 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8;
@@ -1291,10 +1479,10 @@ fn test_composite_limbs_buffer_store<E: MPEndianess>() {
 
 #[test]
 fn test_composite_limbs_buffer_store_be() {
-    test_composite_limbs_buffer_store::<MPBigEndianOrder>()
+    test_composite_limbs_buffer_store::<MPBigEndianMutByteSlice>()
 }
 
 #[test]
 fn test_composite_limbs_buffer_store_le() {
-    test_composite_limbs_buffer_store::<MPLittleEndianOrder>()
+    test_composite_limbs_buffer_store::<MPLittleEndianMutByteSlice>()
 }

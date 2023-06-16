@@ -5,13 +5,12 @@ use subtle::{self, ConditionallySelectable as _};
 use crate::limb::LIMB_BITS;
 
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb, ct_mul_l_l, ct_add_l_l};
-use super::limbs_buffer::{mp_ct_nlimbs, MPEndianess, MPBigEndianOrder, MPLittleEndianOrder};
+use super::limbs_buffer::{mp_ct_nlimbs, MPIntMutByteSlice, MPIntByteSlice};
+#[cfg(test)]
+use super::limbs_buffer::MPIntMutByteSliceFactory;
 use super::zeroize::Zeroizing;
 
 /// Conditionally multiply two multiprecision integers of specified endianess.
-///
-/// Conditionally multiply two multiprecision integers as stored in byte slices of endianess as
-/// specified by the `E0` and `E1` generic parameters each.
 ///
 /// If the `cond` argument is unset, this function is effectively a nop, but execution time is
 /// independent of the value of`cond`.
@@ -31,20 +30,18 @@ use super::zeroize::Zeroizing;
 ///           tail bytes are considered non-zero.
 ///           `op0` will get overwritten with the resulting, possibly
 ///           truncated product if `cond` is set.
-///           Its endianess is specified by the `E0` generic parameter.
 /// * `op0_in_len` - Number of bytes in the first input factor. Must be `<= op0.len()`.
 ///                  As `op0` also receives the resulting product, it must usually be allocated
 ///                  much larger than what would be required to only accomodate for the first input
 ///                  factor. Thus, the first operand's is not implicit from `op0.len()` and it must
 ///                  get specified separately as `op0_in_len`.
 /// * `op1` - The second input factor.
-///           Its endianess is specified by the `E0` generic parameter.
 /// * `cond` - Whether or not to replace `op0` by the product. Intended to facilitate constant time
 ///            implementations of algorithms relying on conditional executiopns of multiprecision
 ///            integer multiplication, like e.g. binary exponentation.
 ///
-pub fn mp_ct_mul_trunc_cond_mp_mp<E0: MPEndianess, E1: MPEndianess>(
-    op0: &mut [u8], op0_in_len: usize, op1: &[u8], cond: subtle::Choice
+pub fn mp_ct_mul_trunc_cond_mp_mp<'a, 'b, T0: MPIntMutByteSlice<'a>, T1: MPIntByteSlice<'b>>(
+    op0: &mut T0, op0_in_len: usize, op1: &T1, cond: subtle::Choice
 ) {
     debug_assert!(op0_in_len <= op0.len());
     let op1_nlimbs = mp_ct_nlimbs(op1.len());
@@ -57,15 +54,15 @@ pub fn mp_ct_mul_trunc_cond_mp_mp<E0: MPEndianess, E1: MPEndianess>(
         (1 << 8 * result_high_npartial) - 1
     };
     let op0_nlimbs = mp_ct_nlimbs(op0_len);
-    E0::zeroize_bytes_above(op0, op0_len);
+    op0.zeroize_bytes_above(op0_in_len);
     let op0_in_nlimbs = mp_ct_nlimbs(op0_in_len);
 
     let mut j = op0_in_nlimbs;
     while j > 0 {
         j -= 1;
 
-        let op0_val = E0::load_l(op0, j);
-        E0::store_l(op0, j, 0);
+        let op0_val = op0.load_l(j);
+        op0.store_l(j, 0);
 
         let mut carry = 0;
         let result_nlimbs = op0_nlimbs - j;
@@ -75,10 +72,10 @@ pub fn mp_ct_mul_trunc_cond_mp_mp<E0: MPEndianess, E1: MPEndianess>(
             } else {
                 0
             };
-            let op1_val = LimbType::conditional_select(&unit, &E1::load_l(op1, k), cond);
+            let op1_val = LimbType::conditional_select(&unit, &op1.load_l(k), cond);
             let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op1_val).into();
 
-            let mut result_val = E0::load_l(op0, j + k);
+            let mut result_val = op0.load_l(j + k);
             let carry0;
             (carry0, result_val) = ct_add_l_l(result_val, carry);
             // prod.high() is always <= LimbType::MAX - 1, that is adding a single carry won't
@@ -92,137 +89,112 @@ pub fn mp_ct_mul_trunc_cond_mp_mp<E0: MPEndianess, E1: MPEndianess>(
             carry = prod.high() + carry0 + carry1;
 
             if k != result_nlimbs - 1 {
-                E0::store_l_full(op0, j + k, result_val);
+                op0.store_l_full(j + k, result_val);
             } else {
-                E0::store_l(op0, j + k, result_val & result_high_mask);
+                op0.store_l(j + k, result_val & result_high_mask);
             }
         }
         // Propagate the carry all the way up.
         for k in op1_nlimbs..result_nlimbs {
-            let mut result_val = E0::load_l(op0, j + k);
+            let mut result_val = op0.load_l(j + k);
             (carry, result_val) = ct_add_l_l(result_val, carry);
             if k != result_nlimbs - 1 {
-                E0::store_l_full(op0, j + k, result_val);
+                op0.store_l_full(j + k, result_val);
             } else {
-                E0::store_l(op0, j + k, result_val & result_high_mask);
+                op0.store_l(j + k, result_val & result_high_mask);
             }
         }
     }
 }
 
-/// Conditionally multiply two big-endian multiprecision integers.
-///
-/// This is a convenience specialization of the generic [`mp_ct_mul_trunc_cond_mp_mp()`] for the
-/// big-endian case.
-///
-pub fn mp_ct_mul_trunc_cond_be_be(
-    op0: &mut [u8], op0_in_len: usize, op1: &[u8], cond: subtle::Choice
-) {
-    mp_ct_mul_trunc_cond_mp_mp::<MPBigEndianOrder, MPBigEndianOrder>(op0, op0_in_len, op1, cond)
-}
-
-/// Conditionally multiply two little-endian multiprecision integers.
-///
-/// This is a convenience specialization of the generic [`mp_ct_mul_trunc_cond_mp_mp()`] for the
-/// little-endian case.
-///
-pub fn mp_ct_mul_trunc_cond_le_le(
-    op0: &mut [u8], op0_in_len: usize, op1: &[u8], cond: subtle::Choice
-) {
-    mp_ct_mul_trunc_cond_mp_mp::<MPLittleEndianOrder, MPLittleEndianOrder>(op0, op0_in_len, op1, cond)
-}
-
 #[cfg(test)]
-fn test_mp_ct_mul_trunc_cond_mp_mp<E0: MPEndianess, E1: MPEndianess>() {
+fn test_mp_ct_mul_trunc_cond_mp_mp<F0: MPIntMutByteSliceFactory, F1: MPIntMutByteSliceFactory>() {
     let mut op0: [u8; 5 * LIMB_BYTES] = [0; 5 * LIMB_BYTES];
-    let op0 = op0.as_mut_slice();
+    let mut op0 = F0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let op1 = op1.as_mut_slice();
-    E0::store_l(op0, 0, !0);
-    E0::store_l(op0, 1, !0);
-    E1::store_l(op1, 0, !0);
-    E1::store_l(op1, 1, !0);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES, op1, subtle::Choice::from(0u8));
-    assert_eq!(E0::load_l(op0, 0), !0);
-    assert_eq!(E0::load_l(op0, 1), !0);
-    assert_eq!(E0::load_l(op0, 2), 0);
-    assert_eq!(E0::load_l(op0, 3), 0);
-    assert_eq!(E0::load_l(op0, 4), 0);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES, op1, subtle::Choice::from(1u8));
-    assert_eq!(E0::load_l(op0, 0), 1);
-    assert_eq!(E0::load_l(op0, 1), 0);
-    assert_eq!(E0::load_l(op0, 2), !1);
-    assert_eq!(E0::load_l(op0, 3), !0);
-    assert_eq!(E0::load_l(op0, 4), 0);
+    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
+    op1.store_l(0, !0);
+    op1.store_l(1, !0);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES, &op1, subtle::Choice::from(0u8));
+    assert_eq!(op0.load_l(0), !0);
+    assert_eq!(op0.load_l(1), !0);
+    assert_eq!(op0.load_l(2), 0);
+    assert_eq!(op0.load_l(3), 0);
+    assert_eq!(op0.load_l(4), 0);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES, &op1, subtle::Choice::from(1u8));
+    assert_eq!(op0.load_l(0), 1);
+    assert_eq!(op0.load_l(1), 0);
+    assert_eq!(op0.load_l(2), !1);
+    assert_eq!(op0.load_l(3), !0);
+    assert_eq!(op0.load_l(4), 0);
 
     let mut op0: [u8; 4 * LIMB_BYTES - 1] = [0; 4 * LIMB_BYTES - 1];
-    let op0 = op0.as_mut_slice();
+    let mut op0 = F0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let op1 = op1.as_mut_slice();
-    E0::store_l(op0, 0, !0);
-    E0::store_l(op0, 1, !0);
-    E1::store_l(op1, 0, !0);
-    E1::store_l(op1, 1, !0);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES, op1, subtle::Choice::from(0u8));
-    assert_eq!(E0::load_l(op0, 0), !0);
-    assert_eq!(E0::load_l(op0, 1), !0);
-    assert_eq!(E0::load_l(op0, 2), 0);
-    assert_eq!(E0::load_l(op0, 3), 0);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES, op1, subtle::Choice::from(1u8));
-    assert_eq!(E0::load_l(op0, 0), 1);
-    assert_eq!(E0::load_l(op0, 1), 0);
-    assert_eq!(E0::load_l(op0, 2), !1);
-    assert_eq!(E0::load_l(op0, 3), !0 >> 8);
+    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
+    op1.store_l(0, !0);
+    op1.store_l(1, !0);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES, &op1, subtle::Choice::from(0u8));
+    assert_eq!(op0.load_l(0), !0);
+    assert_eq!(op0.load_l(1), !0);
+    assert_eq!(op0.load_l(2), 0);
+    assert_eq!(op0.load_l(3), 0);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES, &op1, subtle::Choice::from(1u8));
+    assert_eq!(op0.load_l(0), 1);
+    assert_eq!(op0.load_l(1), 0);
+    assert_eq!(op0.load_l(2), !1);
+    assert_eq!(op0.load_l(3), !0 >> 8);
 
     let mut op0: [u8; 3 * LIMB_BYTES - 1] = [0; 3 * LIMB_BYTES - 1];
-    let op0 = op0.as_mut_slice();
+    let mut op0 = F0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let op1 = op1.as_mut_slice();
-    E0::store_l(op0, 0, !0);
-    E0::store_l(op0, 1, !0);
-    E1::store_l(op1, 0, !0);
-    E1::store_l(op1, 1, !0);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES, op1, subtle::Choice::from(0u8));
-    assert_eq!(E0::load_l(op0, 0), !0);
-    assert_eq!(E0::load_l(op0, 1), !0);
-    assert_eq!(E0::load_l(op0, 2), 0);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES, op1, subtle::Choice::from(1u8));
-    assert_eq!(E0::load_l(op0, 0), 1);
-    assert_eq!(E0::load_l(op0, 1), 0);
-    assert_eq!(E0::load_l(op0, 2), (!0 >> 8) ^ 1);
+    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
+    op1.store_l(0, !0);
+    op1.store_l(1, !0);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES, &op1, subtle::Choice::from(0u8));
+    assert_eq!(op0.load_l(0), !0);
+    assert_eq!(op0.load_l(1), !0);
+    assert_eq!(op0.load_l(2), 0);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES, &op1, subtle::Choice::from(1u8));
+    assert_eq!(op0.load_l(0), 1);
+    assert_eq!(op0.load_l(1), 0);
+    assert_eq!(op0.load_l(2), (!0 >> 8) ^ 1);
 
     let mut op0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    let op0 = op0.as_mut_slice();
+    let mut op0 = F0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let op1 = op1.as_mut_slice();
-    E0::store_l(op0, 0, !0);
-    E0::store_l(op0, 1, !0 >> 2 * 8);
-    E1::store_l(op1, 0, !0);
-    E1::store_l(op1, 1, !0 >> 2 * 8);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES - 1, op1, subtle::Choice::from(0u8));
-    assert_eq!(E0::load_l(op0, 0), !0);
-    assert_eq!(E0::load_l(op0, 1), !0 >> 2 * 8);
-    mp_ct_mul_trunc_cond_mp_mp::<E0, E1>(op0, 2 * LIMB_BYTES - 1, op1, subtle::Choice::from(1u8));
-    assert_eq!(E0::load_l(op0, 0), 1);
-    assert_eq!(E0::load_l(op0, 1), 0xfe << 8 * (LIMB_BYTES - 2));
+    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0 >> 2 * 8);
+    op1.store_l(0, !0);
+    op1.store_l(1, !0 >> 2 * 8);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES - 1, &op1, subtle::Choice::from(0u8));
+    assert_eq!(op0.load_l(0), !0);
+    assert_eq!(op0.load_l(1), !0 >> 2 * 8);
+    mp_ct_mul_trunc_cond_mp_mp(&mut op0, 2 * LIMB_BYTES - 1, &op1, subtle::Choice::from(1u8));
+    assert_eq!(op0.load_l(0), 1);
+    assert_eq!(op0.load_l(1), 0xfe << 8 * (LIMB_BYTES - 2));
 }
 
 #[test]
 fn test_mp_ct_mul_trunc_cond_be_be() {
-    use super::limbs_buffer::MPBigEndianOrder;
-    test_mp_ct_mul_trunc_cond_mp_mp::<MPBigEndianOrder, MPBigEndianOrder>()
+    use super::limbs_buffer::MPBigEndianMutByteSlice;
+    test_mp_ct_mul_trunc_cond_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_ct_mul_trunc_cond_le_le() {
-    use super::limbs_buffer::MPLittleEndianOrder;
-    test_mp_ct_mul_trunc_cond_mp_mp::<MPLittleEndianOrder, MPLittleEndianOrder>()
+    use super::limbs_buffer::MPLittleEndianMutByteSlice;
+    test_mp_ct_mul_trunc_cond_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
 }
 
 /// Square a multiprecision integer of specified endianess.
-///
-/// Square a multiprecision integer as stored in a byte slice of endianess as specified by the `E0`
-/// generic parameter.
 ///
 /// The operand's contents will be replaced by the computed square.
 /// If the square's width exceeds the available space, its most significant head part will
@@ -239,14 +211,13 @@ fn test_mp_ct_mul_trunc_cond_le_le() {
 ///           tail bytes are considered non-zero.
 ///           `op0` will get overwritten with the resulting, possibly
 ///           truncated square.
-///           Its endianess is specified by the `E0` generic parameter.
 /// * `op0_in_len` - Number of bytes in the input operand. Must be `<= op0.len()`.
 ///                  As `op0` also receives the resulting square, it must usually be allocated
 ///                  much larger than what would be required to only accomodate for the input
 ///                  operand. Thus, the operand's is not implicit from `op0.len()` and it must
 ///                  get specified separately as `op0_in_len`.
 ///
-pub fn mp_ct_square_trunc_mp<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize) {
+pub fn mp_ct_square_trunc_mp<'a, T0: MPIntMutByteSlice<'a>>(op0: &mut T0, op0_in_len: usize) {
     debug_assert!(op0_in_len <= op0.len());
     let op0_len = op0.len();
     let result_high_npartial = op0_len % LIMB_BYTES;
@@ -256,15 +227,15 @@ pub fn mp_ct_square_trunc_mp<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize)
         (1 << 8 * result_high_npartial) - 1
     };
     let op0_nlimbs = mp_ct_nlimbs(op0_len);
-    E0::zeroize_bytes_above(op0, op0_len);
+    op0.zeroize_bytes_above(op0_in_len);
     let op0_in_nlimbs = mp_ct_nlimbs(op0_in_len);
 
     let mut j = op0_in_nlimbs;
     while j > 0 {
         j -= 1;
 
-        let op0_val = E0::load_l(op0, j);
-        E0::store_l(op0, j, 0);
+        let op0_val = op0.load_l(j);
+        op0.store_l(j, 0);
 
         let mut last_prod_high: LimbType = 0;
         let mut carry = 0;
@@ -277,9 +248,9 @@ pub fn mp_ct_square_trunc_mp<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize)
             // As will be shown below, even the invariant
             // carry <= 2 || (2 < carry <= 4 && last_prod_high <= !2)
             // holds at loop entry.
-            let op1_val = E0::load_l(op0, k);
+            let op1_val = op0.load_l(k);
             let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op1_val).into();
-            let mut result_val = E0::load_l(op0, j + k);
+            let mut result_val = op0.load_l(j + k);
 
             // Multiply last_prod_high, the upper half of the last iteration's multiplication, by
             // two.
@@ -343,9 +314,9 @@ pub fn mp_ct_square_trunc_mp<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize)
             debug_assert!(carry <= 2 || last_prod_high <= !2);
 
             if k != result_nlimbs - 1 {
-                E0::store_l_full(op0, j + k, result_val);
+                op0.store_l_full(j + k, result_val);
             } else {
-                E0::store_l(op0, j + k, result_val & result_high_mask);
+                op0.store_l(j + k, result_val & result_high_mask);
             }
         }
 
@@ -354,7 +325,7 @@ pub fn mp_ct_square_trunc_mp<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize)
             continue;
         }
         let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op0_val).into();
-         let mut result_val = E0::load_l(op0, 2 * j);
+         let mut result_val = op0.load_l(2 * j);
         // Multiply last_prod_high from the previous loop's last iteration by two.
         let carry0 = last_prod_high >> core::hint::black_box(LIMB_BITS - 1);
         last_prod_high = last_prod_high.wrapping_mul(2);
@@ -370,15 +341,15 @@ pub fn mp_ct_square_trunc_mp<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize)
         (carry2, result_val) = ct_add_l_l(result_val, prod.low());
         carry = carry0 + carry1 + carry2;
         if j != result_nlimbs - 1 {
-            E0::store_l_full(op0, 2 * j, result_val);
+            op0.store_l_full(2 * j, result_val);
         } else {
-            E0::store_l(op0, 2 * j, result_val & result_high_mask);
+            op0.store_l(2 * j, result_val & result_high_mask);
         }
 
         // Propagate the carry all the way up. The first iteration will also account for the
         // previous multiplications upper limb.
         for k in j + 1..result_nlimbs {
-            let mut result_val = E0::load_l(op0, j + k);
+            let mut result_val = op0.load_l(j + k);
             let carry0;
             (carry0, result_val) = ct_add_l_l(result_val, last_prod_high);
             last_prod_high = 0;
@@ -386,69 +357,86 @@ pub fn mp_ct_square_trunc_mp<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize)
             (carry1, result_val) = ct_add_l_l(result_val, carry);
             carry = carry0 + carry1;
             if k != result_nlimbs - 1 {
-                E0::store_l_full(op0, j + k, result_val);
+                op0.store_l_full(j + k, result_val);
             } else {
-                E0::store_l(op0, j + k, result_val & result_high_mask);
+                op0.store_l(j + k, result_val & result_high_mask);
             }
         }
     }
 }
 
 #[cfg(test)]
-fn test_mp_ct_square_trunc_mp<E0: MPEndianess>() {
-    fn square_by_mul<E0: MPEndianess, const N: usize>(op0: &[u8; N], op0_in_len: usize) -> [u8; N] {
-        let mut result = op0.clone();
-        let (_, op0) = E0::split_at(op0, op0_in_len);
-        mp_ct_mul_trunc_cond_mp_mp::<E0, E0>(
-            result.as_mut_slice(), op0_in_len,
-            op0,
-            subtle::Choice::from(1u8)
-        );
-        result
+fn test_mp_ct_square_trunc_mp<F0: MPIntMutByteSliceFactory>() {
+    fn square_by_mul<F0: MPIntMutByteSliceFactory, const N: usize>(op0: &[u8; N], op0_in_len: usize) -> [u8; N] {
+        let mut _result = op0.clone();
+        let mut result = F0::from_bytes(&mut _result).unwrap();
+        let mut op0 = op0.clone();
+        let op0 = F0::from_bytes(&mut op0).unwrap();
+        let (_, op0) = op0.split_at(op0_in_len);
+        mp_ct_mul_trunc_cond_mp_mp(&mut result, op0_in_len, &op0, subtle::Choice::from(1u8));
+        drop(result);
+        _result
     }
 
-    let mut op0: [u8; 5 * LIMB_BYTES] = [0; 5 * LIMB_BYTES];
-    E0::store_l(op0.as_mut_slice(), 0, !0);
-    E0::store_l(op0.as_mut_slice(), 1, !0);
-    let expected = square_by_mul::<E0, {5 * LIMB_BYTES}>(&op0, 2 * LIMB_BYTES);
-    mp_ct_square_trunc_mp::<E0>(op0.as_mut_slice(), 2 * LIMB_BYTES);
-    assert_eq!(op0, expected);
+    let mut _op0: [u8; 5 * LIMB_BYTES] = [0; 5 * LIMB_BYTES];
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
+    drop(op0);
+    let expected = square_by_mul::<F0, {5 * LIMB_BYTES}>(&_op0, 2 * LIMB_BYTES);
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
+    drop(op0);
+    assert_eq!(_op0, expected);
 
-    let mut op0: [u8; 4 * LIMB_BYTES - 1] = [0; 4 * LIMB_BYTES - 1];
-    E0::store_l(op0.as_mut_slice(), 0, !0);
-    E0::store_l(op0.as_mut_slice(), 1, !0);
-    let expected = square_by_mul::<E0, {4 * LIMB_BYTES - 1}>(&op0, 2 * LIMB_BYTES);
-    mp_ct_square_trunc_mp::<E0>(op0.as_mut_slice(), 2 * LIMB_BYTES);
-    assert_eq!(op0, expected);
+    let mut _op0: [u8; 4 * LIMB_BYTES - 1] = [0; 4 * LIMB_BYTES - 1];
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
+    drop(op0);
+    let expected = square_by_mul::<F0, {4 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
+    drop(op0);
+    assert_eq!(_op0, expected);
 
-    let mut op0: [u8; 3 * LIMB_BYTES - 1] = [0; 3 * LIMB_BYTES - 1];
-    E0::store_l(op0.as_mut_slice(), 0, !0);
-    E0::store_l(op0.as_mut_slice(), 1, !0);
-    let expected = square_by_mul::<E0, {3 * LIMB_BYTES - 1}>(&op0, 2 * LIMB_BYTES);
-    mp_ct_square_trunc_mp::<E0>(op0.as_mut_slice(), 2 * LIMB_BYTES);
-    assert_eq!(op0, expected);
+    let mut _op0: [u8; 3 * LIMB_BYTES - 1] = [0; 3 * LIMB_BYTES - 1];
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
+    drop(op0);
+    let expected = square_by_mul::<F0, {3 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
+    drop(op0);
+    assert_eq!(_op0, expected);
 
-
-    let mut op0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    E0::store_l(op0.as_mut_slice(), 0, !0);
-    E0::store_l(op0.as_mut_slice(), 1, !0 >> 2 * 8);
-    let expected = square_by_mul::<E0, {2 * LIMB_BYTES - 1}>(&op0, 2 * LIMB_BYTES - 1);
-    mp_ct_square_trunc_mp::<E0>(op0.as_mut_slice(), 2 * LIMB_BYTES - 1);
-    assert_eq!(op0, expected);
+    let mut _op0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0 >> 2 * 8);
+    drop(op0);
+    let expected = square_by_mul::<F0, {2 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES - 1);
+    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES - 1);
+    drop(op0);
+    assert_eq!(_op0, expected);
 }
 
 #[test]
 fn test_mp_ct_square_trunc_be() {
-    test_mp_ct_square_trunc_mp::<MPBigEndianOrder>()
+    use super::limbs_buffer::MPBigEndianMutByteSlice;
+    test_mp_ct_square_trunc_mp::<MPBigEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_ct_square_trunc_le() {
-    test_mp_ct_square_trunc_mp::<MPLittleEndianOrder>()
+    use super::limbs_buffer::MPLittleEndianMutByteSlice;
+    test_mp_ct_square_trunc_mp::<MPLittleEndianMutByteSlice>()
 }
 
 // Multiply multiprecision integer by a limb.
-pub fn mp_ct_mul_trunc_mp_l<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize, op1: LimbType) {
+pub fn mp_ct_mul_trunc_mp_l<'a, T0: MPIntMutByteSlice<'a>>(op0: &mut T0, op0_in_len: usize, op1: LimbType) {
     debug_assert!(op0_in_len <= op0.len());
     let op0_len = op0.len();
     let result_high_npartial = op0_len % LIMB_BYTES;
@@ -458,7 +446,7 @@ pub fn mp_ct_mul_trunc_mp_l<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize, 
         (1 << 8 * result_high_npartial) - 1
     };
     let op0_nlimbs = mp_ct_nlimbs(op0_len);
-    E0::zeroize_bytes_above(op0, op0_in_len);
+    op0.zeroize_bytes_above(op0_in_len);
     let op0_in_nlimbs = mp_ct_nlimbs(op0_in_len);
 
     if op0_in_len == 0 {
@@ -467,7 +455,7 @@ pub fn mp_ct_mul_trunc_mp_l<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize, 
 
     let mut carry = 0;
     for j in 0..op0_in_nlimbs {
-        let op0_val = E0::load_l(op0, j);
+        let op0_val = op0.load_l(j);
         let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op1).into();
 
         let (carry0, result_val) = ct_add_l_l(prod.low(), carry);
@@ -475,58 +463,60 @@ pub fn mp_ct_mul_trunc_mp_l<E0: MPEndianess>(op0: &mut [u8], op0_in_len: usize, 
         carry = prod.high() + carry0; // Does not overflow.
 
         if j != op0_nlimbs - 1 {
-            E0::store_l_full(op0, j, result_val);
+            op0.store_l_full(j, result_val);
         } else {
-            E0::store_l(op0, j, result_val & result_high_mask);
+            op0.store_l(j, result_val & result_high_mask);
         }
     }
 
     if op0_in_nlimbs != op0_nlimbs {
         if op0_in_nlimbs != op0_nlimbs - 1 {
-            E0::store_l_full(op0, op0_in_nlimbs, carry);
+            op0.store_l_full(op0_in_nlimbs, carry);
         } else {
-            E0::store_l(op0, op0_in_nlimbs, carry & result_high_mask);
+            op0.store_l(op0_in_nlimbs, carry & result_high_mask);
         }
     }
 }
 
 #[cfg(test)]
-fn test_mp_ct_mul_trunc_mp_l<E0: MPEndianess>() {
+fn test_mp_ct_mul_trunc_mp_l<F0: MPIntMutByteSliceFactory>() {
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let op0 = op0.as_mut_slice();
-    E0::store_l(op0, 0, !0);
-    E0::store_l(op0, 1, !0);
+    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
     let op1 = 0;
-    mp_ct_mul_trunc_mp_l::<E0>(op0, 2 * LIMB_BYTES, op1);
-    assert_eq!(E0::load_l(op0, 0), 0);
-    assert_eq!(E0::load_l(op0, 1), 0);
+    mp_ct_mul_trunc_mp_l(&mut op0, 2 * LIMB_BYTES, op1);
+    assert_eq!(op0.load_l(0), 0);
+    assert_eq!(op0.load_l(1), 0);
 
     let mut op0: [u8; 2 * LIMB_BYTES + 1] = [0; 2 * LIMB_BYTES + 1];
-    let op0 = op0.as_mut_slice();
-    E0::store_l(op0, 0, !0);
-    E0::store_l(op0, 1, !0);
+    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0);
     let op1 = 2;
-    mp_ct_mul_trunc_mp_l::<E0>(op0, 2 * LIMB_BYTES, op1);
-    assert_eq!(E0::load_l(op0, 0), !1);
-    assert_eq!(E0::load_l(op0, 1), !0);
-    assert_eq!(E0::load_l(op0, 2), 1);
+    mp_ct_mul_trunc_mp_l(&mut op0, 2 * LIMB_BYTES, op1);
+    assert_eq!(op0.load_l(0), !1);
+    assert_eq!(op0.load_l(1), !0);
+    assert_eq!(op0.load_l(2), 1);
 
     let mut op0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    let op0 = op0.as_mut_slice();
-    E0::store_l(op0, 0, !0);
-    E0::store_l(op0, 1, !0 >> 8);
+    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    op0.store_l(0, !0);
+    op0.store_l(1, !0 >> 8);
     let op1 = 2;
-    mp_ct_mul_trunc_mp_l::<E0>(op0, 2 * LIMB_BYTES - 1, op1);
-    assert_eq!(E0::load_l(op0, 0), !1);
-    assert_eq!(E0::load_l(op0, 1), !0 >> 8);
+    mp_ct_mul_trunc_mp_l(&mut op0, 2 * LIMB_BYTES - 1, op1);
+    assert_eq!(op0.load_l(0), !1);
+    assert_eq!(op0.load_l(1), !0 >> 8);
 }
 
 #[test]
 fn test_mp_ct_mul_trunc_be_l() {
-    test_mp_ct_mul_trunc_mp_l::<MPBigEndianOrder>()
+    use super::limbs_buffer::MPBigEndianMutByteSlice;
+    test_mp_ct_mul_trunc_mp_l::<MPBigEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_ct_mul_trunc_le_l() {
-    test_mp_ct_mul_trunc_mp_l::<MPLittleEndianOrder>()
+    use super::limbs_buffer::MPLittleEndianMutByteSlice;
+    test_mp_ct_mul_trunc_mp_l::<MPLittleEndianMutByteSlice>()
 }
