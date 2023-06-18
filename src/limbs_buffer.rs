@@ -678,6 +678,111 @@ fn test_mp_le_zeroize_bytes_above() {
     assert_eq!(mp_le_load_l(&mut limbs, 1), 0);
 }
 
+fn _mp_ne_load_l_full(limbs: &[u8], src_begin: usize) -> LimbType {
+    let src_end = src_begin + LIMB_BYTES;
+    let src = &limbs[src_begin..src_end];
+    let src = <[u8; LIMB_BYTES] as TryFrom<&[u8]>>::try_from(src).unwrap();
+    LimbType::from_ne_bytes(src)
+}
+
+fn mp_ne_load_l_full(limbs: &[u8], i: usize) -> LimbType {
+    let src_begin = i * LIMB_BYTES;
+    debug_assert!(src_begin < limbs.len());
+    _mp_ne_load_l_full(limbs, src_begin)
+}
+
+fn mp_ne_load_l(limbs: &[u8], i: usize) -> LimbType {
+    mp_ne_load_l_full(limbs, i)
+}
+
+#[cfg(test)]
+const fn test_ne_is_le() -> bool {
+    let mut bytes: [u8; LIMB_BYTES] = [0; LIMB_BYTES];
+    bytes[0] = 1;
+    LimbType::from_ne_bytes(bytes) == 1
+}
+
+#[test]
+fn test_mp_ne_load_l() {
+    let limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    assert_eq!(mp_ne_load_l(&limbs, 0), 0);
+    assert_eq!(mp_ne_load_l(&limbs, 1), 0);
+
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    if test_ne_is_le() {
+        limbs[0] = 1;
+        limbs[LIMB_BYTES] = 2;
+    } else {
+        limbs[LIMB_BYTES - 1] = 1;
+        limbs[2 * LIMB_BYTES - 1] = 2;
+    }
+    assert_eq!(mp_ne_load_l(&limbs, 0), 1);
+    assert_eq!(mp_ne_load_l(&limbs, 1), 2);
+}
+
+fn _mp_ne_store_l_full(limbs: &mut [u8], dst_begin: usize, value: LimbType) {
+    let dst_end = dst_begin + LIMB_BYTES;
+    let dst = &mut limbs[dst_begin..dst_end];
+    let dst = <&mut [u8; LIMB_BYTES] as TryFrom<&mut [u8]>>::try_from(dst).unwrap();
+    *dst = value.to_ne_bytes();
+}
+
+fn mp_ne_store_l_full(limbs: &mut [u8], i: usize, value: LimbType) {
+    let dst_begin = i * LIMB_BYTES;
+    debug_assert!(dst_begin < limbs.len());
+    _mp_ne_store_l_full(limbs, dst_begin, value);
+}
+
+fn mp_ne_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
+    mp_ne_store_l_full(limbs, i, value)
+}
+
+fn test_mp_ne_store_l() {
+    use super::limb::LIMB_BITS;
+
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    mp_ne_store_l(&mut limbs, 0, 1 << (LIMB_BITS - 1));
+    mp_ne_store_l(&mut limbs, 1, 1);
+    assert_eq!(mp_ne_load_l(&limbs, 0), 1 << (LIMB_BITS - 1));
+    assert_eq!(mp_ne_load_l(&limbs, 1), 1);
+
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    mp_ne_store_l_full(&mut limbs, 0, 1 << (LIMB_BITS - 1));
+    mp_ne_store_l_full(&mut limbs, 1, 1);
+    assert_eq!(mp_ne_load_l(&limbs, 0), 1 << (LIMB_BITS - 1));
+    assert_eq!(mp_ne_load_l(&limbs, 1), 1);
+}
+
+fn mp_ne_zeroize_bytes_above(limbs: &mut [u8], nbytes: usize) {
+    let begin_limb = nbytes / LIMB_BYTES;
+    let mut begin_aligned = begin_limb * LIMB_BYTES;
+    let begin_in_limb = nbytes - begin_aligned;
+    if begin_in_limb != 0 {
+        let mut l = mp_ne_load_l(limbs, begin_limb);
+        l &= ((1 as LimbType) << 8 * begin_in_limb) - 1;
+        mp_ne_store_l(limbs, begin_limb, l);
+        begin_aligned += LIMB_BYTES;
+    }
+    limbs[begin_aligned..].fill(0);
+}
+
+#[test]
+fn test_mp_ne_zeroize_bytes_above() {
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    mp_ne_store_l(&mut limbs, 0, !0);
+    mp_ne_store_l(&mut limbs, 1, !0);
+    mp_ne_zeroize_bytes_above(&mut limbs, LIMB_BYTES + 1);
+    assert_eq!(mp_ne_load_l(&mut limbs, 0), !0);
+    assert_eq!(mp_ne_load_l(&mut limbs, 1), !0 & 0xff);
+
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    mp_le_store_l(&mut limbs, 0, !0);
+    mp_le_store_l(&mut limbs, 1, !0);
+    mp_le_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
+    assert_eq!(mp_le_load_l(&mut limbs, 0), !0 >> 8);
+    assert_eq!(mp_le_load_l(&mut limbs, 1), 0);
+}
+
 pub trait MPIntByteSlice<'a>: Sized {
     type MPIntByteSlice<'b>: MPIntByteSlice<'b> where Self: 'b;
 
@@ -958,6 +1063,139 @@ impl<'a> MPIntMutByteSliceFactory for MPLittleEndianMutByteSlice<'a> {
     }
 
     fn split_at_mut<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>) {
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
+    }
+}
+
+#[derive(Debug)]
+pub struct UnalignedMPByteSliceLenError {}
+
+pub struct MPNativeEndianByteSlice<'a> {
+    bytes: &'a [u8]
+}
+
+impl<'a> MPIntByteSlice<'a> for MPNativeEndianByteSlice<'a> {
+    type MPIntByteSlice<'b> = MPNativeEndianByteSlice<'b> where Self: 'b;
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn load_l_full(&self, i: usize) -> LimbType {
+        mp_ne_load_l_full(self.bytes, i)
+    }
+
+    fn load_l(&self, i: usize) -> LimbType {
+        mp_ne_load_l(self.bytes, i)
+    }
+
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        debug_assert!(nbytes % LIMB_BYTES == 0);
+        let (l, h) = self.bytes.split_at(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+
+    fn split_at<'b>(&self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    where Self: 'b
+    {
+        debug_assert!(nbytes % LIMB_BYTES == 0);
+        let (l, h) = self.bytes.split_at(nbytes);
+        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+    }
+}
+
+impl<'a> MPIntByteSliceFactory for MPNativeEndianByteSlice<'a> {
+    type SelfT<'b> = MPNativeEndianByteSlice<'b>;
+    type FromBytesError = UnalignedMPByteSliceLenError;
+
+    fn from_bytes<'b, 'c: 'b>(bytes: &'c [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
+        if bytes.len() % LIMB_BYTES == 0 {
+            Ok(Self::SelfT::<'b> { bytes })
+        } else {
+            Err(UnalignedMPByteSliceLenError {})
+        }
+    }
+
+    fn coerce_lifetime<'b>(self: &'b Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes).unwrap()
+    }
+}
+
+pub struct MPNativeEndianMutByteSlice<'a> {
+    bytes: &'a mut [u8]
+}
+
+impl<'a> MPIntByteSlice<'a> for MPNativeEndianMutByteSlice<'a> {
+    type MPIntByteSlice<'b> = MPNativeEndianByteSlice<'b> where Self: 'b;
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn load_l_full(&self, i: usize) -> LimbType {
+        mp_ne_load_l_full(self.bytes, i)
+    }
+
+    fn load_l(&self, i: usize) -> LimbType {
+        mp_ne_load_l(self.bytes, i)
+    }
+
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        debug_assert!(nbytes % LIMB_BYTES == 0);
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    where Self: 'b
+    {
+        debug_assert!(nbytes % LIMB_BYTES == 0);
+        let (h, l) = self.bytes.split_at(nbytes);
+        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+    }
+}
+
+impl<'a> MPIntMutByteSlice<'a> for MPNativeEndianMutByteSlice<'a> {
+    fn store_l_full(&mut self, i: usize, value: LimbType) {
+        mp_ne_store_l_full(self.bytes, i, value)
+    }
+
+    fn store_l(&mut self, i: usize, value: LimbType) {
+        mp_ne_store_l(self.bytes, i, value)
+    }
+
+    fn zeroize_bytes_above(&mut self, nbytes: usize) {
+        mp_ne_zeroize_bytes_above(self.bytes, nbytes)
+    }
+}
+
+impl<'a> MPIntMutByteSliceFactory for MPNativeEndianMutByteSlice<'a> {
+    type SelfT<'b> = MPNativeEndianMutByteSlice<'b>;
+    type FromBytesError = UnalignedMPByteSliceLenError;
+
+    fn from_bytes<'b, 'c: 'b>(bytes: &'c mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
+        if bytes.len() % LIMB_BYTES == 0 {
+            Ok(Self::SelfT::<'b> { bytes })
+        } else {
+            Err(UnalignedMPByteSliceLenError {})
+        }
+    }
+
+    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes.as_mut()).unwrap()
+    }
+
+    fn split_at_mut<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>) {
+        debug_assert!(nbytes % LIMB_BYTES == 0);
         let (l, h) = self.bytes.split_at_mut(nbytes);
         (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
     }
