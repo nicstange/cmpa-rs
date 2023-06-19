@@ -14,6 +14,65 @@ pub enum CtMpDivisionError {
     InsufficientQuotientSpace,
 }
 
+fn q_estimate(
+    u_head: &[LimbType; 3],
+    scaled_v_head: &[LimbType; 2],
+    normalized_scaled_v_high: &CtDivDlLNormalizedDivisor) -> LimbType {
+    let (q, r) = |(q, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
+        (q.into(), r)
+    }(ct_div_dl_l(&DoubleLimb::new(u_head[0], u_head[1]), normalized_scaled_v_high));
+    debug_assert!(q.high() <= 1); // As per the normalization of v_high.
+    // If q.high() is set, q needs to get capped to fit single limb
+    // and r adjusted accordingly.
+    //
+    // For determining the adjusted r, note that if q.high() is set,
+    // then then u_head[0] == v_head[0].
+    // To see this, observe that u_head[0] >= v_head[0] holds trivially.
+    //
+    // OTOH, the invariant throughout the caller's loop over j is that u[j+n:j] / v[n-1:0] < b, from
+    // which it follows that u_head[0] <= v_head[0].
+    // Assume not, i.e. u_head[0] >= v_head[0] + 1. We have v < (v_head[0] + 1) * b^(n - 1).
+    // It would follow that
+    // u[j+n:j] >= (u_head[0] * b + u_head[1]) * b^(n - 1)
+    //          >= u_head[0] * b * b^(n - 1) >= (v_head[0] + 1) * b * b^(n - 1)
+    //          >  v * b,
+    // a contradiction to the loop invariant.
+    //
+    // Thus, in summary, if q.high() is set, then u_head[0] == v_head[0].
+    //
+    // It follows that the adjusted r for capping q to q == b - 1 equals
+    // u_head[0] * b + u_head[1] - (b - 1) * v_head[0]
+    // = v_head[0] * b + u_head[1] - (b - 1) * v_head[0] = v_head[0] + u_head[1].
+    debug_assert!(q.high() == 0 || u_head[0] == scaled_v_head[0]);
+    debug_assert_eq!(q.high() & !1, 0); // At most LSB is set
+    let ov = ct_l_to_subtle_choice(q.high());
+    let q = LimbType::conditional_select(&q.low(), &!0, ov);
+    let (r_carry_on_ov, r_on_ov) = ct_add_l_l(u_head[1], scaled_v_head[0]);
+    let r = LimbType::conditional_select(&r, &r_on_ov, ov);
+    debug_assert_eq!(r_carry_on_ov & !1, 0); // At most LSB is set
+    let r_carry = ov & ct_l_to_subtle_choice(r_carry_on_ov);
+
+    // Now, as long as r does not overflow b, i.e. a LimbType,
+    // check whether q * v[n - 2] > b * r + u[j + n - 2].
+    // If so, decrement q and adjust r accordingly by adding v[n-1] back.
+    // Note that because v[n-1] is normalized to have its MSB set,
+    // r would overflow in the second iteration at latest.
+    // The second iteration is not necessary for correctness, but only serves
+    // optimization purposes: it would help to avoid the "add-back" step
+    // below in the majority of cases. However, for constant-time execution,
+    // the add-back must get executed anyways and thus, the second iteration
+    // of the "over-estimated" check here would be quite pointless. Skip it.
+    //
+    // If v_nlimbs < 2 and j == 0, u[j + n - 2] might not be defined. But in this case v[n-2] (found
+    // in scaled_v_head[1]) is zero anyway and the comparison test will always come out negative, so the
+    // caller may load arbitrary value into its corresponding location at q_head[2].
+    let qv_head_low: Zeroizing<DoubleLimb> = ct_mul_l_l(scaled_v_head[1], q).into();
+    let over_estimated = !r_carry &
+        (ct_gt_l_l(qv_head_low.high(), r) |
+         (ct_eq_l_l(qv_head_low.high(), r) & ct_gt_l_l(qv_head_low.low(), u_head[2])));
+    LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated)
+}
+
 fn u_sub_scaled_qv_at<'a, UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon>(
     u_parts: &mut CompositeLimbsBuffer<'a, UT, 3>, j: usize, q: LimbType,
     v: &VT, v_nlimbs: usize, scaling: LimbType) -> LimbType {
@@ -165,6 +224,7 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
     let scaled_v_high = v_high * scaling;
     let (carry, scaled_v_high) = ct_add_l_l(scaled_v_high, carry);
     debug_assert_eq!(carry, 0);
+    let scaled_v_head: Zeroizing<[LimbType; 2]> = Zeroizing::from([scaled_v_high, scaled_v_tail_high]);
 
     // Scale u.
     let mut carry = 0;
@@ -187,66 +247,16 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
         let q = {
             let u_h = u_parts.load(v_nlimbs + j);
             let u_l = u_parts.load(v_nlimbs + j - 1);
-
-            let (q, r) = |(q, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-                (q.into(), r)
-            }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &normalized_scaled_v_high));
-            debug_assert!(q.high() <= 1); // As per the normalization of v_high.
-            // If q.high() is set, q needs to get capped to fit single limb
-            // and r adjusted accordingly.
-            //
-            // For determining the adjusted r, note that if q.high() is set,
-            // then then u_h == scaled_v_high.
-            // To see this, observe that u_h >= scaled_v_high holds trivially.
-            //
-            // OTOH, the invariant throughout the loop over j is that u[j+n:j] / v[n-1:0] < b,
-            // from which it follows that u_h <= scaled_v_high.
-            // Assume not, i.e. u_h >= v_h + 1. We have v < (v_h + 1) * b^(n - 1).
-            // It would follow that
-            // u[j+n:j] >= (u_h * b + u_l) * b^(n - 1)
-            //          >= u_h * b * b^(n - 1) >= (v_h + 1) * b * b^(n - 1)
-            //          >  v * b,
-            // a contradiction to the loop invariant.
-            //
-            // Thus, in summary, if q.high() is set, then u_h == scaled_v_high.
-            //
-            // It follows that the adjusted r for capping q to q == b - 1 equals
-            // u_h * b + u_l - (b - 1) * v_h
-            // = v_h * b + u_l - (b - 1) * v_h = v_h + u_l.
-            debug_assert!(q.high() == 0 || u_h == scaled_v_high);
-            debug_assert_eq!(q.high() & !1, 0); // At most LSB is set
-            let ov = ct_l_to_subtle_choice(q.high());
-            let q = LimbType::conditional_select(&q.low(), &!0, ov);
-            let (r_carry_on_ov, r_on_ov) = ct_add_l_l(u_l, scaled_v_high);
-            let r = LimbType::conditional_select(&r, &r_on_ov, ov);
-            debug_assert_eq!(r_carry_on_ov & !1, 0); // At most LSB is set
-            let r_carry = ov & ct_l_to_subtle_choice(r_carry_on_ov);
-
-            // Now, as long as r does not overflow b, i.e. a LimbType,
-            // check whether q * v[n - 2] > b * r + u[j + n - 2].
-            // If so, decrement q and adjust r accordingly by adding v[n-1] back.
-            // Note that because v[n-1] is normalized to have its MSB set,
-            // r would overflow in the second iteration at latest.
-            // The second iteration is not necessary for correctness, but only serves
-            // optimization purposes: it would help to avoid the "add-back" step
-            // below in the majority of cases. However, for constant-time execution,
-            // the add-back must get executed anyways and thus, the second iteration
-            // of the "over-estimated" check here would be quite pointless. Skip it.
-            //
-            // Load u[u[j + n - 2] first. If v_nlimbs < 2 and j == 0, it might not be defined. But
-            // in this case scaled_v_tail_high is zero anyway and the comparison test will always
-            // come out negative, so load an arbitrary value then.
+            // Load u[u[j + n - 2]. If v_nlimbs < 2 and j == 0, it might not be defined -- make it
+            // zero in this case, c.f. the corresponding comment in q_estimate().
             let u_tail_high = if v_nlimbs + j >= 2 {
                 u_parts.load(v_nlimbs + j - 2)
             } else {
                 0
             };
-            // First iteration of the test.
-            let qv_tail_high: Zeroizing<DoubleLimb> = ct_mul_l_l(scaled_v_tail_high, q).into();
-            let over_estimated = !r_carry &
-                (ct_gt_l_l(qv_tail_high.high(), r) |
-                 (ct_eq_l_l(qv_tail_high.high(), r) & ct_gt_l_l(qv_tail_high.low(), u_tail_high)));
-            LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated)
+            let u_head: Zeroizing<[LimbType; 3]> = Zeroizing::from([u_h, u_l, u_tail_high]);
+
+            q_estimate(&u_head, &scaled_v_head, normalized_scaled_v_high.deref())
         };
 
         let borrow = u_sub_scaled_qv_at(&mut u_parts, j, q, v, v_nlimbs, scaling);
