@@ -295,13 +295,18 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
         } else {
             0
         };
-        let mut q = vec![0xffu8; q_len];
+        let mut q = vec![0xffu8; QT::limbs_align_len(q_len)];
         let mut q = QT::from_bytes(&mut q).unwrap();
         let mut _rem = vec![0u8; u.len()];
         let mut rem = UT::from_bytes(&mut _rem).unwrap();
         rem.copy_from(u);
         let (mut rem_h, mut rem_l) = if split_u {
-            let (rem_h, rem_l) = rem.split_at((LIMB_BYTES + 1).min(u.len()));
+            let split_point = if UT::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
+                LIMB_BYTES + 1
+            } else {
+                LIMB_BYTES
+            };
+            let (rem_h, rem_l) = rem.split_at(split_point.min(u.len()));
             (Some(rem_h), rem_l)
         } else {
             (None, rem.coerce_lifetime())
@@ -320,9 +325,9 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
         assert_eq!(mp_ct_eq_mp_mp(u, &result).unwrap_u8(), 1);
     }
 
-    fn limbs_from_be_bytes<DT: MPIntMutByteSlice, const N: usize>(bytes: [u8; N]) -> [u8; N] {
-        let mut limbs: [u8; N] = [0; N];
-        let mut dst = DT::from_bytes(&mut limbs).unwrap();
+    fn limbs_from_be_bytes<DT: MPIntMutByteSlice, const N: usize>(bytes: [u8; N]) -> Vec<u8> {
+        let mut limbs = vec![0u8; DT::limbs_align_len(N)];
+        let mut dst = DT::from_bytes(limbs.as_mut_slice()).unwrap();
         dst.copy_from(&MPBigEndianByteSlice::from_bytes(bytes.as_slice()).unwrap());
         drop(dst);
         limbs
@@ -388,7 +393,7 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
     const N_MAX_LIMBS: u32 = 3;
     for i in 0..N_MAX_LIMBS * LIMB_BITS + 1 {
         let u_len = (i as usize + 8 - 1) / 8;
-        let mut u = vec![0u8; u_len];
+        let mut u = vec![0u8; UT::limbs_align_len(u_len)];
         let mut u = UT::from_bytes(&mut u).unwrap();
         if i != 0 {
             let u_nlimbs = mp_ct_nlimbs(u_len);
@@ -406,7 +411,7 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
         for j1 in 0..i + 1 {
             for j2 in 0..j1 + 1 {
                 let v_len = ((j1 + 1) as usize + 8 - 1) / 8;
-                let mut v = vec![0u8; v_len];
+                let mut v = vec![0u8; VT::limbs_align_len(v_len)];
                 let mut v = VT::from_bytes(&mut v).unwrap();
                 v.store_l((j1 / LIMB_BITS) as usize, 1 << (j1 % LIMB_BITS));
                 v.store_l((j2 / LIMB_BITS) as usize, 1 << (j2 % LIMB_BITS));
@@ -427,6 +432,12 @@ fn test_mp_ct_div_be_be_be() {
 fn test_mp_ct_div_le_le_le() {
     use super::limbs_buffer::MPLittleEndianMutByteSlice;
     test_mp_ct_div_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_ct_div_ne_ne_ne() {
+    use super::limbs_buffer::MPNativeEndianMutByteSlice;
+    test_mp_ct_div_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
 }
 
 // Compute the modulo of a multiprecision integer modulo a [`LimbType`] divisisor.

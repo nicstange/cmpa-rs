@@ -1,7 +1,7 @@
 //! Implementation of multiprecision integer comparison primitives.
 
 use super::limb::{ct_eq_l_l, ct_neq_l_l, ct_lt_l_l};
-use super::limbs_buffer::{mp_ct_nlimbs, MPIntByteSliceCommon};
+use super::limbs_buffer::MPIntByteSliceCommon;
 #[cfg(test)]
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _};
 use subtle;
@@ -16,8 +16,8 @@ use subtle;
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
 pub fn mp_ct_eq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
-    let op0_nlimbs = mp_ct_nlimbs(op0.len());
-    let op1_nlimbs = mp_ct_nlimbs(op1.len());
+    let op0_nlimbs = op0.nlimbs();
+    let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
 
     let mut is_eq = subtle::Choice::from(1);
@@ -90,6 +90,12 @@ fn test_mp_ct_eq_le_le() {
     test_mp_ct_eq_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
 }
 
+#[test]
+fn test_mp_ct_eq_ne_ne() {
+    use super::limbs_buffer::MPNativeEndianMutByteSlice;
+    test_mp_ct_eq_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+}
+
 /// Compare two multiprecision integers of specified endianess for `!=`.
 ///
 /// Evaluates to `true` iff `op0` is not equal to `op1` in value .
@@ -113,8 +119,8 @@ pub fn mp_ct_neq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
 pub fn mp_ct_leq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
-    let op0_nlimbs = mp_ct_nlimbs(op0.len());
-    let op1_nlimbs = mp_ct_nlimbs(op1.len());
+    let op0_nlimbs = op0.nlimbs();
+    let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
 
     let mut is_eq = subtle::Choice::from(1);
@@ -218,6 +224,12 @@ fn test_mp_ct_leq_be_be() {
 fn test_mp_ct_leq_le_le() {
     use super::limbs_buffer::MPLittleEndianMutByteSlice;
     test_mp_ct_leq_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_ct_leq_ne_ne() {
+    use super::limbs_buffer::MPNativeEndianMutByteSlice;
+    test_mp_ct_leq_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
 }
 
 /// Compare two multiprecision integers of specified endianess for `<`.

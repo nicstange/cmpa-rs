@@ -1,28 +1,34 @@
 use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_l_l, LIMB_BYTES, ct_l_to_subtle_choice};
-use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_nlimbs};
+use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_limbs_align_len, mp_ct_nlimbs};
 use super::cmp_impl::mp_ct_geq_mp_mp;
 use super::add_impl::mp_ct_sub_cond_mp_mp;
 use super::div_impl::mp_ct_div_mp_mp;
 use subtle::{self, ConditionallySelectable as _};
 use zeroize::Zeroize;
 
+pub fn mp_ct_montgomery_radix_shift_len(n_len: usize) -> usize {
+    mp_ct_limbs_align_len(n_len)
+}
+
+pub fn mp_ct_montgomery_radix_shift_nlimbs(n_len: usize) -> usize {
+    mp_ct_nlimbs(n_len)
+}
+
 pub fn mp_ct_to_montgomery_form<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
     t: &mut TT, scratch: &mut [u8], n: &NT
 ) {
     debug_assert!(t.len() >= n.len());
-    let n_limbs = mp_ct_nlimbs(n.len());
-    let shift_len = n_limbs * LIMB_BYTES;
-    debug_assert!(scratch.len() >= shift_len);
-    let (scratch, _) = scratch.split_at_mut(shift_len);
+    let radix_shift_len = mp_ct_montgomery_radix_shift_len(n.len());
+    debug_assert!(scratch.len() >= radix_shift_len);
+    let (scratch, _) = scratch.split_at_mut(radix_shift_len);
     let mut t_low = TT::from_bytes(scratch).unwrap();
     t_low.zeroize_bytes_above(0);
-    let t_len = t.len();
     let mut t_high = t.coerce_lifetime();
     mp_ct_div_mp_mp::<_, _, TT>(Some(&mut t_high), &mut t_low, n, None).unwrap();
     drop(t_high);
     drop(t_low);
 
-    for i in 0..mp_ct_nlimbs(t.len()) {
+    for i in 0..t.nlimbs() {
         debug_assert_eq!(t.load_l(i), 0);
     }
     let mut t_low = TT::from_bytes(scratch).unwrap();
@@ -78,8 +84,8 @@ fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceC
     debug_assert!(cond_mul.map(|c| c.unwrap_u8()).unwrap_or(1) == 0 || t_carry <= 1); // The REDC loop invariant.
     debug_assert!(!n.is_empty());
     debug_assert!(t.len() >= n.len());
-    let n_nlimbs = mp_ct_nlimbs(n.len());
-    let t_nlimbs = mp_ct_nlimbs(t.len());
+    let n_nlimbs = n.nlimbs();
+    let t_nlimbs = t.nlimbs();
 
     let m;
     let mut carry_low;
@@ -152,14 +158,11 @@ fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceC
 }
 
 
-pub fn mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
-    t: &mut TT, n: &NT, n0_inv_mod_l: LimbType
-) {
+pub fn mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(t: &mut TT, n: &NT, n0_inv_mod_l: LimbType) {
     debug_assert!(!n.is_empty());
     debug_assert!(t.len() >= n.len());
     debug_assert!(t.len() <= 2 * n.len());
-    let t_nlimbs = mp_ct_nlimbs(t.len());
-    let n_nlimbs = mp_ct_nlimbs(n.len());
+    let t_nlimbs = t.nlimbs();
     let n0_val = n.load_l(0);
     debug_assert!(n0_val.wrapping_mul(n0_inv_mod_l) == 1);
     let neg_n0_inv_mod_l = !n0_inv_mod_l + 1;
@@ -168,21 +171,18 @@ pub fn mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
     // t's high limb might be a partial one, do not update directly in the course of reducing in
     // order to avoid overflowing it. Use a shadow instead.
     let mut t_high_shadow = t.load_l(t_nlimbs - 1);
-    for _i in 0..n_nlimbs {
+    for _i in 0..mp_ct_montgomery_radix_shift_nlimbs(n.len()) {
         (reduced_t_carry, t_high_shadow) =
             mp_ct_montgomery_redc_one_cond_mul(reduced_t_carry, t_high_shadow, t, n, neg_n0_inv_mod_l, None);
     }
 
     // Now apply the high limb shadow back.
-    let t_high_npartial = t.len() % LIMB_BYTES;
-    if t_high_npartial == 0 {
-        t.store_l_full(t_nlimbs - 1, t_high_shadow);
-    } else {
-        assert_eq!(reduced_t_carry, 0);
-        reduced_t_carry = t_high_shadow >> 8 * t_high_npartial;
-        t_high_shadow &= (1 << 8 * t_high_npartial) - 1;
-        t.store_l(t_nlimbs - 1, t_high_shadow);
-    }
+    let t_high_shadow_mask = t.partial_high_mask();
+    let t_high_shadow_shift = t.partial_high_shift();
+    assert!(t_high_shadow_shift == 0 || reduced_t_carry == 0);
+    reduced_t_carry |= (t_high_shadow & !t_high_shadow_mask) >> t_high_shadow_shift;
+    t_high_shadow &= t_high_shadow_mask;
+    t.store_l(t_nlimbs - 1, t_high_shadow);
 
     mp_ct_sub_cond_mp_mp(t, n, ct_l_to_subtle_choice(reduced_t_carry) | mp_ct_geq_mp_mp(t, n));
     debug_assert!(mp_ct_geq_mp_mp(t, n).unwrap_u8() == 0);
@@ -209,7 +209,7 @@ fn test_mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
                 for l in 0..8 {
                     let t_low = MERSENNE_PRIME_13.wrapping_mul((131087 as LimbType).wrapping_mul(l));
 
-                    let mut t: [u8; 2 * LIMB_BYTES + 1] = [0; 2 * LIMB_BYTES + 1];
+                    let mut t: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
                     let mut t = TT::from_bytes(t.as_mut_slice()).unwrap();
                     t.store_l(0, t_low);
                     t.store_l(1, t_high);
@@ -245,6 +245,12 @@ fn test_mp_ct_montgomery_redc_le_le() {
     test_mp_ct_montgomery_redc::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
 }
 
+#[test]
+ fn test_mp_ct_montgomery_redc_ne_ne() {
+    use super::limbs_buffer::MPNativeEndianMutByteSlice;
+    test_mp_ct_montgomery_redc::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+}
+
 fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon,
                                  T1: MPIntByteSliceCommon, NT: MPIntByteSliceCommon> (
     result: &mut RT, op0: &T0, op1: &T1, n: &NT, n0_inv_mod_l: LimbType,
@@ -258,8 +264,8 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
     debug_assert!(op0.len() <= n.len());
     debug_assert!(op1.len() <= n.len());
 
-    let op0_nlimbs = mp_ct_nlimbs(op0.len());
-    let op1_nlimbs = mp_ct_nlimbs(op1.len());
+    let op0_nlimbs = op0.nlimbs();
+    let op1_nlimbs = op1.nlimbs();
     if op1_nlimbs == 0 {
         // The product is zero, but if cond == 0, result is supposed to receive op0 instead of the
         // product. And it must be done in constant-time.
@@ -272,7 +278,7 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
         return;
     }
 
-    let n_nlimbs = mp_ct_nlimbs(n.len());
+    let n_nlimbs = n.nlimbs();
     let n0_val = n.load_l(0);
     debug_assert!(n0_val.wrapping_mul(n0_inv_mod_l) == 1);
     let neg_n0_inv_mod_l = !n0_inv_mod_l + 1;
@@ -446,8 +452,8 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
         debug_assert!(result_carry <= 1); // Outer loop invariant still maintained.
     }
 
-    // If op0_nlimbs < n_nlimbs, handle the rest by REDCing it.
-    for _i in op0_nlimbs..n_nlimbs {
+    // If op0_nlimbs < the montgomery radix shift distance, handle the rest by REDCing it.
+    for _i in op0_nlimbs..mp_ct_montgomery_radix_shift_nlimbs(n.len()) {
         (result_carry, result_high_shadow) = mp_ct_montgomery_redc_one_cond_mul(
             result_carry, result_high_shadow, result,
             n, neg_n0_inv_mod_l, Some(cond)
@@ -456,15 +462,12 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
 
     // Now apply the high limb shadow back.
     debug_assert!(result.len() == n.len());
-    let result_high_npartial = n.len() % LIMB_BYTES;
-    if result_high_npartial == 0 {
-        result.store_l_full( n_nlimbs - 1, result_high_shadow);
-    } else {
-        assert_eq!(result_carry, 0);
-        result_carry = result_high_shadow >> 8 * result_high_npartial;
-        result_high_shadow &= (1 << 8 * result_high_npartial) - 1;
-        result.store_l(n_nlimbs - 1, result_high_shadow);
-    }
+    let result_high_shadow_mask = n.partial_high_mask();
+    let result_high_shadow_shift = n.partial_high_shift();
+    assert!(result_high_shadow_shift == 0 || result_carry == 0);
+    result_carry |= (result_high_shadow & !result_high_shadow_mask) >> result_high_shadow_shift;
+    result_high_shadow &= result_high_shadow_mask;
+    result.store_l(n_nlimbs - 1, result_high_shadow);
 
     mp_ct_sub_cond_mp_mp(
         result, n, ct_l_to_subtle_choice(result_carry) | mp_ct_geq_mp_mp(result, n)
@@ -476,6 +479,8 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
 fn test_mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice,
                                       T0: MPIntMutByteSlice, T1: MPIntMutByteSlice,
                                       NT: MPIntMutByteSlice>() {
+    use crate::limbs_buffer::MPIntByteSliceCommonPriv;
+
     use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
 
     for i in 0..16 {
@@ -490,14 +495,22 @@ fn test_mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice,
             let mut n = NT::from_bytes(n.as_mut_slice()).unwrap();
             n.store_l(0, n_low);
             n.store_l(1, n_high);
-            for n_len in [2 * LIMB_BYTES - 1, 2 * LIMB_BYTES] {
+            let n_lengths = if !RT::SUPPORTS_UNALIGNED_BUFFER_LENGTHS ||
+                !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS ||
+                !T1::SUPPORTS_UNALIGNED_BUFFER_LENGTHS ||
+                !NT::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
+                    [LIMB_BYTES, 2 * LIMB_BYTES]
+                } else {
+                    [2 * LIMB_BYTES - 1, 2 * LIMB_BYTES]
+                };
+            for n_len in n_lengths {
                 let (_, n) = n.split_at(n_len);
                 let n0_inv = mp_ct_montgomery_n0_inv_mod_l(&n);
 
                 // r_mod_n = 2^(2 * LIMB_BITS) % n.
                 let mut r_mod_n: [u8; 3 * LIMB_BYTES] = [0; 3 * LIMB_BYTES];
                 let mut r_mod_n = RT::from_bytes(r_mod_n.as_mut_slice()).unwrap();
-                r_mod_n.store_l_full(2, 1);
+                r_mod_n.store_l_full(mp_ct_montgomery_radix_shift_nlimbs(n_len), 1);
                 mp_ct_div_mp_mp::<_, _, RT::SelfT<'_>>(None, &mut r_mod_n, &n, None).unwrap();
                 let (_, r_mod_n) = r_mod_n.split_at(n.len());
 
@@ -534,11 +547,11 @@ fn test_mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice,
                                         &mut mg_mul_result, &a, &b, &n, n0_inv,
                                         subtle::Choice::from(0u8)
                                     );
-                                    let a_nlimbs = mp_ct_nlimbs(a.len());
+                                    let a_nlimbs = a.nlimbs();
                                     for i in 0..a_nlimbs {
                                         assert_eq!(mg_mul_result.load_l(i), a.load_l(i));
                                     }
-                                    for i in a_nlimbs..mp_ct_nlimbs(mg_mul_result.len()) {
+                                    for i in a_nlimbs..mg_mul_result.nlimbs() {
                                         assert_eq!(mg_mul_result.load_l(i), 0);
                                     }
 
@@ -593,5 +606,14 @@ fn test_mp_ct_montgomery_mul_mod_cond_le_le_le_le() {
     test_mp_ct_montgomery_mul_mod_cond::<MPLittleEndianMutByteSlice,
                                          MPLittleEndianMutByteSlice,
                                          MPLittleEndianMutByteSlice,MPLittleEndianMutByteSlice
+                                         >()
+}
+
+#[test]
+fn test_mp_ct_montgomery_mul_mod_cond_ne_ne_ne_ne() {
+    use super::limbs_buffer::MPNativeEndianMutByteSlice;
+    test_mp_ct_montgomery_mul_mod_cond::<MPNativeEndianMutByteSlice,
+                                         MPNativeEndianMutByteSlice,
+                                         MPNativeEndianMutByteSlice,MPNativeEndianMutByteSlice
                                          >()
 }

@@ -1,9 +1,9 @@
-//! Accessors for multiprecision integers as stored in big-endian byte buffers.
+//! Accessors for multiprecision integers as stored in byte buffers of certain endian layouts.
 //!
-//! Multiprecision integers are stored in bytes buffers in big-endian order. The arithmetic
-//! primitives all operate on those in units of [`LimbType`] for efficiency reasons.
-//! This helper module provides a couple of utilities for accessing these byte buffers in units of
-//! [`LimbType`].
+//! Multiprecision integers are stored in bytes buffers in big-, little- or internal,
+//! "native"-endian order. The arithmetic primitives all operate on those in units of [`LimbType`]
+//! for efficiency reasons.  This helper module provides a couple of utilities for accessing these
+//! byte buffers in units of [`LimbType`].
 
 use core::{self, convert, fmt, marker};
 
@@ -20,8 +20,12 @@ use super::zeroize::Zeroizing;
 ///
 /// * `len` - The multiprecision integer's underlying big-endian byte buffer's length in bytes.
 ///
-pub fn mp_ct_nlimbs(len: usize) -> usize {
+pub const fn mp_ct_nlimbs(len: usize) -> usize {
     (len + LIMB_BYTES - 1) / LIMB_BYTES
+}
+
+pub const fn mp_ct_limbs_align_len(len: usize) -> usize {
+    mp_ct_nlimbs(len) * LIMB_BYTES
 }
 
 #[test]
@@ -356,8 +360,14 @@ fn test_mp_be_zeroize_bytes_above() {
     mp_be_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(mp_be_load_l(&mut limbs, 0), !0 >> 8);
     assert_eq!(mp_be_load_l(&mut limbs, 1), 0);
-}
 
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    mp_be_store_l(&mut limbs, 0, !0);
+    mp_be_store_l(&mut limbs, 1, !0);
+    mp_be_zeroize_bytes_above(&mut limbs, 2 * LIMB_BYTES);
+    assert_eq!(mp_be_load_l(&mut limbs, 0), !0);
+    assert_eq!(mp_be_load_l(&mut limbs, 1), !0);
+}
 
 /// Internal helper to load some fully contained limb from a multiprecision integer little-endian byte
 /// buffer.
@@ -676,6 +686,13 @@ fn test_mp_le_zeroize_bytes_above() {
     mp_le_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(mp_le_load_l(&mut limbs, 0), !0 >> 8);
     assert_eq!(mp_le_load_l(&mut limbs, 1), 0);
+
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    mp_le_store_l(&mut limbs, 0, !0);
+    mp_le_store_l(&mut limbs, 1, !0);
+    mp_le_zeroize_bytes_above(&mut limbs, 2 * LIMB_BYTES);
+    assert_eq!(mp_le_load_l(&mut limbs, 0), !0);
+    assert_eq!(mp_le_load_l(&mut limbs, 1), !0);
 }
 
 fn _mp_ne_load_l_full(limbs: &[u8], src_begin: usize) -> LimbType {
@@ -737,6 +754,7 @@ fn mp_ne_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
     mp_ne_store_l_full(limbs, i, value)
 }
 
+#[test]
 fn test_mp_ne_store_l() {
     use super::limb::LIMB_BITS;
 
@@ -776,19 +794,71 @@ fn test_mp_ne_zeroize_bytes_above() {
     assert_eq!(mp_ne_load_l(&mut limbs, 1), !0 & 0xff);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    mp_le_store_l(&mut limbs, 0, !0);
-    mp_le_store_l(&mut limbs, 1, !0);
-    mp_le_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
-    assert_eq!(mp_le_load_l(&mut limbs, 0), !0 >> 8);
-    assert_eq!(mp_le_load_l(&mut limbs, 1), 0);
+    mp_ne_store_l(&mut limbs, 0, !0);
+    mp_ne_store_l(&mut limbs, 1, !0);
+    mp_ne_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
+    assert_eq!(mp_ne_load_l(&mut limbs, 0), !0 >> 8);
+    assert_eq!(mp_ne_load_l(&mut limbs, 1), 0);
+
+    let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    mp_ne_store_l(&mut limbs, 0, !0);
+    mp_ne_store_l(&mut limbs, 1, !0);
+    mp_ne_zeroize_bytes_above(&mut limbs, 2 * LIMB_BYTES);
+    assert_eq!(mp_ne_load_l(&mut limbs, 0), !0);
+    assert_eq!(mp_ne_load_l(&mut limbs, 1), !0);
 }
 
 pub trait MPIntByteSliceCommonPriv: Sized {
+    const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool;
+
+    fn _len(&self) -> usize;
+
+    fn nlimbs(&self) -> usize {
+        mp_ct_nlimbs(self._len())
+    }
+
+    fn partial_high_mask(&self) -> LimbType {
+        if Self::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
+            let high_npartial = self._len() % LIMB_BYTES as usize;
+            if high_npartial == 0 {
+                !0
+            } else {
+                ((1 as LimbType) << 8 * high_npartial) - 1
+            }
+        } else {
+            !0
+        }
+    }
+
+    fn partial_high_shift(&self) -> u32 {
+        if Self::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
+            let high_npartial = self._len() % LIMB_BYTES as usize;
+            if high_npartial == 0 {
+                0
+            } else {
+                8 * high_npartial as u32
+            }
+        } else {
+            0
+        }
+    }
+
     fn take(self, nbytes: usize) -> (Self, Self);
 }
 
 pub trait MPIntByteSliceCommon: MPIntByteSliceCommonPriv {
-    fn len(&self) -> usize;
+    fn len(&self) -> usize {
+        self._len()
+    }
+
+    fn limbs_align_len(nbytes: usize) -> usize {
+        if Self::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
+            nbytes
+        } else {
+            mp_ct_limbs_align_len(nbytes)
+        }
+    }
+
     fn is_empty(&self) -> bool;
 
     fn load_l_full(&self, i: usize) -> LimbType;
@@ -831,8 +901,9 @@ pub trait MPIntMutByteSlice: MPIntMutByteSlicePriv {
     fn zeroize_bytes_above(&mut self, nbytes: usize);
 
     fn copy_from<S: MPIntByteSliceCommon>(&'_ mut self, src: &S) {
-        debug_assert!(self.len() >= src.len());
-        let src_nlimbs = mp_ct_nlimbs(src.len());
+        let src_nlimbs = src.nlimbs();
+        let dst_nlimbs = self.nlimbs();
+        debug_assert!(dst_nlimbs >= src_nlimbs);
 
         if src_nlimbs == 0 {
             self.zeroize_bytes_above(0);
@@ -841,7 +912,12 @@ pub trait MPIntMutByteSlice: MPIntMutByteSlicePriv {
         for i in 0..src_nlimbs - 1 {
             self.store_l_full(i, src.load_l_full(i));
         }
-        self.store_l(src_nlimbs - 1, src.load_l(src_nlimbs - 1));
+        let high_limb = src.load_l(src_nlimbs - 1);
+        debug_assert!(
+            src_nlimbs < dst_nlimbs ||
+            (high_limb & !self.partial_high_mask()) == 0
+        );
+        self.store_l(src_nlimbs - 1, high_limb);
         self.zeroize_bytes_above(src.len());
     }
 }
@@ -851,6 +927,12 @@ pub struct MPBigEndianByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommonPriv for MPBigEndianByteSlice<'a> {
+    const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = true;
+
+    fn _len(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn take(self, nbytes: usize) -> (Self, Self) {
         let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
         (Self { bytes: h }, Self { bytes: l })
@@ -858,10 +940,6 @@ impl<'a> MPIntByteSliceCommonPriv for MPBigEndianByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommon for MPBigEndianByteSlice<'a> {
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -904,6 +982,12 @@ pub struct MPBigEndianMutByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommonPriv for MPBigEndianMutByteSlice<'a> {
+    const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = true;
+
+    fn _len(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn take(self, nbytes: usize) -> (Self, Self) {
         let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
         (Self { bytes: h }, Self { bytes: l })
@@ -911,10 +995,6 @@ impl<'a> MPIntByteSliceCommonPriv for MPBigEndianMutByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommon for MPBigEndianMutByteSlice<'a> {
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -970,6 +1050,12 @@ pub struct MPLittleEndianByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommonPriv for MPLittleEndianByteSlice<'a> {
+    const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = true;
+
+    fn _len(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn take(self, nbytes: usize) -> (Self, Self) {
         let (l, h) = self.bytes.split_at(nbytes);
         (Self { bytes: h }, Self { bytes: l })
@@ -977,10 +1063,6 @@ impl<'a> MPIntByteSliceCommonPriv for MPLittleEndianByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommon for MPLittleEndianByteSlice<'a> {
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -1023,6 +1105,12 @@ pub struct MPLittleEndianMutByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommonPriv for MPLittleEndianMutByteSlice<'a> {
+    const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = true;
+
+    fn _len(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn take(self, nbytes: usize) -> (Self, Self) {
         let (l, h) = self.bytes.split_at_mut(nbytes);
         (Self { bytes: h }, Self { bytes: l })
@@ -1030,10 +1118,6 @@ impl<'a> MPIntByteSliceCommonPriv for MPLittleEndianMutByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommon for MPLittleEndianMutByteSlice<'a> {
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -1092,6 +1176,12 @@ pub struct MPNativeEndianByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommonPriv for MPNativeEndianByteSlice<'a> {
+    const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = false;
+
+    fn _len(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn take(self, nbytes: usize) -> (Self, Self) {
         debug_assert_eq!(nbytes % LIMB_BYTES, 0);
         let (l, h) = self.bytes.split_at(nbytes);
@@ -1100,10 +1190,6 @@ impl<'a> MPIntByteSliceCommonPriv for MPNativeEndianByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommon for MPNativeEndianByteSlice<'a> {
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -1151,6 +1237,12 @@ pub struct MPNativeEndianMutByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommonPriv for MPNativeEndianMutByteSlice<'a> {
+    const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = false;
+
+    fn _len(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn take(self, nbytes: usize) -> (Self, Self) {
         debug_assert_eq!(nbytes % LIMB_BYTES, 0);
         let (l, h) = self.bytes.split_at_mut(nbytes);
@@ -1159,10 +1251,6 @@ impl<'a> MPIntByteSliceCommonPriv for MPNativeEndianMutByteSlice<'a> {
 }
 
 impl<'a> MPIntByteSliceCommon for MPNativeEndianMutByteSlice<'a> {
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -1219,7 +1307,7 @@ impl<'a> MPIntMutByteSlice for MPNativeEndianMutByteSlice<'a> {
 }
 
 pub fn mp_find_last_set_limb_mp<'a, T0: MPIntByteSliceCommon>(op0: &T0) -> usize {
-    let mut nlimbs = mp_ct_nlimbs(op0.len());
+    let mut nlimbs = op0.nlimbs();
     if nlimbs == 0 {
         return 0;
     }
@@ -1238,11 +1326,7 @@ pub fn mp_find_last_set_limb_mp<'a, T0: MPIntByteSliceCommon>(op0: &T0) -> usize
 }
 
 #[cfg(test)]
-fn test_mp_find_last_set_limb_mp<T0: MPIntMutByteSlice>()  {
-    let mut op0: [u8; 0] = [0; 0];
-    let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
-    assert_eq!(mp_find_last_set_limb_mp(&op0), 0);
-
+fn test_mp_find_last_set_limb_mp_with_unaligned_lengths<T0: MPIntMutByteSlice>()  {
     let mut op0: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
     let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     op0.store_l(0, 1);
@@ -1255,14 +1339,38 @@ fn test_mp_find_last_set_limb_mp<T0: MPIntMutByteSlice>()  {
     assert_eq!(mp_find_last_set_limb_mp(&op0), 3);
 }
 
+#[cfg(test)]
+fn test_mp_find_last_set_limb_mp_with_aligned_lengths<T0: MPIntMutByteSlice>()  {
+    let mut op0: [u8; 0] = [0; 0];
+    let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 0);
+
+    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 0);
+
+    op0.store_l(0, 1);
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 1);
+
+    op0.store_l(1, 1);
+    assert_eq!(mp_find_last_set_limb_mp(&op0), 2);
+}
+
 #[test]
 fn test_mp_find_last_set_limb_be()  {
-    test_mp_find_last_set_limb_mp::<MPBigEndianMutByteSlice>();
+    test_mp_find_last_set_limb_mp_with_unaligned_lengths::<MPBigEndianMutByteSlice>();
+    test_mp_find_last_set_limb_mp_with_aligned_lengths::<MPBigEndianMutByteSlice>();
 }
 
 #[test]
 fn test_mp_find_last_set_limb_le()  {
-    test_mp_find_last_set_limb_mp::<MPLittleEndianMutByteSlice>();
+    test_mp_find_last_set_limb_mp_with_unaligned_lengths::<MPLittleEndianMutByteSlice>();
+    test_mp_find_last_set_limb_mp_with_aligned_lengths::<MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_find_last_set_limb_ne()  {
+    test_mp_find_last_set_limb_mp_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
 }
 
 pub fn mp_find_last_set_byte_mp<'a, T0: MPIntByteSliceCommon>(op0: &T0) -> usize {
@@ -1275,11 +1383,7 @@ pub fn mp_find_last_set_byte_mp<'a, T0: MPIntByteSliceCommon>(op0: &T0) -> usize
 }
 
 #[cfg(test)]
-fn test_mp_find_last_set_byte_mp<T0: MPIntMutByteSlice>() {
-    let mut op0: [u8; 0] = [0; 0];
-    let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
-    assert_eq!(mp_find_last_set_byte_mp(&op0), 0);
-
+fn test_mp_find_last_set_byte_mp_with_unaligned_lengths<T0: MPIntMutByteSlice>() {
     let mut op0: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
     let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     op0.store_l(0, 1);
@@ -1292,14 +1396,38 @@ fn test_mp_find_last_set_byte_mp<T0: MPIntMutByteSlice>() {
     assert_eq!(mp_find_last_set_byte_mp(&op0), 2 * LIMB_BYTES + 1);
 }
 
+#[cfg(test)]
+fn test_mp_find_last_set_byte_mp_with_aligned_lengths<T0: MPIntMutByteSlice>() {
+    use super::limb::LIMB_BITS;
+
+    let mut op0: [u8; 0] = [0; 0];
+    let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    assert_eq!(mp_find_last_set_byte_mp(&op0), 0);
+
+    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    op0.store_l(0, (1 as LimbType) << LIMB_BITS - 1);
+    assert_eq!(mp_find_last_set_byte_mp(&op0), LIMB_BYTES);
+
+    op0.store_l(1, (1 as LimbType) << LIMB_BITS - 1);
+    assert_eq!(mp_find_last_set_byte_mp(&op0), 2 * LIMB_BYTES);
+}
+
 #[test]
 fn test_mp_find_last_set_byte_be() {
-    test_mp_find_last_set_byte_mp::<MPBigEndianMutByteSlice>()
+    test_mp_find_last_set_byte_mp_with_unaligned_lengths::<MPBigEndianMutByteSlice>();
+    test_mp_find_last_set_byte_mp_with_aligned_lengths::<MPBigEndianMutByteSlice>();
 }
 
 #[test]
 fn test_mp_find_last_set_byte_le() {
-    test_mp_find_last_set_byte_mp::<MPLittleEndianMutByteSlice>()
+    test_mp_find_last_set_byte_mp_with_unaligned_lengths::<MPLittleEndianMutByteSlice>();
+    test_mp_find_last_set_byte_mp_with_aligned_lengths::<MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_find_last_set_byte_ne() {
+    test_mp_find_last_set_byte_mp_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
 }
 
 /// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
@@ -1435,7 +1563,7 @@ impl<'a, ST: MPIntByteSliceCommon, const N_SEGMENTS: usize> CompositeLimbsBuffer
         let (segment_index, segment_offset) = self.limb_index_to_segment(i);
         let segment = &self.segments[segment_index];
         let segment_slice = &segment.segment;
-        if i != segment.end - 1 {
+        if i != segment.end - 1 || !ST::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             segment_slice.load_l_full(i - segment_offset)
         } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
             // The last (highest) segment's most significant bytes don't necessarily occupy a full
@@ -1472,7 +1600,7 @@ impl<'a, ST: MPIntMutByteSlice, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a
         let (segment_index, segment_offset) = self.limb_index_to_segment(i);
         let segment = &mut self.segments[segment_index];
         let segment_slice = &mut segment.segment;
-        if i != segment.end - 1 {
+        if i != segment.end - 1 || !ST::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             segment_slice.store_l_full(i - segment_offset, value);
         } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
             // The last (highest) part's most significant bytes don't necessarily occupy a full
@@ -1594,9 +1722,72 @@ fn test_composite_limbs_buffer_load_le() {
     assert_eq!(l4, 0xa);
 }
 
-#[cfg(test)]
-fn test_composite_limbs_buffer_store<ST: MPIntMutByteSlice>() {
+#[test]
+fn test_composite_limbs_buffer_load_ne() {
     use super::limb::LIMB_BITS;
+
+    let mut buf0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    let buf1: [u8; 0] = [0; 0];
+    let mut buf2: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+
+    if test_ne_is_le() {
+        // 0x00 .. 00 01 00 .. 00 02
+        buf0[LIMB_BYTES / 2 - 1] = 0x1;
+        buf0[LIMB_BYTES - 1] = 0x2;
+
+        // 0x00 .. 03 00 .. 00 04 05
+        buf0[LIMB_BYTES + LIMB_BYTES / 2 - 1] = 0x3;
+        buf0[2 * LIMB_BYTES - 2] = 0x4;
+        buf0[2 * LIMB_BYTES - 1] = 0x5;
+
+        // 0x00 .. 00 06 00 .. 00 07
+        buf2[LIMB_BYTES / 2 - 1] = 0x6;
+        buf2[LIMB_BYTES - 1] = 0x7;
+
+        // 0x00 .. 00 08 00 .. 00 09
+        buf2[LIMB_BYTES + LIMB_BYTES / 2 - 1] = 0x8;
+        buf2[2 * LIMB_BYTES - 1] = 0x9;
+    } else {
+        // 0x02 00 .. 00 01 00 .. 00
+        buf0[0] = 0x2;
+        buf0[LIMB_BYTES / 2] = 0x1;
+
+        // 0x05 04 00 .. 00 03 00 .. 00
+        buf0[LIMB_BYTES + LIMB_BYTES / 2] = 0x3;
+        buf0[LIMB_BYTES + 1] = 0x4;
+        buf0[LIMB_BYTES] = 0x5;
+
+        // 0x07 00 .. 00 06 00 .. 00
+        buf2[LIMB_BYTES / 2] = 0x6;
+        buf2[0] = 0x7;
+
+        // 0x09 00 .. 00 08 00 .. 00
+        buf2[LIMB_BYTES + LIMB_BYTES / 2] = 0x8;
+        buf2[0] = 0x9;
+    }
+
+    let buf0 = MPNativeEndianByteSlice::from_bytes(buf0.as_slice()).unwrap();
+    let buf1 = MPNativeEndianByteSlice::from_bytes(buf1.as_slice()).unwrap();
+    let buf2 = MPNativeEndianByteSlice::from_bytes(buf2.as_slice()).unwrap();
+    let limbs =  CompositeLimbsBuffer::new(
+        [buf0, buf1, buf2]
+    );
+
+    let l0 = limbs.load(0);
+    assert_eq!(l0, 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8);
+    let l1 = limbs.load(1);
+    assert_eq!(l1, 0x0504 << LIMB_BITS - 16 | 0x3 << LIMB_BITS / 2 - 8);
+    let l2 = limbs.load(2);
+    assert_eq!(l2, 0x7 << LIMB_BITS - 8 | 0x6 << LIMB_BITS / 2 - 8);
+    let l3 = limbs.load(3);
+    assert_eq!(l3, 0x9 << LIMB_BITS - 8 | 0x8 << LIMB_BITS / 2 - 8);
+}
+
+#[cfg(test)]
+fn test_composite_limbs_buffer_store_with_unaligned_lengths<ST: MPIntMutByteSlice>() {
+    use super::limb::LIMB_BITS;
+
+    debug_assert_eq!(ST::SUPPORTS_UNALIGNED_BUFFER_LENGTHS, true);
 
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let mut buf1: [u8; 0] = [0; 0];
@@ -1626,12 +1817,48 @@ fn test_composite_limbs_buffer_store<ST: MPIntMutByteSlice>() {
     assert_eq!(l4, limbs.load(4));
 }
 
+#[cfg(test)]
+fn test_composite_limbs_buffer_store_with_aligned_lengths<ST: MPIntMutByteSlice>() {
+    use super::limb::LIMB_BITS;
+
+    let mut buf0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    let mut buf1: [u8; 0] = [0; 0];
+    let mut buf2: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+    let buf0 = ST::from_bytes(&mut buf0).unwrap();
+    let buf1 = ST::from_bytes(&mut buf1).unwrap();
+    let buf2 = ST::from_bytes(&mut buf2).unwrap();
+    let mut limbs =  CompositeLimbsBuffer::new(
+        [buf0, buf1, buf2]
+    );
+
+    let l0 = 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8;
+    let l1 = 0x0504 << LIMB_BITS - 16 | 0x3 << LIMB_BITS / 2 - 8;
+    let l2 = 0x7 << LIMB_BITS - 8 | 0x6 << LIMB_BITS / 2 - 8;
+    let l3 = 0x9 << LIMB_BITS - 8 | 0x8 << LIMB_BITS / 2 - 8;
+
+    limbs.store(0, l0);
+    limbs.store(1, l1);
+    limbs.store(2, l2);
+    limbs.store(3, l3);
+    assert_eq!(l0, limbs.load(0));
+    assert_eq!(l1, limbs.load(1));
+    assert_eq!(l2, limbs.load(2));
+    assert_eq!(l3, limbs.load(3));
+}
+
 #[test]
 fn test_composite_limbs_buffer_store_be() {
-    test_composite_limbs_buffer_store::<MPBigEndianMutByteSlice>()
+    test_composite_limbs_buffer_store_with_unaligned_lengths::<MPBigEndianMutByteSlice>();
+    test_composite_limbs_buffer_store_with_aligned_lengths::<MPBigEndianMutByteSlice>();
 }
 
 #[test]
 fn test_composite_limbs_buffer_store_le() {
-    test_composite_limbs_buffer_store::<MPLittleEndianMutByteSlice>()
+    test_composite_limbs_buffer_store_with_unaligned_lengths::<MPLittleEndianMutByteSlice>();
+    test_composite_limbs_buffer_store_with_aligned_lengths::<MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_composite_limbs_buffer_store_ne() {
+    test_composite_limbs_buffer_store_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
 }
