@@ -5,9 +5,7 @@ use subtle::{self, ConditionallySelectable as _};
 use crate::limb::LIMB_BITS;
 
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb, ct_mul_l_l, ct_add_l_l};
-use super::limbs_buffer::{mp_ct_nlimbs, MPIntMutByteSlice, MPIntByteSlice};
-#[cfg(test)]
-use super::limbs_buffer::MPIntMutByteSliceFactory;
+use super::limbs_buffer::{mp_ct_nlimbs, MPIntMutByteSlice, MPIntByteSliceCommon};
 use super::zeroize::Zeroizing;
 
 /// Conditionally multiply two multiprecision integers of specified endianess.
@@ -40,7 +38,7 @@ use super::zeroize::Zeroizing;
 ///            implementations of algorithms relying on conditional executiopns of multiprecision
 ///            integer multiplication, like e.g. binary exponentation.
 ///
-pub fn mp_ct_mul_trunc_cond_mp_mp<'a, 'b, T0: MPIntMutByteSlice<'a>, T1: MPIntByteSlice<'b>>(
+pub fn mp_ct_mul_trunc_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
     op0: &mut T0, op0_in_len: usize, op1: &T1, cond: subtle::Choice
 ) {
     debug_assert!(op0_in_len <= op0.len());
@@ -108,11 +106,11 @@ pub fn mp_ct_mul_trunc_cond_mp_mp<'a, 'b, T0: MPIntMutByteSlice<'a>, T1: MPIntBy
 }
 
 #[cfg(test)]
-fn test_mp_ct_mul_trunc_cond_mp_mp<F0: MPIntMutByteSliceFactory, F1: MPIntMutByteSliceFactory>() {
+fn test_mp_ct_mul_trunc_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op0: [u8; 5 * LIMB_BYTES] = [0; 5 * LIMB_BYTES];
-    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     op1.store_l(0, !0);
@@ -131,9 +129,9 @@ fn test_mp_ct_mul_trunc_cond_mp_mp<F0: MPIntMutByteSliceFactory, F1: MPIntMutByt
     assert_eq!(op0.load_l(4), 0);
 
     let mut op0: [u8; 4 * LIMB_BYTES - 1] = [0; 4 * LIMB_BYTES - 1];
-    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     op1.store_l(0, !0);
@@ -150,9 +148,9 @@ fn test_mp_ct_mul_trunc_cond_mp_mp<F0: MPIntMutByteSliceFactory, F1: MPIntMutByt
     assert_eq!(op0.load_l(3), !0 >> 8);
 
     let mut op0: [u8; 3 * LIMB_BYTES - 1] = [0; 3 * LIMB_BYTES - 1];
-    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     op1.store_l(0, !0);
@@ -167,9 +165,9 @@ fn test_mp_ct_mul_trunc_cond_mp_mp<F0: MPIntMutByteSliceFactory, F1: MPIntMutByt
     assert_eq!(op0.load_l(2), (!0 >> 8) ^ 1);
 
     let mut op0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
     let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = F1::from_bytes(&mut op1).unwrap();
+    let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0 >> 2 * 8);
     op1.store_l(0, !0);
@@ -217,7 +215,7 @@ fn test_mp_ct_mul_trunc_cond_le_le() {
 ///                  operand. Thus, the operand's is not implicit from `op0.len()` and it must
 ///                  get specified separately as `op0_in_len`.
 ///
-pub fn mp_ct_square_trunc_mp<'a, T0: MPIntMutByteSlice<'a>>(op0: &mut T0, op0_in_len: usize) {
+pub fn mp_ct_square_trunc_mp<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: usize) {
     debug_assert!(op0_in_len <= op0.len());
     let op0_len = op0.len();
     let result_high_npartial = op0_len % LIMB_BYTES;
@@ -366,12 +364,14 @@ pub fn mp_ct_square_trunc_mp<'a, T0: MPIntMutByteSlice<'a>>(op0: &mut T0, op0_in
 }
 
 #[cfg(test)]
-fn test_mp_ct_square_trunc_mp<F0: MPIntMutByteSliceFactory>() {
-    fn square_by_mul<F0: MPIntMutByteSliceFactory, const N: usize>(op0: &[u8; N], op0_in_len: usize) -> [u8; N] {
+fn test_mp_ct_square_trunc_mp<T0: MPIntMutByteSlice>() {
+    use super::limbs_buffer::MPIntMutByteSlicePriv as _;
+
+    fn square_by_mul<T0: MPIntMutByteSlice, const N: usize>(op0: &[u8; N], op0_in_len: usize) -> [u8; N] {
         let mut _result = op0.clone();
-        let mut result = F0::from_bytes(&mut _result).unwrap();
+        let mut result = T0::from_bytes(&mut _result).unwrap();
         let mut op0 = op0.clone();
-        let op0 = F0::from_bytes(&mut op0).unwrap();
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
         let (_, op0) = op0.split_at(op0_in_len);
         mp_ct_mul_trunc_cond_mp_mp(&mut result, op0_in_len, &op0, subtle::Choice::from(1u8));
         drop(result);
@@ -379,45 +379,45 @@ fn test_mp_ct_square_trunc_mp<F0: MPIntMutByteSliceFactory>() {
     }
 
     let mut _op0: [u8; 5 * LIMB_BYTES] = [0; 5 * LIMB_BYTES];
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<F0, {5 * LIMB_BYTES}>(&_op0, 2 * LIMB_BYTES);
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let expected = square_by_mul::<T0, {5 * LIMB_BYTES}>(&_op0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
     assert_eq!(_op0, expected);
 
     let mut _op0: [u8; 4 * LIMB_BYTES - 1] = [0; 4 * LIMB_BYTES - 1];
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<F0, {4 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let expected = square_by_mul::<T0, {4 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
     assert_eq!(_op0, expected);
 
     let mut _op0: [u8; 3 * LIMB_BYTES - 1] = [0; 3 * LIMB_BYTES - 1];
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<F0, {3 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let expected = square_by_mul::<T0, {3 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
     assert_eq!(_op0, expected);
 
     let mut _op0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0 >> 2 * 8);
     drop(op0);
-    let expected = square_by_mul::<F0, {2 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES - 1);
-    let mut op0 = F0::from_bytes(&mut _op0).unwrap();
+    let expected = square_by_mul::<T0, {2 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES - 1);
+    let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     mp_ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES - 1);
     drop(op0);
     assert_eq!(_op0, expected);
@@ -436,7 +436,7 @@ fn test_mp_ct_square_trunc_le() {
 }
 
 // Multiply multiprecision integer by a limb.
-pub fn mp_ct_mul_trunc_mp_l<'a, T0: MPIntMutByteSlice<'a>>(op0: &mut T0, op0_in_len: usize, op1: LimbType) {
+pub fn mp_ct_mul_trunc_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: usize, op1: LimbType) {
     debug_assert!(op0_in_len <= op0.len());
     let op0_len = op0.len();
     let result_high_npartial = op0_len % LIMB_BYTES;
@@ -479,9 +479,9 @@ pub fn mp_ct_mul_trunc_mp_l<'a, T0: MPIntMutByteSlice<'a>>(op0: &mut T0, op0_in_
 }
 
 #[cfg(test)]
-fn test_mp_ct_mul_trunc_mp_l<F0: MPIntMutByteSliceFactory>() {
+fn test_mp_ct_mul_trunc_mp_l<T0: MPIntMutByteSlice>() {
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     let op1 = 0;
@@ -490,7 +490,7 @@ fn test_mp_ct_mul_trunc_mp_l<F0: MPIntMutByteSliceFactory>() {
     assert_eq!(op0.load_l(1), 0);
 
     let mut op0: [u8; 2 * LIMB_BYTES + 1] = [0; 2 * LIMB_BYTES + 1];
-    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     let op1 = 2;
@@ -500,7 +500,7 @@ fn test_mp_ct_mul_trunc_mp_l<F0: MPIntMutByteSliceFactory>() {
     assert_eq!(op0.load_l(2), 1);
 
     let mut op0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    let mut op0 = F0::from_bytes(&mut op0).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
     op0.store_l(0, !0);
     op0.store_l(1, !0 >> 8);
     let op1 = 2;

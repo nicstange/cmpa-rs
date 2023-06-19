@@ -561,6 +561,6 @@ fn test_ct_find_last_set_bit_l() {
     }
 }
 
-pub fn ct_find_last_set_byte_l(mut v: LimbType) -> usize {
+pub fn ct_find_last_set_byte_l(v: LimbType) -> usize {
     ((ct_find_last_set_bit_l(v) + 8 - 1) / 8) as usize
 }

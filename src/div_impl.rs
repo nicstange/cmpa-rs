@@ -5,7 +5,7 @@ use crate::limb::ct_l_to_subtle_choice;
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb,
                   ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_sub_l_l, ct_mul_l_l, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l};
 use super::limbs_buffer::{CompositeLimbsBuffer, mp_ct_nlimbs,
-                          mp_find_last_set_byte_mp, MPIntMutByteSlice, MPIntMutByteSliceFactory, MPIntByteSlice};
+                          mp_find_last_set_byte_mp, MPIntMutByteSlice, MPIntByteSliceCommon};
 use super::zeroize::Zeroizing;
 
 #[derive(Debug)]
@@ -14,7 +14,7 @@ pub enum CtMpDivisionError {
     InsufficientQuotientSpace,
 }
 
-fn u_sub_scaled_qv_at<'a, 'b, UT: MPIntMutByteSlice<'a>, VT: MPIntByteSlice<'b>>(
+fn u_sub_scaled_qv_at<'a, UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon>(
     u_parts: &mut CompositeLimbsBuffer<'a, UT, 3>, j: usize, q: LimbType,
     v: &VT, v_nlimbs: usize, scaling: LimbType) -> LimbType {
     let mut scaled_v_carry = 0;
@@ -51,7 +51,7 @@ fn u_sub_scaled_qv_at<'a, 'b, UT: MPIntMutByteSlice<'a>, VT: MPIntByteSlice<'b>>
     u_borrow
 }
 
-fn u_cond_add_scaled_v_at<'a, 'b, UT: MPIntMutByteSlice<'a>, VT: MPIntByteSlice<'b>>(
+fn u_cond_add_scaled_v_at<'a, UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon>(
     u_parts: &mut CompositeLimbsBuffer<'a, UT, 3>, j: usize,
     v: &VT, v_nlimbs: usize, scaling: LimbType, cond: subtle::Choice
 ) -> LimbType {
@@ -81,8 +81,7 @@ fn u_cond_add_scaled_v_at<'a, 'b, UT: MPIntMutByteSlice<'a>, VT: MPIntByteSlice<
     u_carry
 }
 
-pub fn mp_ct_div_mp_mp<'a, 'b, 'c, UT: MPIntMutByteSlice<'a> + MPIntMutByteSliceFactory,
-                       VT: MPIntByteSlice<'b>, QT: MPIntMutByteSlice<'c>>(
+pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
     u_h: Option<&mut UT>, u_l: &mut UT, v: &VT, mut q_out: Option<&mut QT>
 ) -> Result<(), CtMpDivisionError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer Programming", vol 2.
@@ -280,11 +279,12 @@ pub fn mp_ct_div_mp_mp<'a, 'b, 'c, UT: MPIntMutByteSlice<'a> + MPIntMutByteSlice
 }
 
 #[cfg(test)]
-fn test_mp_ct_div_mp_mp<'a, UF: MPIntMutByteSliceFactory, VF: MPIntMutByteSliceFactory,
-                        QF: MPIntMutByteSliceFactory>() {
-    fn div_and_check<UF: MPIntMutByteSliceFactory, VF: MPIntMutByteSliceFactory,
-                     QF: MPIntMutByteSliceFactory>(
-        u: &UF::SelfT<'_>, v: &VF::SelfT<'_>, split_u: bool
+fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>() {
+    use super::limbs_buffer::{MPIntMutByteSlicePriv as _, MPIntByteSlice as _, MPBigEndianByteSlice};
+    use super::cmp_impl::mp_ct_eq_mp_mp;
+
+    fn div_and_check<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>(
+        u: &UT::SelfT<'_>, v: &VT::SelfT<'_>, split_u: bool
     ) {
         use super::add_impl::mp_ct_add_mp_mp;
         use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
@@ -296,12 +296,12 @@ fn test_mp_ct_div_mp_mp<'a, UF: MPIntMutByteSliceFactory, VF: MPIntMutByteSliceF
             0
         };
         let mut q = vec![0xffu8; q_len];
-        let mut q = QF::from_bytes(&mut q).unwrap();
+        let mut q = QT::from_bytes(&mut q).unwrap();
         let mut _rem = vec![0u8; u.len()];
-        let mut rem = UF::from_bytes(&mut _rem).unwrap();
+        let mut rem = UT::from_bytes(&mut _rem).unwrap();
         rem.copy_from(u);
         let (mut rem_h, mut rem_l) = if split_u {
-            let (rem_h, rem_l) = rem.split_at_mut((LIMB_BYTES + 1).min(u.len()));
+            let (rem_h, rem_l) = rem.split_at((LIMB_BYTES + 1).min(u.len()));
             (Some(rem_h), rem_l)
         } else {
             (None, rem.coerce_lifetime())
@@ -312,7 +312,7 @@ fn test_mp_ct_div_mp_mp<'a, UF: MPIntMutByteSliceFactory, VF: MPIntMutByteSliceF
 
         // Multiply q by v again and add the remainder back, the result should match the initial u.
         let mut result = vec![0u8; u.len()];
-        let mut result = UF::from_bytes(&mut result).unwrap();
+        let mut result = UT::from_bytes(&mut result).unwrap();
         result.copy_from(&q);
         mp_ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, subtle::Choice::from(1));
         let carry = mp_ct_add_mp_mp(&mut result, &rem);
@@ -320,80 +320,76 @@ fn test_mp_ct_div_mp_mp<'a, UF: MPIntMutByteSliceFactory, VF: MPIntMutByteSliceF
         assert_eq!(mp_ct_eq_mp_mp(u, &result).unwrap_u8(), 1);
     }
 
-    fn limbs_from_be_bytes<DF: MPIntMutByteSliceFactory, const N: usize>(bytes: [u8; N]) -> [u8; N] {
-        use super::limbs_buffer::MPIntByteSliceFactory as _;
-
+    fn limbs_from_be_bytes<DT: MPIntMutByteSlice, const N: usize>(bytes: [u8; N]) -> [u8; N] {
         let mut limbs: [u8; N] = [0; N];
-        let mut dst = DF::from_bytes(&mut limbs).unwrap();
+        let mut dst = DT::from_bytes(&mut limbs).unwrap();
         dst.copy_from(&MPBigEndianByteSlice::from_bytes(bytes.as_slice()).unwrap());
         drop(dst);
         limbs
     }
 
-    let mut u = limbs_from_be_bytes::<UF, 2>([1, 0]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 1>([1]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UT, 2>([1, 0]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 1>([1]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
-    let mut u = limbs_from_be_bytes::<UF, 2>([1, 0]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 1>([3]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UT, 2>([1, 0]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 1>([3]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
-    let mut u = limbs_from_be_bytes::<UF, 6>([!0, !0, !1, !0, !0, !0]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 3>([!0, !0, !0]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UT, 6>([!0, !0, !1, !0, !0, !0]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
-    let mut u = limbs_from_be_bytes::<UF, 6>([!0, !0, !1, !0, !0, !1]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 3>([!0, !0, !0]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UT, 6>([!0, !0, !1, !0, !0, !1]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
-    let mut u = limbs_from_be_bytes::<UF, 6>([0, 0, 0, 0, 0, 0]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 3>([!0, !0, !0]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UT, 6>([0, 0, 0, 0, 0, 0]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
-    let mut u = limbs_from_be_bytes::<UF, 6>([0, 0, 0, 0, 0, !1]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 3>([!0, !0, !0]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UT, 6>([0, 0, 0, 0, 0, !1]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
-    let mut u = limbs_from_be_bytes::<UF, 6>([!0, !0, !0, !0, !0, 0]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 3>([0, 1, 0]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
+    let mut u = limbs_from_be_bytes::<UT, 6>([!0, !0, !0, !0, !0, 0]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 3>([0, 1, 0]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
-    let mut u = limbs_from_be_bytes::<UF, 6>([!0, !0, !0, !0, !1, 0]);
-    let u = UF::from_bytes(u.as_mut_slice()).unwrap();
-    let mut v = limbs_from_be_bytes::<VF, 3>([0, 2, 0]);
-    let v = VF::from_bytes(v.as_mut_slice()).unwrap();
-    div_and_check::<UF, VF, QF>(&u, &v, false);
-    div_and_check::<UF, VF, QF>(&u, &v, true);
-
-    use crate::{cmp_impl::mp_ct_eq_mp_mp, limbs_buffer::MPBigEndianByteSlice};
+    let mut u = limbs_from_be_bytes::<UT, 6>([!0, !0, !0, !0, !1, 0]);
+    let u = UT::from_bytes(u.as_mut_slice()).unwrap();
+    let mut v = limbs_from_be_bytes::<VT, 3>([0, 2, 0]);
+    let v = VT::from_bytes(v.as_mut_slice()).unwrap();
+    div_and_check::<UT, VT, QT>(&u, &v, false);
+    div_and_check::<UT, VT, QT>(&u, &v, true);
 
     use super::limb::LIMB_BITS;
     const N_MAX_LIMBS: u32 = 3;
     for i in 0..N_MAX_LIMBS * LIMB_BITS + 1 {
         let u_len = (i as usize + 8 - 1) / 8;
         let mut u = vec![0u8; u_len];
-        let mut u = UF::from_bytes(&mut u).unwrap();
+        let mut u = UT::from_bytes(&mut u).unwrap();
         if i != 0 {
             let u_nlimbs = mp_ct_nlimbs(u_len);
             for k in 0..u_nlimbs - 1 {
@@ -411,11 +407,11 @@ fn test_mp_ct_div_mp_mp<'a, UF: MPIntMutByteSliceFactory, VF: MPIntMutByteSliceF
             for j2 in 0..j1 + 1 {
                 let v_len = ((j1 + 1) as usize + 8 - 1) / 8;
                 let mut v = vec![0u8; v_len];
-                let mut v = VF::from_bytes(&mut v).unwrap();
+                let mut v = VT::from_bytes(&mut v).unwrap();
                 v.store_l((j1 / LIMB_BITS) as usize, 1 << (j1 % LIMB_BITS));
                 v.store_l((j2 / LIMB_BITS) as usize, 1 << (j2 % LIMB_BITS));
-                div_and_check::<UF, VF, QF>(&u, &v, false);
-                div_and_check::<UF, VF, QF>(&u, &v, true);
+                div_and_check::<UT, VT, QT>(&u, &v, false);
+                div_and_check::<UT, VT, QT>(&u, &v, true);
             }
         }
     }
@@ -434,7 +430,7 @@ fn test_mp_ct_div_le_le_le() {
 }
 
 // Compute the modulo of a multiprecision integer modulo a [`LimbType`] divisisor.
-pub fn mp_ct_mod_mp_l<'a, UT: MPIntByteSlice<'a>, QT: MPIntMutByteSlice<'a>>(
+pub fn mp_ct_mod_mp_l<UT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
     u: &UT, v: LimbType, mut q_out: Option<&mut QT>
 ) -> Result<LimbType, CtMpDivisionError> {
     if v == 0 {

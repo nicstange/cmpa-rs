@@ -1,12 +1,12 @@
 use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_l_l, LIMB_BYTES, ct_l_to_subtle_choice};
-use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSliceFactory, MPIntByteSlice, mp_ct_nlimbs};
+use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_nlimbs};
 use super::cmp_impl::mp_ct_geq_mp_mp;
 use super::add_impl::mp_ct_sub_cond_mp_mp;
 use super::div_impl::mp_ct_div_mp_mp;
 use subtle::{self, ConditionallySelectable as _};
 use zeroize::Zeroize;
 
-pub fn mp_ct_to_montgomery_form<'a, 'b, TT: MPIntMutByteSlice<'a> + MPIntMutByteSliceFactory, NT: MPIntByteSlice<'b>>(
+pub fn mp_ct_to_montgomery_form<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
     t: &mut TT, scratch: &mut [u8], n: &NT
 ) {
     debug_assert!(t.len() >= n.len());
@@ -25,12 +25,12 @@ pub fn mp_ct_to_montgomery_form<'a, 'b, TT: MPIntMutByteSlice<'a> + MPIntMutByte
     for i in 0..mp_ct_nlimbs(t.len()) {
         debug_assert_eq!(t.load_l(i), 0);
     }
-    let t_low = TT::from_bytes(scratch).unwrap();
+    let mut t_low = TT::from_bytes(scratch).unwrap();
     let (_, t_low) = t_low.split_at(n.len());
     t.copy_from(&t_low);
 }
 
-pub fn mp_ct_montgomery_n0_inv_mod_l<'a, NT: MPIntByteSlice<'a>>(n: &NT) -> LimbType {
+pub fn mp_ct_montgomery_n0_inv_mod_l<'a, NT: MPIntByteSliceCommon>(n: &NT) -> LimbType {
     debug_assert!(!n.is_empty());
     let n0 = n.load_l(0);
     debug_assert!(n0 % 2 != 0);
@@ -70,7 +70,7 @@ fn test_mp_ct_montgomery_n0_inv_mod_l() {
 
 // ATTENTION: does not read or update the most significant limb in t, it's getting returned
 // separately as t_high_shadow.
-fn mp_ct_montgomery_redc_one_cond_mul<'a, 'b, TT: MPIntMutByteSlice<'a>, NT: MPIntByteSlice<'b>>(
+fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
     t_carry: LimbType, t_high_shadow: LimbType,
     t: &mut TT, n: &NT, neg_n0_inv_mod_l: LimbType,
     cond_mul: Option<subtle::Choice>) -> (LimbType, LimbType
@@ -152,7 +152,7 @@ fn mp_ct_montgomery_redc_one_cond_mul<'a, 'b, TT: MPIntMutByteSlice<'a>, NT: MPI
 }
 
 
-pub fn mp_ct_montgomery_redc<'a, 'b, TT: MPIntMutByteSlice<'a>, NT: MPIntByteSlice<'b>>(
+pub fn mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
     t: &mut TT, n: &NT, n0_inv_mod_l: LimbType
 ) {
     debug_assert!(!n.is_empty());
@@ -189,7 +189,7 @@ pub fn mp_ct_montgomery_redc<'a, 'b, TT: MPIntMutByteSlice<'a>, NT: MPIntByteSli
 }
 
 #[cfg(test)]
-fn test_mp_ct_montgomery_redc<TF: MPIntMutByteSliceFactory, NF: MPIntMutByteSliceFactory>() {
+fn test_mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
     for i in 0..64 {
         const MERSENNE_PRIME_13: LimbType = 8191 as LimbType;
         let n_high = MERSENNE_PRIME_13.wrapping_mul((16385 as LimbType).wrapping_mul(i));
@@ -199,7 +199,7 @@ fn test_mp_ct_montgomery_redc<TF: MPIntMutByteSliceFactory, NF: MPIntMutByteSlic
             // Force n_low odd.
             let n_low = n_low | 1;
             let mut n: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-            let mut n = NF::from_bytes(n.as_mut_slice()).unwrap();
+            let mut n = NT::from_bytes(n.as_mut_slice()).unwrap();
             n.store_l(0, n_low);
             n.store_l(1, n_high);
             let n0_inv = mp_ct_montgomery_n0_inv_mod_l(&n);
@@ -210,12 +210,12 @@ fn test_mp_ct_montgomery_redc<TF: MPIntMutByteSliceFactory, NF: MPIntMutByteSlic
                     let t_low = MERSENNE_PRIME_13.wrapping_mul((131087 as LimbType).wrapping_mul(l));
 
                     let mut t: [u8; 2 * LIMB_BYTES + 1] = [0; 2 * LIMB_BYTES + 1];
-                    let mut t = TF::from_bytes(t.as_mut_slice()).unwrap();
+                    let mut t = TT::from_bytes(t.as_mut_slice()).unwrap();
                     t.store_l(0, t_low);
                     t.store_l(1, t_high);
 
                     // All montgomery operations are defined mod n, compute t mod n
-                    mp_ct_div_mp_mp::<_, _, TF::SelfT<'_>>(None, &mut t, &n, None).unwrap();
+                    mp_ct_div_mp_mp::<_, _, TT::SelfT<'_>>(None, &mut t, &n, None).unwrap();
                     let t_low = t.load_l(0);
                     let t_high = t.load_l(1);
 
@@ -245,9 +245,8 @@ fn test_mp_ct_montgomery_redc_le_le() {
     test_mp_ct_montgomery_redc::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
 }
 
-fn mp_ct_montgomery_mul_mod_cond<'a, 'b, 'c, 'd,
-                                 RT: MPIntMutByteSlice<'a>, T0: MPIntByteSlice<'b>,
-                                 T1: MPIntByteSlice<'b>, NT: MPIntByteSlice<'d>> (
+fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon,
+                                 T1: MPIntByteSliceCommon, NT: MPIntByteSliceCommon> (
     result: &mut RT, op0: &T0, op1: &T1, n: &NT, n0_inv_mod_l: LimbType,
     cond: subtle::Choice
 ) {
@@ -474,9 +473,9 @@ fn mp_ct_montgomery_mul_mod_cond<'a, 'b, 'c, 'd,
 }
 
 #[cfg(test)]
-fn test_mp_ct_montgomery_mul_mod_cond<RF: MPIntMutByteSliceFactory,
-                                      F0: MPIntMutByteSliceFactory, F1: MPIntMutByteSliceFactory,
-                                      NF: MPIntMutByteSliceFactory>() {
+fn test_mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice,
+                                      T0: MPIntMutByteSlice, T1: MPIntMutByteSlice,
+                                      NT: MPIntMutByteSlice>() {
     use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
 
     for i in 0..16 {
@@ -488,7 +487,7 @@ fn test_mp_ct_montgomery_mul_mod_cond<RF: MPIntMutByteSliceFactory,
             // Force n_low odd.
             let n_low = n_low | 1;
             let mut n: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-            let mut n = NF::from_bytes(n.as_mut_slice()).unwrap();
+            let mut n = NT::from_bytes(n.as_mut_slice()).unwrap();
             n.store_l(0, n_low);
             n.store_l(1, n_high);
             for n_len in [2 * LIMB_BYTES - 1, 2 * LIMB_BYTES] {
@@ -497,9 +496,9 @@ fn test_mp_ct_montgomery_mul_mod_cond<RF: MPIntMutByteSliceFactory,
 
                 // r_mod_n = 2^(2 * LIMB_BITS) % n.
                 let mut r_mod_n: [u8; 3 * LIMB_BYTES] = [0; 3 * LIMB_BYTES];
-                let mut r_mod_n = RF::from_bytes(r_mod_n.as_mut_slice()).unwrap();
+                let mut r_mod_n = RT::from_bytes(r_mod_n.as_mut_slice()).unwrap();
                 r_mod_n.store_l_full(2, 1);
-                mp_ct_div_mp_mp::<_, _, RF::SelfT<'_>>(None, &mut r_mod_n, &n, None).unwrap();
+                mp_ct_div_mp_mp::<_, _, RT::SelfT<'_>>(None, &mut r_mod_n, &n, None).unwrap();
                 let (_, r_mod_n) = r_mod_n.split_at(n.len());
 
                 for k in 0..4 {
@@ -507,30 +506,30 @@ fn test_mp_ct_montgomery_mul_mod_cond<RF: MPIntMutByteSliceFactory,
                     for l in 0..4 {
                         let a_low = MERSENNE_PRIME_13.wrapping_mul((262175 as LimbType).wrapping_mul(l));
                         let mut a: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-                        let mut a = F0::from_bytes(a.as_mut_slice()).unwrap();
+                        let mut a = T0::from_bytes(a.as_mut_slice()).unwrap();
                         a.store_l(0, a_low);
                         a.store_l(1, a_high);
                         // All montgomery operations are defined mod n, compute a mod n
-                        mp_ct_div_mp_mp::<_, _, F0::SelfT<'_>>(None, &mut a, &n, None).unwrap();
+                        mp_ct_div_mp_mp::<_, _, T0::SelfT<'_>>(None, &mut a, &n, None).unwrap();
                         for s in 0..4 {
                             let b_high = MERSENNE_PRIME_13.wrapping_mul((262175 as LimbType).wrapping_mul(s));
                             for t in 0..4 {
                                 const MERSENNE_PRIME_19: LimbType = 524287 as LimbType;
                                 let b_low = MERSENNE_PRIME_19.wrapping_mul((4095 as LimbType).wrapping_mul(t));
                                 let mut b: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-                                let mut b = F1::from_bytes(b.as_mut_slice()).unwrap();
+                                let mut b = T1::from_bytes(b.as_mut_slice()).unwrap();
                                 b.store_l(0, b_low);
                                 b.store_l(1, b_high);
                                 // All montgomery operations are defined mod n, compute b mod n
-                                mp_ct_div_mp_mp::<_, _, F1::SelfT<'_>>(None, &mut b, &n, None).unwrap();
+                                mp_ct_div_mp_mp::<_, _, T1::SelfT<'_>>(None, &mut b, &n, None).unwrap();
 
                                 for op_len in [0, 1 * LIMB_BYTES, n_len] {
                                     let (_, a) = a.split_at(op_len);
                                     let (_, b) = b.split_at(op_len);
 
                                     let mut _result: [u8; 4 * LIMB_BYTES] = [0; 4 * LIMB_BYTES];
-                                    let mut result = RF::from_bytes(_result.as_mut_slice()).unwrap();
-                                    let (_, mut mg_mul_result) = result.split_at_mut(n_len);
+                                    let mut result = RT::from_bytes(_result.as_mut_slice()).unwrap();
+                                    let (_, mut mg_mul_result) = result.split_at(n_len);
                                     mp_ct_montgomery_mul_mod_cond(
                                         &mut mg_mul_result, &a, &b, &n, n0_inv,
                                         subtle::Choice::from(0u8)
@@ -556,16 +555,16 @@ fn test_mp_ct_montgomery_mul_mod_cond<RF: MPIntMutByteSliceFactory,
                                     mp_ct_mul_trunc_cond_mp_mp(
                                         &mut result, n.len(), &r_mod_n, subtle::Choice::from(1)
                                     );
-                                    mp_ct_div_mp_mp::<_, _, RF::SelfT<'_>>(None, &mut result, &n, None).unwrap();
+                                    mp_ct_div_mp_mp::<_, _, RT::SelfT<'_>>(None, &mut result, &n, None).unwrap();
                                     drop(result);
 
                                     let mut _expected: [u8; 4 * LIMB_BYTES] = [0; 4 * LIMB_BYTES];
-                                    let mut expected = RF::from_bytes(_expected.as_mut_slice()).unwrap();
+                                    let mut expected = RT::from_bytes(_expected.as_mut_slice()).unwrap();
                                     expected.copy_from(&a);
                                     mp_ct_mul_trunc_cond_mp_mp(
                                         &mut expected, op_len, &b, subtle::Choice::from(1)
                                     );
-                                    mp_ct_div_mp_mp::<_, _, RF::SelfT<'_>>(None, &mut expected, &n, None).unwrap();
+                                    mp_ct_div_mp_mp::<_, _, RT::SelfT<'_>>(None, &mut expected, &n, None).unwrap();
                                     drop(expected);
 
                                     assert_eq!(_result, _expected);
@@ -582,7 +581,6 @@ fn test_mp_ct_montgomery_mul_mod_cond<RF: MPIntMutByteSliceFactory,
 #[test]
 fn test_mp_ct_montgomery_mul_mod_cond_be_be_be_be() {
     use super::limbs_buffer::MPBigEndianMutByteSlice;
-
     test_mp_ct_montgomery_mul_mod_cond::<MPBigEndianMutByteSlice,
                                          MPBigEndianMutByteSlice,
                                          MPBigEndianMutByteSlice,MPBigEndianMutByteSlice
@@ -592,7 +590,6 @@ fn test_mp_ct_montgomery_mul_mod_cond_be_be_be_be() {
 #[test]
 fn test_mp_ct_montgomery_mul_mod_cond_le_le_le_le() {
     use super::limbs_buffer::MPLittleEndianMutByteSlice;
-
     test_mp_ct_montgomery_mul_mod_cond::<MPLittleEndianMutByteSlice,
                                          MPLittleEndianMutByteSlice,
                                          MPLittleEndianMutByteSlice,MPLittleEndianMutByteSlice

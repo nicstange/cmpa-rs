@@ -5,7 +5,7 @@
 //! This helper module provides a couple of utilities for accessing these byte buffers in units of
 //! [`LimbType`].
 
-use core::{self, convert, marker};
+use core::{self, convert, fmt, marker};
 
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize as _;
@@ -783,33 +783,54 @@ fn test_mp_ne_zeroize_bytes_above() {
     assert_eq!(mp_le_load_l(&mut limbs, 1), 0);
 }
 
-pub trait MPIntByteSlice<'a>: Sized {
-    type MPIntByteSlice<'b>: MPIntByteSlice<'b> where Self: 'b;
+pub trait MPIntByteSliceCommonPriv: Sized {
+    fn take(self, nbytes: usize) -> (Self, Self);
+}
 
+pub trait MPIntByteSliceCommon: MPIntByteSliceCommonPriv {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
 
     fn load_l_full(&self, i: usize) -> LimbType;
     fn load_l(&self, i: usize) -> LimbType;
-    fn take(self, nbytes: usize) -> (Self, Self);
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
-    where Self: 'b;
 }
 
-pub trait MPIntByteSliceFactory {
-    type SelfT<'a>: MPIntByteSlice<'a> + MPIntByteSliceFactory;
-    type FromBytesError: core::fmt::Debug;
+pub trait MPIntByteSlicePriv: MPIntByteSliceCommon {
+    type SelfT<'a>: MPIntByteSlice where Self: 'a;
 
-    fn from_bytes<'a, 'b: 'a>(bytes: &'b [u8]) -> Result<Self::SelfT<'a>, Self::FromBytesError>;
+    fn split_at<'a>(&'a self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>)
+    where Self: 'a;
+}
+
+pub trait MPIntByteSlice: MPIntByteSlicePriv {
+    type FromBytesError: fmt::Debug;
+
+    fn from_bytes<'a: 'b, 'b>(bytes: &'a [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError>
+    where Self: 'b;
+
     fn coerce_lifetime<'a>(self: &'a Self) -> Self::SelfT<'a>;
 }
 
-pub trait MPIntMutByteSlice<'a>: MPIntByteSlice<'a> {
+pub trait MPIntMutByteSlicePriv: MPIntByteSliceCommon {
+    type SelfT<'a>: MPIntMutByteSlice where Self: 'a;
+
+    fn split_at<'a>(&'a mut self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>)
+    where Self: 'a;
+}
+
+pub trait MPIntMutByteSlice: MPIntMutByteSlicePriv {
+    type FromBytesError: fmt::Debug;
+
+    fn from_bytes<'a: 'b, 'b>(bytes: &'a mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError>
+    where Self: 'b;
+
+    fn coerce_lifetime<'a>(self: &'a mut Self) -> Self::SelfT<'a>;
+
     fn store_l_full(&mut self, i: usize, value: LimbType);
     fn store_l(&mut self, i: usize, value: LimbType);
     fn zeroize_bytes_above(&mut self, nbytes: usize);
 
-    fn copy_from<'b, S: MPIntByteSlice<'b>>(&'_ mut self, src: &S) {
+    fn copy_from<S: MPIntByteSliceCommon>(&'_ mut self, src: &S) {
         debug_assert!(self.len() >= src.len());
         let src_nlimbs = mp_ct_nlimbs(src.len());
 
@@ -825,22 +846,18 @@ pub trait MPIntMutByteSlice<'a>: MPIntByteSlice<'a> {
     }
 }
 
-pub trait MPIntMutByteSliceFactory {
-    type SelfT<'a>: MPIntMutByteSlice<'a> + MPIntMutByteSliceFactory;
-    type FromBytesError: core::fmt::Debug;
-
-    fn from_bytes<'a, 'b: 'a>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'a>, Self::FromBytesError>;
-    fn coerce_lifetime<'a>(self: &'a mut Self) -> Self::SelfT<'a>;
-    fn split_at_mut<'a>(&'a mut self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>);
-}
-
 pub struct MPBigEndianByteSlice<'a> {
     bytes: &'a [u8]
 }
 
-impl<'a> MPIntByteSlice<'a> for MPBigEndianByteSlice<'a> {
-    type MPIntByteSlice<'b> = MPBigEndianByteSlice<'b> where Self: 'b;
+impl<'a> MPIntByteSliceCommonPriv for MPBigEndianByteSlice<'a> {
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+}
 
+impl<'a> MPIntByteSliceCommon for MPBigEndianByteSlice<'a> {
     fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -856,40 +873,44 @@ impl<'a> MPIntByteSlice<'a> for MPBigEndianByteSlice<'a> {
     fn load_l(&self, i: usize) -> LimbType {
         mp_be_load_l(self.bytes, i)
     }
+}
 
-    fn take(self, nbytes: usize) -> (Self, Self) {
-        let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
-        (Self { bytes: h }, Self { bytes: l })
-    }
+impl<'a> MPIntByteSlicePriv for MPBigEndianByteSlice<'a> {
+    type SelfT<'b> = MPBigEndianByteSlice<'b> where Self: 'b;
 
-    fn split_at<'b>(&self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
     where Self: 'b
     {
         let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
-        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+        (Self::SelfT::<'b> { bytes: h }, Self::SelfT::<'b> { bytes: l })
     }
 }
 
-impl<'a> MPIntByteSliceFactory for MPBigEndianByteSlice<'a> {
-    type SelfT<'b> = MPBigEndianByteSlice<'b>;
+impl<'a> MPIntByteSlice for MPBigEndianByteSlice<'a> {
     type FromBytesError = convert::Infallible;
 
-    fn from_bytes<'b, 'c: 'b>(bytes: &'c [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
-        Ok(Self::SelfT::<'b> { bytes })
+    fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
+    where Self: 'c
+    {
+        Ok(Self::SelfT::<'c> { bytes })
     }
 
     fn coerce_lifetime<'b>(self: &'b Self) -> Self::SelfT<'b> {
         Self::from_bytes(self.bytes).unwrap()
     }
 }
-
 pub struct MPBigEndianMutByteSlice<'a> {
     bytes: &'a mut [u8]
 }
 
-impl<'a> MPIntByteSlice<'a> for MPBigEndianMutByteSlice<'a> {
-    type MPIntByteSlice<'b> = MPBigEndianByteSlice<'b> where Self: 'b;
+impl<'a> MPIntByteSliceCommonPriv for MPBigEndianMutByteSlice<'a> {
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+}
 
+impl<'a> MPIntByteSliceCommon for MPBigEndianMutByteSlice<'a> {
     fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -905,21 +926,32 @@ impl<'a> MPIntByteSlice<'a> for MPBigEndianMutByteSlice<'a> {
     fn load_l(&self, i: usize) -> LimbType {
         mp_be_load_l(self.bytes, i)
     }
+}
 
-    fn take(self, nbytes: usize) -> (Self, Self) {
-        let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
-        (Self { bytes: h }, Self { bytes: l })
-    }
+impl<'a> MPIntMutByteSlicePriv for MPBigEndianMutByteSlice<'a> {
+    type SelfT<'b> = MPBigEndianMutByteSlice<'b> where Self: 'b;
 
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
     where Self: 'b
     {
-        let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
-        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+        let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
+        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
     }
 }
 
-impl<'a> MPIntMutByteSlice<'a> for MPBigEndianMutByteSlice<'a> {
+impl<'a> MPIntMutByteSlice for MPBigEndianMutByteSlice<'a> {
+    type FromBytesError = convert::Infallible;
+
+    fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
+    where Self: 'c
+    {
+        Ok(Self::SelfT::<'c> { bytes })
+    }
+
+    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes.as_mut()).unwrap()
+    }
+
     fn store_l_full(&mut self, i: usize, value: LimbType) {
         mp_be_store_l_full(self.bytes, i, value)
     }
@@ -933,31 +965,18 @@ impl<'a> MPIntMutByteSlice<'a> for MPBigEndianMutByteSlice<'a> {
     }
 }
 
-impl<'a> MPIntMutByteSliceFactory for MPBigEndianMutByteSlice<'a> {
-    type SelfT<'b> = MPBigEndianMutByteSlice<'b>;
-    type FromBytesError = convert::Infallible;
-
-    fn from_bytes<'b, 'c: 'b>(bytes: &'c mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
-        Ok(Self::SelfT::<'b> { bytes })
-    }
-
-    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
-        Self::from_bytes(self.bytes.as_mut()).unwrap()
-    }
-
-    fn split_at_mut<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>) {
-        let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
-        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
-    }
-}
-
 pub struct MPLittleEndianByteSlice<'a> {
     bytes: &'a [u8]
 }
 
-impl<'a> MPIntByteSlice<'a> for MPLittleEndianByteSlice<'a> {
-    type MPIntByteSlice<'b> = MPLittleEndianByteSlice<'b> where Self: 'b;
+impl<'a> MPIntByteSliceCommonPriv for MPLittleEndianByteSlice<'a> {
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (l, h) = self.bytes.split_at(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+}
 
+impl<'a> MPIntByteSliceCommon for MPLittleEndianByteSlice<'a> {
     fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -973,40 +992,44 @@ impl<'a> MPIntByteSlice<'a> for MPLittleEndianByteSlice<'a> {
     fn load_l(&self, i: usize) -> LimbType {
         mp_le_load_l(self.bytes, i)
     }
+}
 
-    fn take(self, nbytes: usize) -> (Self, Self) {
-        let (l, h) = self.bytes.split_at(nbytes);
-        (Self { bytes: h }, Self { bytes: l })
-    }
+impl<'a> MPIntByteSlicePriv for MPLittleEndianByteSlice<'a> {
+    type SelfT<'b> = MPLittleEndianByteSlice<'b> where Self: 'b;
 
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
     where Self: 'b
     {
         let (l, h) = self.bytes.split_at(nbytes);
-        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+        (Self::SelfT::<'b> { bytes: h }, Self::SelfT::<'b> { bytes: l })
     }
 }
 
-impl<'a> MPIntByteSliceFactory for MPLittleEndianByteSlice<'a> {
-    type SelfT<'b> = MPLittleEndianByteSlice<'b>;
+impl<'a> MPIntByteSlice for MPLittleEndianByteSlice<'a> {
     type FromBytesError = convert::Infallible;
 
-    fn from_bytes<'b, 'c: 'b>(bytes: &'c [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
-        Ok(Self::SelfT::<'b> { bytes })
+    fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
+    where Self: 'c
+    {
+        Ok(Self::SelfT::<'c> { bytes })
     }
 
     fn coerce_lifetime<'b>(self: &'b Self) -> Self::SelfT<'b> {
         Self::from_bytes(self.bytes).unwrap()
     }
 }
-
 pub struct MPLittleEndianMutByteSlice<'a> {
     bytes: &'a mut [u8]
 }
 
-impl<'a> MPIntByteSlice<'a> for MPLittleEndianMutByteSlice<'a> {
-    type MPIntByteSlice<'b> = MPLittleEndianByteSlice<'b> where Self: 'b;
+impl<'a> MPIntByteSliceCommonPriv for MPLittleEndianMutByteSlice<'a> {
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+}
 
+impl<'a> MPIntByteSliceCommon for MPLittleEndianMutByteSlice<'a> {
     fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -1022,21 +1045,32 @@ impl<'a> MPIntByteSlice<'a> for MPLittleEndianMutByteSlice<'a> {
     fn load_l(&self, i: usize) -> LimbType {
         mp_le_load_l(self.bytes, i)
     }
+}
 
-    fn take(self, nbytes: usize) -> (Self, Self) {
-        let (l, h) = self.bytes.split_at_mut(nbytes);
-        (Self { bytes: h }, Self { bytes: l })
-    }
+impl<'a> MPIntMutByteSlicePriv for MPLittleEndianMutByteSlice<'a> {
+    type SelfT<'b> = MPLittleEndianMutByteSlice<'b> where Self: 'b;
 
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
     where Self: 'b
     {
-        let (l, h) = self.bytes.split_at(nbytes);
-        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
     }
 }
 
-impl<'a> MPIntMutByteSlice<'a> for MPLittleEndianMutByteSlice<'a> {
+impl<'a> MPIntMutByteSlice for MPLittleEndianMutByteSlice<'a> {
+    type FromBytesError = convert::Infallible;
+
+    fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
+    where Self: 'c
+    {
+        Ok(Self::SelfT::<'c> { bytes })
+    }
+
+    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes.as_mut()).unwrap()
+    }
+
     fn store_l_full(&mut self, i: usize, value: LimbType) {
         mp_le_store_l_full(self.bytes, i, value)
     }
@@ -1050,24 +1084,6 @@ impl<'a> MPIntMutByteSlice<'a> for MPLittleEndianMutByteSlice<'a> {
     }
 }
 
-impl<'a> MPIntMutByteSliceFactory for MPLittleEndianMutByteSlice<'a> {
-    type SelfT<'b> = MPLittleEndianMutByteSlice<'b>;
-    type FromBytesError = convert::Infallible;
-
-    fn from_bytes<'b, 'c: 'b>(bytes: &'c mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
-        Ok(Self::SelfT::<'b> { bytes })
-    }
-
-    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
-        Self::from_bytes(self.bytes.as_mut()).unwrap()
-    }
-
-    fn split_at_mut<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>) {
-        let (l, h) = self.bytes.split_at_mut(nbytes);
-        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
-    }
-}
-
 #[derive(Debug)]
 pub struct UnalignedMPByteSliceLenError {}
 
@@ -1075,9 +1091,15 @@ pub struct MPNativeEndianByteSlice<'a> {
     bytes: &'a [u8]
 }
 
-impl<'a> MPIntByteSlice<'a> for MPNativeEndianByteSlice<'a> {
-    type MPIntByteSlice<'b> = MPNativeEndianByteSlice<'b> where Self: 'b;
+impl<'a> MPIntByteSliceCommonPriv for MPNativeEndianByteSlice<'a> {
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        debug_assert_eq!(nbytes % LIMB_BYTES, 0);
+        let (l, h) = self.bytes.split_at(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+}
 
+impl<'a> MPIntByteSliceCommon for MPNativeEndianByteSlice<'a> {
     fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -1093,29 +1115,28 @@ impl<'a> MPIntByteSlice<'a> for MPNativeEndianByteSlice<'a> {
     fn load_l(&self, i: usize) -> LimbType {
         mp_ne_load_l(self.bytes, i)
     }
+}
 
-    fn take(self, nbytes: usize) -> (Self, Self) {
-        debug_assert!(nbytes % LIMB_BYTES == 0);
-        let (l, h) = self.bytes.split_at(nbytes);
-        (Self { bytes: h }, Self { bytes: l })
-    }
+impl<'a> MPIntByteSlicePriv for MPNativeEndianByteSlice<'a> {
+    type SelfT<'b> = MPNativeEndianByteSlice<'b> where Self: 'b;
 
-    fn split_at<'b>(&self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
     where Self: 'b
     {
-        debug_assert!(nbytes % LIMB_BYTES == 0);
+        debug_assert_eq!(nbytes % LIMB_BYTES, 0);
         let (l, h) = self.bytes.split_at(nbytes);
-        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+        (Self::SelfT::<'b> { bytes: h }, Self::SelfT::<'b> { bytes: l })
     }
 }
 
-impl<'a> MPIntByteSliceFactory for MPNativeEndianByteSlice<'a> {
-    type SelfT<'b> = MPNativeEndianByteSlice<'b>;
+impl<'a> MPIntByteSlice for MPNativeEndianByteSlice<'a> {
     type FromBytesError = UnalignedMPByteSliceLenError;
 
-    fn from_bytes<'b, 'c: 'b>(bytes: &'c [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
+    fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
+    where Self: 'c
+    {
         if bytes.len() % LIMB_BYTES == 0 {
-            Ok(Self::SelfT::<'b> { bytes })
+            Ok(Self::SelfT::<'c> { bytes })
         } else {
             Err(UnalignedMPByteSliceLenError {})
         }
@@ -1125,14 +1146,19 @@ impl<'a> MPIntByteSliceFactory for MPNativeEndianByteSlice<'a> {
         Self::from_bytes(self.bytes).unwrap()
     }
 }
-
 pub struct MPNativeEndianMutByteSlice<'a> {
     bytes: &'a mut [u8]
 }
 
-impl<'a> MPIntByteSlice<'a> for MPNativeEndianMutByteSlice<'a> {
-    type MPIntByteSlice<'b> = MPNativeEndianByteSlice<'b> where Self: 'b;
+impl<'a> MPIntByteSliceCommonPriv for MPNativeEndianMutByteSlice<'a> {
+    fn take(self, nbytes: usize) -> (Self, Self) {
+        debug_assert_eq!(nbytes % LIMB_BYTES, 0);
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self { bytes: h }, Self { bytes: l })
+    }
+}
 
+impl<'a> MPIntByteSliceCommon for MPNativeEndianMutByteSlice<'a> {
     fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -1148,23 +1174,37 @@ impl<'a> MPIntByteSlice<'a> for MPNativeEndianMutByteSlice<'a> {
     fn load_l(&self, i: usize) -> LimbType {
         mp_ne_load_l(self.bytes, i)
     }
+}
 
-    fn take(self, nbytes: usize) -> (Self, Self) {
-        debug_assert!(nbytes % LIMB_BYTES == 0);
-        let (l, h) = self.bytes.split_at_mut(nbytes);
-        (Self { bytes: h }, Self { bytes: l })
-    }
+impl<'a> MPIntMutByteSlicePriv for MPNativeEndianMutByteSlice<'a> {
+    type SelfT<'b> = MPNativeEndianMutByteSlice<'b> where Self: 'b;
 
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::MPIntByteSlice<'b>, Self::MPIntByteSlice<'b>)
+    fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
     where Self: 'b
     {
-        debug_assert!(nbytes % LIMB_BYTES == 0);
-        let (h, l) = self.bytes.split_at(nbytes);
-        (Self::MPIntByteSlice { bytes: h }, Self::MPIntByteSlice { bytes: l })
+        debug_assert_eq!(nbytes % LIMB_BYTES, 0);
+        let (l, h) = self.bytes.split_at_mut(nbytes);
+        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
     }
 }
 
-impl<'a> MPIntMutByteSlice<'a> for MPNativeEndianMutByteSlice<'a> {
+impl<'a> MPIntMutByteSlice for MPNativeEndianMutByteSlice<'a> {
+    type FromBytesError = UnalignedMPByteSliceLenError;
+
+    fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
+    where Self: 'c
+    {
+        if bytes.len() % LIMB_BYTES == 0 {
+            Ok(Self::SelfT::<'c> { bytes })
+        } else {
+            Err(UnalignedMPByteSliceLenError {})
+        }
+    }
+
+    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
+        Self::from_bytes(self.bytes.as_mut()).unwrap()
+    }
+
     fn store_l_full(&mut self, i: usize, value: LimbType) {
         mp_ne_store_l_full(self.bytes, i, value)
     }
@@ -1178,30 +1218,7 @@ impl<'a> MPIntMutByteSlice<'a> for MPNativeEndianMutByteSlice<'a> {
     }
 }
 
-impl<'a> MPIntMutByteSliceFactory for MPNativeEndianMutByteSlice<'a> {
-    type SelfT<'b> = MPNativeEndianMutByteSlice<'b>;
-    type FromBytesError = UnalignedMPByteSliceLenError;
-
-    fn from_bytes<'b, 'c: 'b>(bytes: &'c mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError> {
-        if bytes.len() % LIMB_BYTES == 0 {
-            Ok(Self::SelfT::<'b> { bytes })
-        } else {
-            Err(UnalignedMPByteSliceLenError {})
-        }
-    }
-
-    fn coerce_lifetime<'b>(self: &'b mut Self) -> Self::SelfT<'b> {
-        Self::from_bytes(self.bytes.as_mut()).unwrap()
-    }
-
-    fn split_at_mut<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>) {
-        debug_assert!(nbytes % LIMB_BYTES == 0);
-        let (l, h) = self.bytes.split_at_mut(nbytes);
-        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
-    }
-}
-
-pub fn mp_find_last_set_limb_mp<'a, T0: MPIntByteSlice<'a>>(op0: &T0) -> usize {
+pub fn mp_find_last_set_limb_mp<'a, T0: MPIntByteSliceCommon>(op0: &T0) -> usize {
     let mut nlimbs = mp_ct_nlimbs(op0.len());
     if nlimbs == 0 {
         return 0;
@@ -1221,13 +1238,13 @@ pub fn mp_find_last_set_limb_mp<'a, T0: MPIntByteSlice<'a>>(op0: &T0) -> usize {
 }
 
 #[cfg(test)]
-fn test_mp_find_last_set_limb_mp<F0: MPIntMutByteSliceFactory>()  {
+fn test_mp_find_last_set_limb_mp<T0: MPIntMutByteSlice>()  {
     let mut op0: [u8; 0] = [0; 0];
-    let op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     assert_eq!(mp_find_last_set_limb_mp(&op0), 0);
 
     let mut op0: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
-    let mut op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     op0.store_l(0, 1);
     assert_eq!(mp_find_last_set_limb_mp(&op0), 1);
 
@@ -1248,7 +1265,7 @@ fn test_mp_find_last_set_limb_le()  {
     test_mp_find_last_set_limb_mp::<MPLittleEndianMutByteSlice>();
 }
 
-pub fn mp_find_last_set_byte_mp<'a, T0: MPIntByteSlice<'a>>(op0: &T0) -> usize {
+pub fn mp_find_last_set_byte_mp<'a, T0: MPIntByteSliceCommon>(op0: &T0) -> usize {
     let nlimbs = mp_find_last_set_limb_mp(op0);
     if nlimbs == 0 {
         return 0;
@@ -1258,13 +1275,13 @@ pub fn mp_find_last_set_byte_mp<'a, T0: MPIntByteSlice<'a>>(op0: &T0) -> usize {
 }
 
 #[cfg(test)]
-fn test_mp_find_last_set_byte_mp<F0: MPIntMutByteSliceFactory>() {
+fn test_mp_find_last_set_byte_mp<T0: MPIntMutByteSlice>() {
     let mut op0: [u8; 0] = [0; 0];
-    let op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     assert_eq!(mp_find_last_set_byte_mp(&op0), 0);
 
     let mut op0: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
-    let mut op0 = F0::from_bytes(op0.as_mut_slice()).unwrap();
+    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     op0.store_l(0, 1);
     assert_eq!(mp_find_last_set_byte_mp(&op0), 1);
 
@@ -1287,7 +1304,7 @@ fn test_mp_find_last_set_byte_le() {
 
 /// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
 /// segments.
-struct CompositeLimbsBufferSegment<'a, ST: MPIntByteSlice<'a>> {
+struct CompositeLimbsBufferSegment<'a, ST: MPIntByteSliceCommon> {
     /// The total number of limbs whose least significant bytes are held in this or less significant
     /// segments each (note that a limb may span multiple segments).
     end: usize,
@@ -1331,12 +1348,12 @@ struct CompositeLimbsBufferSegment<'a, ST: MPIntByteSlice<'a>> {
 ///
 /// See also [`CompositeLimbsBuffer`] for a non-mutable variant.
 ///
-pub struct CompositeLimbsBuffer<'a, ST: MPIntByteSlice<'a>, const N_SEGMENTS: usize> {
+pub struct CompositeLimbsBuffer<'a, ST: MPIntByteSliceCommon, const N_SEGMENTS: usize> {
     /// The composed view's individual segments, ordered from least to most significant.
     segments: [CompositeLimbsBufferSegment<'a, ST>; N_SEGMENTS],
 }
 
-impl<'a, ST: MPIntByteSlice<'a>, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
+impl<'a, ST: MPIntByteSliceCommon, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
     /// Construct a `CompositeLimbsBuffer` view from the individual byte buffer segments.
     ///
     /// # Arguments
@@ -1441,7 +1458,7 @@ impl<'a, ST: MPIntByteSlice<'a>, const N_SEGMENTS: usize> CompositeLimbsBuffer<'
     }
 }
 
-impl<'a, ST: MPIntMutByteSlice<'a>, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
+impl<'a, ST: MPIntMutByteSlice, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
     /// Update a limb in the composed multiprecision integer byte buffer.
     ///
     /// Execution time depends on the composed multiprecision integer's underlying segment layout as
@@ -1488,7 +1505,7 @@ fn test_composite_limbs_buffer_load_be() {
     use super::limb::LIMB_BITS;
 
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
-    let mut buf1: [u8; 0] = [0; 0];
+    let buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
 
     // 0x02 00 .. 00 01 00 .. 00
@@ -1578,15 +1595,15 @@ fn test_composite_limbs_buffer_load_le() {
 }
 
 #[cfg(test)]
-fn test_composite_limbs_buffer_store<SF: MPIntMutByteSliceFactory>() {
+fn test_composite_limbs_buffer_store<ST: MPIntMutByteSlice>() {
     use super::limb::LIMB_BITS;
 
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let mut buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
-    let buf0 = SF::from_bytes(&mut buf0).unwrap();
-    let buf1 = SF::from_bytes(&mut buf1).unwrap();
-    let buf2 = SF::from_bytes(&mut buf2).unwrap();
+    let buf0 = ST::from_bytes(&mut buf0).unwrap();
+    let buf1 = ST::from_bytes(&mut buf1).unwrap();
+    let buf2 = ST::from_bytes(&mut buf2).unwrap();
     let mut limbs =  CompositeLimbsBuffer::new(
         [buf0, buf1, buf2]
     );
