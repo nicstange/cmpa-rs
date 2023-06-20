@@ -1,7 +1,7 @@
 //! Definitions and arithmetic primitives related to [LimbType], the basic unit of multiprecision
 //! integer arithmetic.
 use core;
-use core::ops::{Deref as _, DerefMut as _};
+use core::ops::Deref as _;
 use core::mem;
 use std::ops::{Deref, DerefMut};
 use subtle::{self, ConditionallySelectable as _, ConstantTimeEq as _, ConstantTimeGreater as _};
@@ -124,6 +124,15 @@ fn test_ct_add_l_l() {
     assert_eq!(ct_add_l_l(!0, !0), (1, !0 - 1));
 }
 
+pub fn ct_add_l_l_c(v0: LimbType, v1: LimbType, carry: LimbType) -> (LimbType, LimbType) {
+    debug_assert!(carry <= 1);
+    let (carry0, r) = ct_add_l_l(v0, carry);
+    let (carry1, r) = ct_add_l_l(r, v1);
+    let carry = carry0 + carry1;
+    debug_assert!(carry <= 1);
+    (carry, r)
+}
+
 /// Subtract two limbs.
 ///
 /// Returns a pair of borrow and the [`LimbType::BITS`] lower bits of the difference.
@@ -155,6 +164,14 @@ fn test_ct_sub_l_l() {
     assert_eq!(ct_sub_l_l(1 << (LIMB_BITS - 1), (1 << (LIMB_BITS - 1)) + 1), (1, !0));
 }
 
+pub fn ct_sub_l_l_b(v0: LimbType, v1: LimbType, borrow: LimbType) -> (LimbType, LimbType) {
+    debug_assert!(borrow <= 1);
+    let (borrow0, r) = ct_sub_l_l(v0, borrow);
+    let (borrow1, r) = ct_sub_l_l(r, v1);
+    let borrow = borrow0 + borrow1;
+    debug_assert!(borrow <= 1);
+    (borrow, r)
+}
 
 /// A pair of [`LimbType`]s interpreted as a double precision integer.
 ///
@@ -496,9 +513,8 @@ fn test_ct_div_dl_l() {
         assert_eq!(prod_h.high(), 0);
 
         let (carry, result_l) = ct_add_l_l(prod_l.low(), r);
-        let (carry0, result_h) = ct_add_l_l(prod_l.high(), carry);
-        let (carry1, result_h) = ct_add_l_l(result_h, prod_h.low());
-        assert_eq!(carry0 + carry1, 0);
+        let (carry, result_h) = ct_add_l_l_c(prod_l.high(), prod_h.low(), carry);
+        assert_eq!(carry, 0);
         assert_eq!(result_l, u.low());
         assert_eq!(result_h, u.high());
     }

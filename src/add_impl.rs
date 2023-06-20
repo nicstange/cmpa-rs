@@ -2,7 +2,7 @@
 
 use crate::limb::ct_find_last_set_byte_l;
 
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_sub_l_l};
+use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b};
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon};
 
 use subtle::{self, ConditionallySelectable as _};
@@ -22,9 +22,9 @@ use subtle::{self, ConditionallySelectable as _};
 /// * `op1` - The second input addend. Its length must not exceed the length of `op0`.
 ///
 pub fn mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(op0: &mut T0, op1: &T1) -> LimbType {
-    debug_assert!(op1.len() <= op0.len());
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
+    debug_assert!(op1_nlimbs <= op0_nlimbs);
     if op1_nlimbs == 0 {
         return 0;
     }
@@ -33,11 +33,7 @@ pub fn mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(op0: &mu
     for i in 0..op1_nlimbs - 1 {
         let mut op0_val = op0.load_l_full(i);
         let op1_val = op1.load_l_full(i);
-        let carry0;
-        (carry0, op0_val) = ct_add_l_l(op0_val, carry);
-        let carry1;
-        (carry1, op0_val) = ct_add_l_l(op0_val, op1_val);
-        carry = carry0 + carry1;
+        (carry, op0_val) = ct_add_l_l_c(op0_val, op1_val, carry);
         op0.store_l_full(i, op0_val);
     }
 
@@ -46,12 +42,8 @@ pub fn mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(op0: &mu
     let mut op1_val = op1.load_l(op1_nlimbs - 1);
     for i in op1_nlimbs - 1..op0_nlimbs {
         let mut op0_val = op0.load_l(i);
-        let carry0;
-        (carry0, op0_val) = ct_add_l_l(op0_val, carry);
-        let carry1;
-        (carry1, op0_val) = ct_add_l_l(op0_val, op1_val);
+        (carry, op0_val) = ct_add_l_l_c(op0_val, op1_val, carry);
         op1_val = 0;
-        carry = carry0 + carry1;
         if i != op0_nlimbs - 1 || !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             op0.store_l_full(i, op0_val);
         } else {
@@ -210,9 +202,9 @@ pub fn mp_ct_add_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> Lim
 pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
     op0: &mut T0, op1: &T1, cond: subtle::Choice
 ) -> LimbType {
-    debug_assert!(op1.len() <= op0.len());
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
+    debug_assert!(op1_nlimbs <= op0_nlimbs);
     if op1_nlimbs == 0 {
         return 0;
     }
@@ -222,11 +214,7 @@ pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
         let mut op0_val = op0.load_l_full(i);
         let op1_val = op1.load_l_full(i);
         let op1_val = LimbType::conditional_select(&0, &op1_val, cond);
-        let borrow0;
-        (borrow0, op0_val) = ct_sub_l_l(op0_val, borrow);
-        let borrow1;
-        (borrow1, op0_val) = ct_sub_l_l(op0_val, op1_val);
-        borrow = borrow0 + borrow1;
+        (borrow, op0_val) = ct_sub_l_l_b(op0_val, op1_val, borrow);
         op0.store_l_full(i, op0_val);
     }
 
@@ -236,12 +224,8 @@ pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
     let mut op1_val = LimbType::conditional_select(&0, &op1_val, cond);
     for i in op1_nlimbs - 1..op0_nlimbs {
         let mut op0_val = op0.load_l(i);
-        let borrow0;
-        (borrow0, op0_val) = ct_sub_l_l(op0_val, borrow);
-        let borrow1;
-        (borrow1, op0_val) = ct_sub_l_l(op0_val, op1_val);
+        (borrow, op0_val) = ct_sub_l_l_b(op0_val, op1_val, borrow);
         op1_val = 0;
-        borrow = borrow0 + borrow1;
         if i != op0_nlimbs - 1 || !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             op0.store_l_full(i, op0_val);
         } else {
