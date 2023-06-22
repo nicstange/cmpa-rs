@@ -8,3 +8,4 @@ mod limbs_buffer;
 mod montgomery;
 mod mul_impl;
 mod zeroize;
+mod shift_impl;
