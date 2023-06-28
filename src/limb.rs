@@ -288,6 +288,38 @@ fn test_ct_mul_l_l() {
     assert_eq!(p.high(), !1);
 }
 
+pub fn ct_mul_add_l_l_l_c(op0: LimbType, op10: LimbType, op11: LimbType, carry: LimbType) -> (LimbType, LimbType) {
+    let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op10, op11).into();
+    // Basic property of the multiplication.
+    debug_assert!(prod.high() < !1 || prod.high() == !1 && prod.low() == 1);
+    let (carry0, result) = ct_add_l_l(op0, carry);
+    let (carry1, result) = ct_add_l_l(result, prod.low());
+    // The new carry does not overflow: if carry0 != 0,
+    // then the result after after the first addition is
+    // <= !1, because that addition did wrap around.
+    // If in addition prod.high() == !1, then prod.low() <= 1
+    // and the second addition would not overflow.
+    debug_assert!(prod.high() < !1 || carry0 + carry1 <= 1);
+    let carry = prod.high() + carry0 + carry1;
+    (carry, result)
+}
+
+pub fn ct_mul_sub_b(op0: LimbType, op10: LimbType, op11: LimbType, borrow: LimbType) -> (LimbType, LimbType) {
+    let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op10, op11).into();
+    // Basic property of the multiplication.
+    debug_assert!(prod.high() < !1 || prod.high() == !1 && prod.low() == 1);
+    let (borrow0, result) = ct_sub_l_l(op0, borrow);
+    let (borrow1, result) = ct_sub_l_l(result, prod.low());
+    // The new borrow does not overflow: if borrow0 != 0,
+    // then the result after after the first addition is
+    // >= 1, because that subtraction did wrap around.
+    // If in addition prod.high() == !1, then prod.low() <= 1
+    // and the second addition would not overflow.
+    debug_assert!(prod.high() < !1 || borrow0 + borrow1 <= 1);
+    let borrow = prod.high() + borrow0 + borrow1;
+    (borrow, result)
+}
+
 /// A normalized divisor for input to [`ct_div_dl_l()`].
 ///
 /// In order to avoid scaling the same divisor all over again in loop invoking [`ct_div_dl_l()`],

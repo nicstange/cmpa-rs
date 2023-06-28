@@ -3,7 +3,7 @@ use subtle::{self, ConditionallySelectable as _};
 use crate::limb::ct_l_to_subtle_choice;
 
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb,
-                  ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b, ct_mul_l_l, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l, LIMB_BITS};
+                  ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_mul_sub_b, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l, LIMB_BITS};
 use super::limbs_buffer::{CompositeLimbsBuffer, mp_ct_nlimbs,
                           mp_find_last_set_byte_mp, MPIntMutByteSlice, MPIntByteSliceCommon};
 use super::shift_impl::mp_lshift_mp;
@@ -32,28 +32,20 @@ fn v_scaling(v_high: LimbType) -> LimbType {
 
 fn scaled_v_val<VT: MPIntByteSliceCommon>(
     i: usize, scaling: LimbType, v: &VT, scaled_v_carry: LimbType) -> (LimbType, LimbType) {
-    let scaled_v: Zeroizing<DoubleLimb> = ct_mul_l_l(v.load_l(i), scaling).into();
-    let (carry0, scaled_v_low) = ct_add_l_l(scaled_v.low(), scaled_v_carry);
-    let scaled_v_carry;
-    let carry1;
-    (carry1, scaled_v_carry) = ct_add_l_l(scaled_v.high(), carry0);
-    debug_assert_eq!(carry1, 0);
-
-    (scaled_v_low, scaled_v_carry)
+    ct_mul_add_l_l_l_c(0, scaling, v.load_l(i), scaled_v_carry)
 }
 
-fn scaled_qv_val<VT: MPIntByteSliceCommon>(
-    i: usize, q: LimbType, scaling: LimbType, v: &VT, scaled_v_carry: LimbType, qv_carry: LimbType
-) -> (LimbType, LimbType, LimbType) {
-    let (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-    let qv: Zeroizing<DoubleLimb> = ct_mul_l_l(v_val, q).into();
-    let (carry0, qv_low) = ct_add_l_l(qv.low(), qv_carry);
-    let qv_carry;
-    let carry1;
-    (carry1, qv_carry) = ct_add_l_l(qv.high(), carry0);
-    debug_assert_eq!(carry1, 0);
+fn add_scaled_v_val<VT: MPIntByteSliceCommon>(op0: LimbType, i: usize, scaling: LimbType, v: &VT, carry: LimbType) -> (LimbType, LimbType) {
+    ct_mul_add_l_l_l_c(op0, scaling, v.load_l(i), carry)
+}
 
-    (qv_low, scaled_v_carry, qv_carry)
+fn sub_scaled_qv_val<VT: MPIntByteSliceCommon>(op0: LimbType,
+                                               i: usize, q: LimbType,
+                                               scaling: LimbType, v: &VT, scaled_v_carry: LimbType,
+                                               borrow: LimbType) -> (LimbType, LimbType, LimbType) {
+    let (scaled_v_carry, v_val) = scaled_v_val(i, scaling, v, scaled_v_carry);
+    let (borrow, result) = ct_mul_sub_b(op0, q, v_val, borrow);
+    (borrow, result, scaled_v_carry)
 }
 
 fn v_head_scaled<VT: MPIntByteSliceCommon>(scaling: LimbType, v: &VT, v_nlimbs: usize)
@@ -68,11 +60,11 @@ fn v_head_scaled<VT: MPIntByteSliceCommon>(scaling: LimbType, v: &VT, v_nlimbs: 
     // scaled v[n - 2], if v_nlimbs == 1, it will remain zero on purpose.
     let mut scaled_v_tail_high = 0;
     for i in 0..v_nlimbs - 1 {
-        (scaled_v_tail_high, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
+        (scaled_v_carry, scaled_v_tail_high) = scaled_v_val(i, scaling, v, scaled_v_carry);
     }
 
     let scaled_v_high;
-    (scaled_v_high, scaled_v_carry) = scaled_v_val(v_nlimbs - 1, scaling, v, scaled_v_carry);
+    (scaled_v_carry, scaled_v_high) = scaled_v_val(v_nlimbs - 1, scaling, v, scaled_v_carry);
     debug_assert_eq!(scaled_v_carry, 0);
     (scaled_v_high, scaled_v_tail_high)
 }
@@ -134,52 +126,6 @@ fn q_estimate(
         (ct_gt_l_l(qv_head_low.high(), r) |
          (ct_eq_l_l(qv_head_low.high(), r) & ct_gt_l_l(qv_head_low.low(), u_head[2])));
     LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated)
-}
-
-fn u_sub_scaled_qv_at<'a, UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon>(
-    u_parts: &mut CompositeLimbsBuffer<'a, UT, 3>, j: usize, q: LimbType,
-    v: &VT, v_nlimbs: usize, scaling: LimbType) -> LimbType {
-    let mut scaled_v_carry = 0;
-    let mut qv_carry = 0;
-    let mut u_borrow = 0;
-    for i in 0..v_nlimbs {
-        let qv_val;
-        (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
-        let mut u = u_parts.load(j + i);
-        (u_borrow, u) = ct_sub_l_l_b(u, qv_val, u_borrow);
-        u_parts.store(j + i, u);
-    }
-    debug_assert_eq!(scaled_v_carry, 0);
-
-    let u = u_parts.load(j + v_nlimbs);
-    let (borrow0, u) = ct_sub_l_l(u, u_borrow);
-    let (borrow1, u) = ct_sub_l_l(u, qv_carry);
-    u_borrow = borrow0 + borrow1;
-    debug_assert!(u_borrow <= 1);
-    u_parts.store(j + v_nlimbs, u);
-    u_borrow
-}
-
-fn u_cond_add_scaled_v_at<'a, UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon>(
-    u_parts: &mut CompositeLimbsBuffer<'a, UT, 3>, j: usize,
-    v: &VT, v_nlimbs: usize, scaling: LimbType, cond: subtle::Choice
-) -> LimbType {
-    let mut scaled_v_carry = 0;
-    let mut u_carry = 0;
-    for i in 0..v_nlimbs {
-        let v_val: LimbType;
-        (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-        let v_val = LimbType::conditional_select(&0, &v_val, cond);
-        let mut u = u_parts.load(j + i);
-        (u_carry, u) = ct_add_l_l_c(u, v_val, u_carry);
-        u_parts.store(j + i, u);
-    }
-    debug_assert_eq!(scaled_v_carry, 0);
-
-    let u = u_parts.load(j + v_nlimbs);
-    let (u_carry, u) = ct_add_l_l(u, u_carry);
-    u_parts.store(j + v_nlimbs, u);
-    u_carry
 }
 
 pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
@@ -254,12 +200,9 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
     // Scale u.
     let mut carry = 0;
     for i in 0..u_nlimbs + 1 {
-        let scaled: Zeroizing<DoubleLimb> = ct_mul_l_l(u_parts.load(i), scaling).into();
-        let (carry0, scaled_low) = ct_add_l_l(scaled.low(), carry);
-        u_parts.store(i, scaled_low);
-        debug_assert!(scaled.high() < !0);
-        carry = carry0 + scaled.high();
-        debug_assert!(carry >= carry0); // Overflow cannot happen.
+        let mut u_val = u_parts.load(i);
+        (carry, u_val) = ct_mul_add_l_l_l_c(0, u_val, scaling, carry);
+        u_parts.store(i, u_val);
     }
     // The extra high limb in u_h_pad, initialized to zero, would have absorbed the last carry.
     debug_assert_eq!(carry, 0);
@@ -282,14 +225,37 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
             q_estimate(&cur_u_head, &scaled_v_head, normalized_scaled_v_high.deref())
         };
 
-        let borrow = u_sub_scaled_qv_at(&mut u_parts, j, q, v, v_nlimbs, scaling);
-        debug_assert_eq!(borrow & !1, 0); // At most LSB is set
+
+        // Subtract q * v from u at position j.
+        let mut scaled_v_carry = 0;
+        let mut borrow = 0;
+        for i in 0..v_nlimbs {
+            let mut u_val = u_parts.load(j + i);
+            (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+            u_parts.store(j + i, u_val);
+        }
+        debug_assert_eq!(scaled_v_carry, 0);
+        let u_val = u_parts.load(j + v_nlimbs);
+        let (borrow, u_val) = ct_sub_l_l(u_val, borrow);
+        u_parts.store(j + v_nlimbs, u_val);
+
+        // If borrow != 0, then the estimate for q had been one too large. Decrement it
+        // and add one v back to the remainder accordingly.
         let over_estimated = ct_l_to_subtle_choice(borrow);
-        u_cond_add_scaled_v_at(&mut u_parts, j, v, v_nlimbs, scaling, over_estimated);
         if let Some(q_out) = &mut q_out {
             let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
             q_out.store_l(j, q);
         }
+        let mut carry = 0;
+        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        for i in 0..v_nlimbs {
+            let mut u_val = u_parts.load(j + i);
+            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            u_parts.store(j + i, u_val);
+        }
+        let u_val = u_parts.load(j + v_nlimbs);
+        let (_, u_val) = ct_add_l_l(u_val, carry);
+        u_parts.store(j + v_nlimbs, u_val);
     }
 
     // Finally, divide the resulting remainder in u by the scaling again.
@@ -638,20 +604,17 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
         // to eventually turn out zero anyway.
         // In case v_nlimbs < 2, this initialization of u_val reflects the extension by
         // a zero limb on the right, which will land in r_out_head_shadow[0] below.
-        let mut u_borrow = 0;
         let mut scaled_v_carry = 0;
-        let mut qv_carry = 0;
+        let mut borrow = 0;
         let mut i = 0;
         let mut u_val = if v_nlimbs >= 2 {
             // Subtract q*v from the virtually shifted tail maintained in r_out[v_nlimbs - 3:0], if any,
             // return the value shifted out on the left.
             let mut next_u_val = 0; // The zero shifted in from the right.
             while i + 2 < v_nlimbs {
-                let qv_val;
-                (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
                 let mut u_val = next_u_val;
                 next_u_val = r_out.load_l_full(i);
-                (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+                (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
                 r_out.store_l_full(i, u_val);
                 i += 1;
             }
@@ -659,12 +622,9 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
             // Calculate the value that got shifted out on the left and goes into the next higher
             // limb, r_out_head_shadow[0].
             {
-                let qv_val;
-                (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
                 let mut u_val = next_u_val;
-                (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+                (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
                 i += 1;
-
                 u_val
             }
 
@@ -676,35 +636,33 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
         };
 
         // The remaining two head limbs in r_out_head_shadow[]. Note that for the most significant
-        // limb in r_out_head_shadow[1], there's only the qv_carry left to add.
+        // limb in r_out_head_shadow[1], there's only the borrow left to subtract.
         debug_assert_eq!(i + 1, v_nlimbs);
-        let mut qv_val;
-        (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
-        for k in [0, 1] {
-            let cur_u_val = r_out_head_shadow[k];
-            r_out_head_shadow[k] = u_val;
-            (u_borrow, u_val) = ct_sub_l_l_b(cur_u_val, qv_val, u_borrow);
-            qv_val = qv_carry;
+        {
+            let cur_u_val = r_out_head_shadow[0];
+            r_out_head_shadow[0] = u_val;
+            (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(cur_u_val, i, q, scaling, v, scaled_v_carry, borrow);
+            debug_assert_eq!(scaled_v_carry, 0);
+            let cur_u_val = r_out_head_shadow[1];
+            r_out_head_shadow[1] = u_val;
+            (borrow, u_val) = ct_sub_l_l(cur_u_val, borrow);
+            debug_assert!(borrow != 0 || u_val == 0);
         }
-        debug_assert!(u_borrow != 0 || u_val == 0);
 
-        // If u_borrow != 0, then the estimate for q had been one too large. Decrement it
+        // If borrow != 0, then the estimate for q had been one too large. Decrement it
         // and add one v back to the remainder accordingly.
-        let over_estimated = ct_l_to_subtle_choice(u_borrow);
+        let over_estimated = ct_l_to_subtle_choice(borrow);
         if let Some(q_out) = &mut q_out {
             let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
             q_out.store_l(j, q);
         }
-        let mut u_carry = 0;
-        let mut scaled_v_carry = 0;
+        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        let mut carry = 0;
         let mut i = 0;
         // Update the tail maintained in r_out[v_nlimbs - 3:0], if any:
         while i + 2 < v_nlimbs {
-            let v_val;
-            (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-            let v_val = LimbType::conditional_select(&0, &v_val, over_estimated);
             let mut u_val = r_out.load_l_full(i);
-            (u_carry, u_val) = ct_add_l_l_c(u_val, v_val, u_carry);
+            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
             r_out.store_l_full(i, u_val);
             i += 1;
         }
@@ -715,12 +673,9 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
         // be considered for the addition of v here.
         let r_out_head_shadow_cur_sliding_window_overlap = v_nlimbs.min(2);
         for k in 0..r_out_head_shadow_cur_sliding_window_overlap {
-            let v_val;
-            (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-            let v_val = LimbType::conditional_select(&0, &v_val, over_estimated);
             let k = 2 - r_out_head_shadow_cur_sliding_window_overlap + k;
             let mut u_val = r_out_head_shadow[k];
-            (u_carry, u_val) = ct_add_l_l_c(u_val, v_val, u_carry);
+            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
             r_out_head_shadow[k] = u_val;
             i += 1;
         }
@@ -969,20 +924,14 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     // Scale u.
     let mut carry = 0;
     for i in 0..u_nlimbs - 1 {
-        let scaled: Zeroizing<DoubleLimb> = ct_mul_l_l(u.load_l(i), scaling).into();
-        let (carry0, scaled_low) = ct_add_l_l(scaled.low(), carry);
-        u.store_l(i, scaled_low);
-        debug_assert!(scaled.high() < !0);
-        carry = carry0 + scaled.high();
-        debug_assert!(carry >= carry0); // Overflow cannot happen.
+        let mut u_val = u.load_l_full(i);
+        (carry, u_val) = ct_mul_add_l_l_l_c(0, u_val, scaling, carry);
+        u.store_l_full(i, u_val);
     }
     for i in 0..3 - 1 {
-        let scaled: Zeroizing<DoubleLimb> = ct_mul_l_l(u_head_high_shadow[i], scaling).into();
-        let (carry0, scaled_low) = ct_add_l_l(scaled.low(), carry);
-        u_head_high_shadow[i] = scaled_low;
-        debug_assert!(scaled.high() < !0);
-        carry = carry0 + scaled.high();
-        debug_assert!(carry >= carry0); // Overflow cannot happen.
+        let mut u_val = u_head_high_shadow[i];
+        (carry, u_val) = ct_mul_add_l_l_l_c(0, u_val, scaling, carry);
+        u_head_high_shadow[i] = u_val;
     }
     u_head_high_shadow[2] = carry;
 
@@ -1014,79 +963,65 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         };
 
         // Subtract q * v at limb position j upwards in u[].
-        let mut u_borrow = 0;
         let mut scaled_v_carry = 0;
-        let mut qv_carry = 0;
+        let mut borrow = 0;
         let mut i = 0;
         while i < v_nlimbs && j + i < u_nlimbs - 1 {
-            let qv_val;
-            (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
             let mut u_val = u.load_l_full(j + i);
-            (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+            (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
             u.store_l_full(j + i, u_val);
             i += 1;
         }
         while i < v_nlimbs {
-            let qv_val;
-            (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
-            (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+            (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
             i += 1;
         }
-        // Take the final qv_carry into account.
+        debug_assert_eq!(scaled_v_carry, 0);
+        // Take the final borrow into account.
         assert_eq!(i, v_nlimbs);
         if j + i < u_nlimbs - 1 {
-            let qv_val = qv_carry;
             let mut u_val = u.load_l_full(j + i);
-            (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+            (borrow, u_val) = ct_sub_l_l(u_val, borrow);
             u.store_l_full(j + i, u_val);
         } else {
-            let qv_val = qv_carry;
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
-            (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+            (borrow, u_val) = ct_sub_l_l(u_val, borrow);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
         }
 
-        // If u_borrow != 0, then the estimate for q had been one too large. Decrement it
+        // If borrow != 0, then the estimate for q had been one too large. Decrement it
         // and add one v back to the remainder accordingly.
-        let over_estimated = ct_l_to_subtle_choice(u_borrow);
+        let over_estimated = ct_l_to_subtle_choice(borrow);
         if let Some(q_out) = &mut q_out {
             let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
             q_out.store_l( u_lshift_tail_nlimbs + j, q);
         }
-        let mut u_carry = 0;
-        let mut scaled_v_carry = 0;
+        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        let mut carry = 0;
         let mut i = 0;
         while i < v_nlimbs && j + i < u_nlimbs - 1 {
-            let v_val;
-            (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-            let v_val = LimbType::conditional_select(&0, &v_val, over_estimated);
             let mut u_val = u.load_l_full(j + i);
-            (u_carry, u_val) = ct_add_l_l_c(u_val, v_val, u_carry);
+            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
             u.store_l_full(j + i, u_val);
             i += 1;
         }
         while i < v_nlimbs {
-            let v_val;
-            (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-            let v_val = LimbType::conditional_select(&0, &v_val, over_estimated);
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
-            (u_carry, u_val) = ct_add_l_l_c(u_val, v_val, u_carry);
+            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
             i += 1;
         }
-        // Take the final u_carry into account.
+        // Take the final carry into account.
         assert_eq!(i, v_nlimbs);
         if j + i < u_nlimbs - 1 {
-            let v_val = u_carry;
             let mut u_val = u.load_l_full(j + i);
-            (_, u_val) = ct_add_l_l(u_val, v_val);
+            (_, u_val) = ct_add_l_l(u_val, carry);
             u.store_l_full(j + i, u_val);
         } else {
-            let v_val = u_carry;
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
-            (_, u_val) = ct_add_l_l(u_val, v_val);
+            (_, u_val) = ct_add_l_l(u_val, carry);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
         }
     }
@@ -1139,56 +1074,45 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         // Virtually shift u one limb to the left, add q * v and drop the (now zero) high limb.
         // This effectively moves the sliding window one limb to the right.
         let mut next_u_val = 0; // The zero shifted in on the right.
-        let mut u_borrow = 0;
         let mut scaled_v_carry = 0;
-        let mut qv_carry = 0;
+        let mut borrow = 0;
         for i in 0..v_nlimbs - 1 {
-            let qv_val;
-            (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
             let mut u_val = next_u_val;
             next_u_val = u.load_l_full(i);
-            (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+            (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
             u.store_l_full(i, u_val);
         }
         // u[v_nlimbs - 1] is maintained in the u_high_shadow shadow, handle it separately.
         {
             let i = v_nlimbs - 1;
-            let qv_val;
-            (qv_val, scaled_v_carry, qv_carry) = scaled_qv_val(i, q, scaling, v, scaled_v_carry, qv_carry);
-            debug_assert_eq!(scaled_v_carry, 0);
             let mut u_val = next_u_val;
             next_u_val = u_high_shadow;
-            (u_borrow, u_val) = ct_sub_l_l_b(u_val, qv_val, u_borrow);
+            (borrow, u_val, scaled_v_carry) = sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+            debug_assert_eq!(scaled_v_carry, 0);
             u_high_shadow = u_val;
         }
-        (u_borrow, _) = ct_sub_l_l_b(next_u_val, qv_carry, u_borrow);
+        (borrow, _) = ct_sub_l_l(next_u_val, borrow);
 
-        // If u_borrow != 0, then the estimate for q had been one too large. Decrement it
+        // If borrow != 0, then the estimate for q had been one too large. Decrement it
         // and add one v back to the remainder accordingly.
-        let over_estimated = ct_l_to_subtle_choice(u_borrow);
+        let over_estimated = ct_l_to_subtle_choice(borrow);
         if let Some(q_out) = &mut q_out {
             let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
             q_out.store_l(j, q);
         }
 
-        let mut u_carry = 0;
-        let mut scaled_v_carry = 0;
+        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        let mut carry = 0;
         for i in 0..v_nlimbs - 1 {
-            let v_val;
-            (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-            let v_val = LimbType::conditional_select(&0, &v_val, over_estimated);
             let mut u_val = u.load_l_full(i);
-            (u_carry, u_val) = ct_add_l_l_c(u_val, v_val, u_carry);
+            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
             u.store_l_full(i, u_val);
         }
         // u[v_nlimbs - 1] is maintained in the u_high_shadow shadow, handle it separately.
         {
             let i = v_nlimbs - 1;
-            let v_val;
-            (v_val, scaled_v_carry) = scaled_v_val(i, scaling, v, scaled_v_carry);
-            let v_val = LimbType::conditional_select(&0, &v_val, over_estimated);
             let mut u_val = u_high_shadow;
-            (_, u_val) = ct_add_l_l_c(u_val, v_val, u_carry);
+            (_, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
             u_high_shadow = u_val;
         }
     }
@@ -1272,7 +1196,6 @@ fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, Q
             for j2 in 0..j1 + 1 {
                 let v_len = ((j1 + 1) as usize + 8 - 1) / 8;
                 for u_lshift_len in 0..2 * LIMB_BYTES {
-                    dbg!(u_len, v_len);
                     let mut u = vec![0u8; UT::limbs_align_len(u_len.max(v_len))];
                     let mut u = UT::from_bytes(&mut u).unwrap();
                     if i != 0 {

@@ -1,4 +1,4 @@
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_l_l, LIMB_BYTES, ct_l_to_subtle_choice};
+use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, ct_l_to_subtle_choice};
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_limbs_align_len, mp_ct_nlimbs};
 use super::cmp_impl::mp_ct_geq_mp_mp;
 use super::add_impl::mp_ct_sub_cond_mp_mp;
@@ -87,27 +87,17 @@ fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceC
     let n_nlimbs = n.nlimbs();
     let t_nlimbs = t.nlimbs();
 
-    let m;
-    let mut carry_low;
-    (m, carry_low) = {
+    let (m, mut carry) = {
         let t_val = t.load_l(0);
         let m = t_val.wrapping_mul(neg_n0_inv_mod_l);
         let m = cond_mul.map(|c| LimbType::conditional_select(&0, &m, c)).unwrap_or(m);
         let n_val = n.load_l(0);
-        let m_n_val = ct_mul_l_l(m, n_val);
-        let (carry_low, t_val) = ct_add_l_l(t_val, m_n_val.low());
+        let (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, 0);
         debug_assert!(t_val == 0);
-        debug_assert!(m_n_val.high() <= !1); // Property of product.
-        (
-            m,
-            carry_low + m_n_val.high() // Does not wrap.
-        )
+        (m, carry)
     };
 
-    let mut carry_high = 0;
     for j in 0..n_nlimbs - 1 {
-        let n_val = n.load_l(j + 1);
-        let m_n_val = ct_mul_l_l(m, n_val);
         // Do not read the potentially partial, stale high limb directly from t, use the
         // t_high_shadow shadow instead.
         let mut t_val = if j + 1 != t_nlimbs - 1 {
@@ -115,14 +105,8 @@ fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceC
         } else {
             t_high_shadow
         };
-        let carry0;
-        (carry0, t_val) = ct_add_l_l(t_val, carry_low);
-        let carry1;
-        (carry1, t_val) = ct_add_l_l(t_val, m_n_val.low());
-        debug_assert!(m_n_val.high() <= !1); // Property of product.
-        carry_low = carry_high + m_n_val.high(); // Does not wrap.
-        (carry_high, carry_low) = ct_add_l_l(carry_low, carry0 + carry1);
-        debug_assert!(carry_high == 0 || carry_low <= 1); // Property of addition.
+        let n_val = n.load_l(j + 1);
+        (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, carry);
         t.store_l_full(j, t_val);
     }
 
@@ -134,26 +118,17 @@ fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceC
         } else {
             t_high_shadow
         };
-        (carry_low, t_val) = ct_add_l_l(t_val, carry_low);
-        carry_low += carry_high;
-        carry_high = 0;
+        (carry, t_val) = ct_add_l_l(t_val, carry);
         t.store_l_full(j, t_val);
     }
 
-    debug_assert!(carry_high == 0 || carry_low <= 1); // Replicated from above.
     debug_assert!(
         cond_mul.map(|c| c.unwrap_u8()).unwrap_or(1) == 0
             || t_carry <= 1 // Replicated function entry invariant.
     );
-    let (mut t_carry, carry_low) = ct_add_l_l(carry_low, t_carry);
-
     // Do not update t's potentially partial high limb with a value that could overflow in the
     // course of the reduction. Return it separately in a t_high_shadow shadow instead.
-    let t_high_shadow = carry_low;
-    debug_assert!(t_carry == 0 || carry_high == 0); // Property of addition.
-    t_carry += carry_high;
-    debug_assert!(t_carry <= 1); // Loop invariant still maintained.
-
+    let (t_carry, t_high_shadow) = ct_add_l_l(carry, t_carry);
     (t_carry, t_high_shadow)
 }
 
@@ -292,10 +267,7 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
         debug_assert!(result_carry <= 1); // Loop invariant.
         let op0_val = op0.load_l(i);
         result_carry = LimbType::conditional_select(&op0_val, &result_carry, cond);
-        let m;
-        let mut carry_low;
-        let mut carry_high;
-        (m, carry_high, carry_low) = {
+        let (m, mut carry_high, mut carry_low) = {
             // Do not read the potentially partial, stale high limb directly from result, use the
             // result_high_shadow shadow instead.
             let result_val = if n_nlimbs != 1 {
@@ -306,23 +278,15 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
 
             let op1_val = op1.load_l(0);
             let op1_val = LimbType::conditional_select(&0, &op1_val, cond);
-            let prod = ct_mul_l_l(op1_val, op0_val);
-            let (carry0, result_val) = ct_add_l_l(result_val, prod.low());
+            let (op0_op1_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, 0);
 
             let m = result_val.wrapping_mul(neg_n0_inv_mod_l);
             let m = LimbType::conditional_select(&0, &m, cond);
-
             let n_val = n.load_l(0);
-            let m_n_val = ct_mul_l_l(m, n_val);
-            let (carry1, result_val) = ct_add_l_l(result_val, m_n_val.low());
+            let (m_n_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, m, n_val, 0);
 
             debug_assert_eq!(result_val, 0);
-            debug_assert!(prod.high() <= !1);
-            let carry_low = prod.high() + carry0; // Does not wrap.
-            let (carry_high, carry_low) = ct_add_l_l(
-                carry_low,
-                m_n_val.high() + carry1  // Does not wrap.
-            );
+            let (carry_high, carry_low) = ct_add_l_l(op0_op1_add_carry, m_n_add_carry);
             (m, carry_high, carry_low)
         };
 
@@ -331,73 +295,56 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
             debug_assert!(carry_high == 0 || carry_low <= !1); // Loop invariant LI1.
             let op1_val = op1.load_l(j + 1);
             let op1_val = LimbType::conditional_select(&0, &op1_val, cond);
-            let prod = ct_mul_l_l(op1_val, op0_val);
             let n_val = n.load_l(j + 1);
-            let m_n_val = ct_mul_l_l(m, n_val);
 
             // Do not read the potentially partial, stale high limb directly from result, use the
             // result_high_shadow shadow instead.
-            let mut result_val = if j + 1 != n_nlimbs - 1 {
+            let result_val = if j + 1 != n_nlimbs - 1 {
                 result.load_l_full(j + 1)
             } else {
                 result_high_shadow
             };
-            (carry_low, result_val) = ct_add_l_l(result_val, carry_low);
-            carry_low += carry_high;
-            debug_assert!(carry_low <= 1 || result_val <= !2); // LI1.a: Property of addition and from LI1.
-            debug_assert!(carry_low <= 2); // Trivial, for documentation only.
+
+            // Assume carry_high == 1 and op0_op1_add_carry == !0 below.
+            // If carry_high == 1, then carry_low <= !1 per the loop invariant LI1.
+            // If op0_op1_add_carry == !0, then
+            // - either the op0_val * op1_val product's high_limb <= !2 and both the
+            //   additions in ct_mul_add_l_l_l_c() wrapped around,
+            // - or the high limb was == !1, the low limb <= 1 (as per a basic property of
+            //   multiplications) and only one of the two additions wrapped.
+            // In the first case, result_val <= !1 as per a basic property of
+            // wrapping additions.
+            // For the second case, note that adding carry_low <= !1 to the product's low limb <= 1
+            // does not wrap and equals !0, at most. Adding this to the input result_val with
+            // wraparound likewise yields a value <= !1.
+            let (op0_op1_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, carry_low);
+            debug_assert!(carry_high == 0 || op0_op1_add_carry <= !1 || result_val <= !1);
+
+            // Assume carry_high == 1 and op0_op1_add_carry == !0, from which it follows
+            // that result_val <= !1 at this point.
+            // If m_n_add_carry == !0 below, then
+            // - the m * n_val product's high limb was == !1 and the low limb <= 1
+            // - and the addition of the low limb to result_val did overflow.
+            // But that would contradic result_val <= !1. It follows that
+            // m_n_add_carry <= !1.
+            let (m_n_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, m, n_val, 0);
+            debug_assert!(carry_high == 0 || op0_op1_add_carry <= !1 || m_n_add_carry <= !1);
 
             let carry0;
-            (carry0, result_val) = ct_add_l_l(result_val, prod.low());
-            debug_assert!(prod.high() <= !2 || prod.low() <= 1); // Property of product.
-            // LI1.b: Adding prod.low() <= 1 to result_val <= !2 in LI1.a would not wrap and yield a
-            // value <= !1.
-            debug_assert!(prod.high() <= !2 || carry_low <= 1 || (carry0 == 0 && result_val <= !1));
-            // C0: In particular, if carry_low == 2, then carry0 == 0.
-            debug_assert!(prod.high() <= !2 || carry_low + carry0 <= 2);
-            debug_assert!(carry0 == 0 || result_val <= !1); // Property of addition.
-
+            (carry0, carry_low) = ct_add_l_l(op0_op1_add_carry, carry_high);
+            // Basic property of adding a one with wraparound:
+            debug_assert!(carry0 == 0 || carry_low == 0);
+            debug_assert!(carry0 == 0 || m_n_add_carry <= !1);
             let carry1;
-            (carry1, result_val) = ct_add_l_l(result_val, m_n_val.low());
-            debug_assert!(m_n_val.high() <= !2 || m_n_val.low() <= 1); // Property of product.
-            // Adding m_n_val.low() <= 1 to result_val <= !1 would not wrap.
-            debug_assert!(m_n_val.high() <= !2 || carry0 == 0 || carry1 == 0);
-            // C1: Or written differently:
-            debug_assert!(m_n_val.high() <= !2 || carry0 + carry1 <= 1);
-            // C2: Adding m_n_val.low() <= 1 to result_val <= !1 in LI1.b from above would not wrap.
-            debug_assert!(
-                m_n_val.high() <= !2 ||
-                    (prod.high() <= !2 || carry_low <= 1 || (carry0 == 0 && carry1 == 0))
-            );
+            (carry1, carry_low) = ct_add_l_l(carry_low, m_n_add_carry);
+            debug_assert!(carry0 == 0 || carry1 == 0); // Loop invariant LI0 still holds.
+            // Loop invariant LI1 still holds as well, because from the above it follows that ...
+            debug_assert!(carry0 == 0 || carry_low <= !1);
+            // ... and moreover, from a basic property of addition with workaround:
+            debug_assert!(carry1 == 0 || carry_low <= !1);
+            carry_high = carry0 + carry1;
 
-            debug_assert!(j < n_nlimbs - 1);
             result.store_l_full(j, result_val);
-
-            // Finally compute the carries as
-            // prod.high() + m_n_val.high() + carry_low + carry0 + carry1.
-            // Remember that prod.high(), m_n_val.high() <= !1 always as a basic property of the
-            // products and moreover, from the conclusions drawn above:
-            // - from C0:
-            debug_assert!(prod.high() <= !2 || carry_low + carry0 + carry1 <= 3);
-            // - from C1:
-            debug_assert!(m_n_val.high() <= !2 || carry_low + carry0 + carry1 <= 3);
-            // - from C2 (and C1):
-            debug_assert!(m_n_val.high() <= !2 || prod.high() <= !2 || carry_low + carry0 + carry1 <= 2);
-            // That is, the resulting sum computed below will be <= (1, !1) in either of
-            // the possible combinations of prod.high() and m_n_val.high() being <= !2 or not.
-            let carry2;
-            (carry2, carry_low) = ct_add_l_l(
-                carry_low,
-                prod.high() + carry0 // Does not wrap.
-            );
-            let carry3;
-            (carry3, carry_low) = ct_add_l_l(
-                carry_low,
-                m_n_val.high() + carry1 // Does not wrap.
-            );
-            carry_high = carry2 + carry3;
-            debug_assert!(carry_high <= 1); // Loop invariant LI0 is maintained.
-            debug_assert!(carry_high == 0 || carry_low <= !1); // Loop invariant LI1 is maintained.
         }
 
         // If op1_nlimbs < n_nlimbs, handle the rest by only adding the tail of m * n to it.
@@ -405,7 +352,6 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
             debug_assert!(carry_high <= 1); // Loop invariant LI0.
             debug_assert!(carry_high == 0 || carry_low <= !1); // Loop invariant LI1.
             let n_val = n.load_l(j + 1);
-            let m_n_val = ct_mul_l_l(m, n_val);
 
             // Do not read the potentially partial, stale high limb directly from result, use the
             // result_high_shadow shadow instead.
@@ -414,19 +360,10 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
             } else {
                 result_high_shadow
             };
-            (carry_low, result_val) = ct_add_l_l(result_val, carry_low);
-            carry_low += carry_high;
-            debug_assert!(carry_low <= 2);
 
-            let carry0;
-            (carry0, result_val) = ct_add_l_l(result_val, m_n_val.low());
+            (carry_low, result_val) = ct_mul_add_l_l_l_c(result_val, m, n_val, carry_low);
+            (carry_high, carry_low) = ct_add_l_l(carry_low, carry_high);
             result.store_l_full(j, result_val);
-            debug_assert!(m_n_val.high() <= !1); // Property of product.
-
-            (carry_high, carry_low) = ct_add_l_l(
-                carry_low,
-                m_n_val.high() + carry0 // Does not wrap.
-            );
 
             // Loop invariants LI0  and LI1 are maintained trivially as per properties
             // of wrapping addition.

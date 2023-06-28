@@ -4,7 +4,7 @@ use core::ops::Deref as _;
 use subtle::{self, ConditionallySelectable as _};
 use crate::limb::LIMB_BITS;
 
-use super::limb::{LimbType, DoubleLimb, ct_mul_l_l, ct_add_l_l};
+use super::limb::{LimbType, DoubleLimb, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c};
 use super::limbs_buffer::{mp_ct_nlimbs, MPIntMutByteSlice, MPIntByteSliceCommon};
 use super::zeroize::Zeroizing;
 
@@ -65,20 +65,9 @@ pub fn mp_ct_mul_trunc_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommo
                 0
             };
             let op1_val = LimbType::conditional_select(&unit, &op1.load_l(k), cond);
-            let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op1_val).into();
 
             let mut result_val = op0.load_l(j + k);
-            let carry0;
-            (carry0, result_val) = ct_add_l_l(result_val, carry);
-            // prod.high() is always <= LimbType::MAX - 1, that is adding a single carry won't
-            // overflow. Either prod.high() is even <= LimbType::MAX - 2, i.e. adding two carries
-            // won't overflow it either, or prod.low() <= 1 and only a single carry out of the two
-            // would be set.
-            debug_assert!(carry0 == 0 || result_val != !0);
-            debug_assert!(prod.high() < !1 || prod.low() <= 1);
-            let carry1;
-            (carry1, result_val) = ct_add_l_l(result_val, prod.low());
-            carry = prod.high() + carry0 + carry1;
+            (carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, carry);
 
             if k != result_nlimbs - 1 || !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
                 op0.store_l_full(j + k, result_val);
@@ -516,11 +505,8 @@ pub fn mp_ct_mul_trunc_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: usi
     let mut carry = 0;
     for j in 0..op0_in_nlimbs {
         let op0_val = op0.load_l(j);
-        let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op1).into();
-
-        let (carry0, result_val) = ct_add_l_l(prod.low(), carry);
-        debug_assert!(prod.high() <= !1);
-        carry = prod.high() + carry0; // Does not overflow.
+        let result_val;
+        (carry, result_val) = ct_mul_add_l_l_l_c(0, op0_val, op1, carry);
 
         if j != op0_nlimbs - 1 || !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             op0.store_l_full(j, result_val);
