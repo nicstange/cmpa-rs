@@ -2,6 +2,7 @@
 
 mod add_impl;
 mod cmp_impl;
+mod cond_helpers;
 mod div_impl;
 mod limb;
 mod limbs_buffer;

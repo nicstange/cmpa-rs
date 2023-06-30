@@ -4,6 +4,7 @@ use core::ops::Deref as _;
 use subtle::{self, ConditionallySelectable as _};
 use crate::limb::LIMB_BITS;
 
+use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
 use super::limb::{LimbType, DoubleLimb, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c};
 use super::limbs_buffer::{mp_ct_nlimbs, MPIntMutByteSlice, MPIntByteSliceCommon};
 use super::zeroize::Zeroizing;
@@ -58,13 +59,11 @@ pub fn mp_ct_mul_trunc_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommo
 
         let mut carry = 0;
         let result_nlimbs = op0_nlimbs - j;
+        let cond_mask = cond_choice_to_mask(cond);
+        let mut cond_unit = cond_select_with_mask(1, 0, cond_mask);
         for k in 0..op1_nlimbs.min(result_nlimbs) {
-            let unit = if k == 0 {
-                1
-            } else {
-                0
-            };
-            let op1_val = LimbType::conditional_select(&unit, &op1.load_l(k), cond);
+            let op1_val = cond_select_with_mask(0, op1.load_l(k), cond_mask) | cond_unit;
+            cond_unit = 0;
 
             let mut result_val = op0.load_l(j + k);
             (carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, carry);

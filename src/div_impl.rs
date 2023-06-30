@@ -2,6 +2,7 @@ use core::ops::Deref as _;
 use subtle::{self, ConditionallySelectable as _};
 use crate::limb::ct_l_to_subtle_choice;
 
+use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb,
                   ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_mul_sub_b, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l, LIMB_BITS};
 use super::limbs_buffer::{CompositeLimbsBuffer, mp_ct_nlimbs,
@@ -101,9 +102,10 @@ fn q_estimate(
     debug_assert!(q.high() == 0 || u_head[0] == scaled_v_head[0]);
     debug_assert_eq!(q.high() & !1, 0); // At most LSB is set
     let ov = ct_l_to_subtle_choice(q.high());
-    let q = LimbType::conditional_select(&q.low(), &!0, ov);
+    let ov_mask = cond_choice_to_mask(ov);
+    let q  = cond_select_with_mask(q.low(), !0, ov_mask);
     let (r_carry_on_ov, r_on_ov) = ct_add_l_l(u_head[1], scaled_v_head[0]);
-    let r = LimbType::conditional_select(&r, &r_on_ov, ov);
+    let r = cond_select_with_mask(r, r_on_ov, ov_mask);
     debug_assert_eq!(r_carry_on_ov & !1, 0); // At most LSB is set
     let r_carry = ov & ct_l_to_subtle_choice(r_carry_on_ov);
 
@@ -125,7 +127,7 @@ fn q_estimate(
     let over_estimated = !r_carry &
         (ct_gt_l_l(qv_head_low.high(), r) |
          (ct_eq_l_l(qv_head_low.high(), r) & ct_gt_l_l(qv_head_low.low(), u_head[2])));
-    LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated)
+    q - LimbType::conditional_select(&0, &1, over_estimated)
 }
 
 pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
@@ -242,12 +244,13 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
         // If borrow != 0, then the estimate for q had been one too large. Decrement it
         // and add one v back to the remainder accordingly.
         let over_estimated = ct_l_to_subtle_choice(borrow);
+        let over_estimated_mask = cond_choice_to_mask(over_estimated);
         if let Some(q_out) = &mut q_out {
-            let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
+            let q = q - cond_select_with_mask(0, 1, over_estimated_mask);
             q_out.store_l(j, q);
         }
         let mut carry = 0;
-        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        let add_back_scaling = cond_select_with_mask(0, scaling, over_estimated_mask);
         for i in 0..v_nlimbs {
             let mut u_val = u_parts.load(j + i);
             (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
@@ -652,11 +655,12 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
         // If borrow != 0, then the estimate for q had been one too large. Decrement it
         // and add one v back to the remainder accordingly.
         let over_estimated = ct_l_to_subtle_choice(borrow);
+        let over_estimated_mask = cond_choice_to_mask(over_estimated);
         if let Some(q_out) = &mut q_out {
-            let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
+            let q = q - cond_select_with_mask(0, 1, over_estimated_mask);
             q_out.store_l(j, q);
         }
-        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        let add_back_scaling = cond_select_with_mask(0, scaling, over_estimated_mask);
         let mut carry = 0;
         let mut i = 0;
         // Update the tail maintained in r_out[v_nlimbs - 3:0], if any:
@@ -994,11 +998,12 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         // If borrow != 0, then the estimate for q had been one too large. Decrement it
         // and add one v back to the remainder accordingly.
         let over_estimated = ct_l_to_subtle_choice(borrow);
+        let over_estimated_mask = cond_choice_to_mask(over_estimated);
         if let Some(q_out) = &mut q_out {
-            let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
+            let q = q - cond_select_with_mask(0, 1, over_estimated_mask);
             q_out.store_l( u_lshift_tail_nlimbs + j, q);
         }
-        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        let add_back_scaling = cond_select_with_mask(0, scaling, over_estimated_mask);
         let mut carry = 0;
         let mut i = 0;
         while i < v_nlimbs && j + i < u_nlimbs - 1 {
@@ -1096,12 +1101,13 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         // If borrow != 0, then the estimate for q had been one too large. Decrement it
         // and add one v back to the remainder accordingly.
         let over_estimated = ct_l_to_subtle_choice(borrow);
+        let over_estimated_mask = cond_choice_to_mask(over_estimated);
         if let Some(q_out) = &mut q_out {
-            let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
+            let q = q - cond_select_with_mask(0, 1, over_estimated_mask);
             q_out.store_l(j, q);
         }
 
-        let add_back_scaling = LimbType::conditional_select(&0, &scaling, over_estimated);
+        let add_back_scaling = cond_select_with_mask(0, scaling, over_estimated_mask);
         let mut carry = 0;
         for i in 0..v_nlimbs - 1 {
             let mut u_val = u.load_l_full(i);

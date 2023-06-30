@@ -4,6 +4,7 @@ use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LIMB_BYTE
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_limbs_align_len, mp_ct_nlimbs};
 use super::cmp_impl::mp_ct_geq_mp_mp;
 use super::add_impl::mp_ct_sub_cond_mp_mp;
+use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
 use super::div_impl::{mp_ct_div_mp_mp, mp_ct_div_pow2_mp, MpCtDivisionError};
 use subtle::{self, ConditionallySelectable as _};
 use zeroize::Zeroize;
@@ -59,9 +60,9 @@ fn test_mp_ct_montgomery_n0_inv_mod_l() {
 fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
     t_carry: LimbType, t_high_shadow: LimbType,
     t: &mut TT, n: &NT, neg_n0_inv_mod_l: LimbType,
-    cond_mul: Option<subtle::Choice>) -> (LimbType, LimbType
+    cond_mul_mask: LimbType) -> (LimbType, LimbType
 ) {
-    debug_assert!(cond_mul.map(|c| c.unwrap_u8()).unwrap_or(1) == 0 || t_carry <= 1); // The REDC loop invariant.
+    debug_assert!(cond_mul_mask == 0 || t_carry <= 1); // The REDC loop invariant.
     debug_assert!(!n.is_empty());
     debug_assert!(t.len() >= n.len());
     let n_nlimbs = n.nlimbs();
@@ -69,8 +70,7 @@ fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceC
 
     let (m, mut carry) = {
         let t_val = t.load_l(0);
-        let m = t_val.wrapping_mul(neg_n0_inv_mod_l);
-        let m = cond_mul.map(|c| LimbType::conditional_select(&0, &m, c)).unwrap_or(m);
+        let m = cond_select_with_mask(0, t_val.wrapping_mul(neg_n0_inv_mod_l), cond_mul_mask);
         let n_val = n.load_l(0);
         let (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, 0);
         debug_assert!(t_val == 0);
@@ -102,10 +102,8 @@ fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceC
         t.store_l_full(j, t_val);
     }
 
-    debug_assert!(
-        cond_mul.map(|c| c.unwrap_u8()).unwrap_or(1) == 0
-            || t_carry <= 1 // Replicated function entry invariant.
-    );
+    // Replicated function entry invariant.
+    debug_assert!(cond_mul_mask == 0 || t_carry <= 1);
     // Do not update t's potentially partial high limb with a value that could overflow in the
     // course of the reduction. Return it separately in a t_high_shadow shadow instead.
     let (t_carry, t_high_shadow) = ct_add_l_l(carry, t_carry);
@@ -128,7 +126,7 @@ pub fn mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(t:
     let mut t_high_shadow = t.load_l(t_nlimbs - 1);
     for _i in 0..mp_ct_montgomery_radix_shift_nlimbs(n.len()) {
         (reduced_t_carry, t_high_shadow) =
-            mp_ct_montgomery_redc_one_cond_mul(reduced_t_carry, t_high_shadow, t, n, neg_n0_inv_mod_l, None);
+            mp_ct_montgomery_redc_one_cond_mul(reduced_t_carry, t_high_shadow, t, n, neg_n0_inv_mod_l, !0);
     }
 
     // Now apply the high limb shadow back.
@@ -219,14 +217,14 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
     debug_assert!(op0.len() <= n.len());
     debug_assert!(op1.len() <= n.len());
 
+    let cond_mask = cond_choice_to_mask(cond);
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     if op1_nlimbs == 0 {
         // The product is zero, but if cond == 0, result is supposed to receive op0 instead of the
         // product. And it must be done in constant-time.
         for i in 0..op0_nlimbs {
-            let op0_val = op0.load_l(i);
-            let result_val = LimbType::conditional_select(&op0_val, &0, cond);
+            let result_val = cond_select_with_mask(op0.load_l(i), 0, cond_mask);
             result.store_l(i, result_val);
         }
         result.zeroize_bytes_above(op0.len());
@@ -246,7 +244,7 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
     for i in 0..op0_nlimbs {
         debug_assert!(result_carry <= 1); // Loop invariant.
         let op0_val = op0.load_l(i);
-        result_carry = LimbType::conditional_select(&op0_val, &result_carry, cond);
+        result_carry = cond_select_with_mask(op0_val, result_carry, cond_mask);
         let (m, mut carry_high, mut carry_low) = {
             // Do not read the potentially partial, stale high limb directly from result, use the
             // result_high_shadow shadow instead.
@@ -256,12 +254,10 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
                 result_high_shadow
             };
 
-            let op1_val = op1.load_l(0);
-            let op1_val = LimbType::conditional_select(&0, &op1_val, cond);
+            let op1_val = cond_select_with_mask(0, op1.load_l(0), cond_mask);
             let (op0_op1_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, 0);
 
-            let m = result_val.wrapping_mul(neg_n0_inv_mod_l);
-            let m = LimbType::conditional_select(&0, &m, cond);
+            let m = cond_select_with_mask(0, result_val.wrapping_mul(neg_n0_inv_mod_l), cond_mask);
             let n_val = n.load_l(0);
             let (m_n_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, m, n_val, 0);
 
@@ -273,8 +269,7 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
         for j in 0..(op1_nlimbs - 1) {
             debug_assert!(carry_high <= 1); // Loop invariant LI0.
             debug_assert!(carry_high == 0 || carry_low <= !1); // Loop invariant LI1.
-            let op1_val = op1.load_l(j + 1);
-            let op1_val = LimbType::conditional_select(&0, &op1_val, cond);
+            let op1_val = cond_select_with_mask(0, op1.load_l(j + 1), cond_mask);
             let n_val = n.load_l(j + 1);
 
             // Do not read the potentially partial, stale high limb directly from result, use the
@@ -373,7 +368,7 @@ fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon
     for _i in op0_nlimbs..mp_ct_montgomery_radix_shift_nlimbs(n.len()) {
         (result_carry, result_high_shadow) = mp_ct_montgomery_redc_one_cond_mul(
             result_carry, result_high_shadow, result,
-            n, neg_n0_inv_mod_l, Some(cond)
+            n, neg_n0_inv_mod_l, cond_mask
         );
     }
 
@@ -640,3 +635,4 @@ fn test_mp_ct_to_montgomery_form_ne_ne_ne() {
                                          MPNativeEndianMutByteSlice,
                                          MPNativeEndianMutByteSlice>()
 }
+

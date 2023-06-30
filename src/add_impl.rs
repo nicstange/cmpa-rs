@@ -1,7 +1,9 @@
 //! Implementation of multiprecision integer addition related primitives.
 
+use crate::cond_helpers::cond_select_with_mask;
 use crate::limb::ct_find_last_set_byte_l;
 
+use super::cond_helpers::cond_choice_to_mask;
 use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b};
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon};
 
@@ -209,19 +211,18 @@ pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
         return 0;
     }
 
+    let cond_mask = cond_choice_to_mask(cond);
     let mut borrow = 0;
     for i in 0..op1_nlimbs - 1 {
         let mut op0_val = op0.load_l_full(i);
-        let op1_val = op1.load_l_full(i);
-        let op1_val = LimbType::conditional_select(&0, &op1_val, cond);
+        let op1_val = cond_select_with_mask(0, op1.load_l_full(i), cond_mask);
         (borrow, op0_val) = ct_sub_l_l_b(op0_val, op1_val, borrow);
         op0.store_l_full(i, op0_val);
     }
 
     // Propagate the borrow upwards. The first iteration will also account
     // for op1's high limb.
-    let op1_val = op1.load_l(op1_nlimbs - 1);
-    let mut op1_val = LimbType::conditional_select(&0, &op1_val, cond);
+    let mut op1_val = cond_select_with_mask(0, op1.load_l(op1_nlimbs - 1), cond_mask);
     for i in op1_nlimbs - 1..op0_nlimbs {
         let mut op0_val = op0.load_l(i);
         (borrow, op0_val) = ct_sub_l_l_b(op0_val, op1_val, borrow);

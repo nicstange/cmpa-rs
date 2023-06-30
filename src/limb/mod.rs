@@ -7,6 +7,7 @@ use std::ops::{Deref, DerefMut};
 use subtle::{self, ConditionallySelectable as _, ConstantTimeEq as _, ConstantTimeGreater as _};
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
+use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
 use super::zeroize::{Zeroizing, ZeroizeableSubtleChoice};
 
 /// The basic unit used by the multiprecision integer arithmetic implementation.
@@ -41,10 +42,8 @@ const HALF_LIMB_BITS: u32 = LIMB_BITS / 2;
 /// The size of a half a [`LimbType`], i.e. a "halfword", in bytes.
 const HALF_LIMB_MASK: LimbType = (1 << HALF_LIMB_BITS) - 1;
 
-
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
 mod x86_64_math;
-
 
 pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
     v0.ct_eq(&v1)
@@ -227,8 +226,9 @@ impl DoubleLimb {
 
 impl subtle::ConditionallySelectable for DoubleLimb {
     fn conditional_select(a: &Self, b: &Self, choice: subtle::Choice) -> Self {
-        Self::new(LimbType::conditional_select(&a.high(), &b.high(), choice),
-                  LimbType::conditional_select(&a.low(), &b.low(), choice))
+        let choice_mask = cond_choice_to_mask(choice);
+        Self::new(cond_select_with_mask(a.high(), b.high(), choice_mask),
+                  cond_select_with_mask(a.low(), b.low(), choice_mask))
     }
 }
 
@@ -436,11 +436,12 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
     let mut u: Zeroizing<[LimbType; 3]> = [u.low(), u.high(), 0].into();
     // Conditionally shift u by one half limb in order to align with the shifting of the normalized
     // v, if any.
+    let shifted_v_mask = cond_choice_to_mask(*v.shifted_v);
     for i in [2, 1] {
         let shifted_u_val = u[i] << HALF_LIMB_BITS | u[i - 1] >> HALF_LIMB_BITS;
-        u[i] = LimbType::conditional_select(&u[i], &shifted_u_val, *v.shifted_v);
+        u[i] = cond_select_with_mask(u[i], shifted_u_val, shifted_v_mask);
     }
-    u[0] = LimbType::conditional_select(&u[0], &(u[0] << HALF_LIMB_BITS), *v.shifted_v);
+    u[0] = cond_select_with_mask(u[0], u[0] << HALF_LIMB_BITS, shifted_v_mask);
     // Scale u by the divisor normalization scaling.
     let mut carry = 0;
     for i in 0..6 {
@@ -486,7 +487,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let qv_tail_high = q * v_l;
             let over_estimated = !r_carry &
                 ct_gt_l_l(qv_tail_high, r << HALF_LIMB_BITS | u_tail_high);
-            LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated)
+            q - LimbType::conditional_select(&0, &1, over_estimated)
         };
 
         // Subtract q * v at from u at position j.
@@ -514,11 +515,12 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
 
         // If q had been overestimated, decrement q and add one v back to u.
         let over_estimated = ct_l_to_subtle_choice(borrow);
+        let over_estimated_mask = cond_choice_to_mask(over_estimated);
         let mut carry = 0;
-        let q = LimbType::conditional_select(&q, &q.wrapping_sub(1), over_estimated);
+        let q = q - cond_select_with_mask(0, 1, over_estimated_mask);
         le_limbs_store_half_limb(qs.as_mut_slice(), j, q);
         for (k, v_val) in [(0, v_l), (1, v_h)] {
-            let v_val = LimbType::conditional_select(&0, &v_val, over_estimated);
+            let v_val = cond_select_with_mask(0, v_val, over_estimated_mask);
             let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
             let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
             let u_val = u_val.wrapping_add(carry);
@@ -540,7 +542,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
     // Conditionally shift u back by one half limb in order to undo the shifting to align with v.
     for i in [0, 1] {
         let shifted_u_val = u[i] >> HALF_LIMB_BITS | (u[i + 1] & HALF_LIMB_MASK) << HALF_LIMB_BITS;
-        u[i] = LimbType::conditional_select(&u[i], &shifted_u_val, *v.shifted_v);
+        u[i] = cond_select_with_mask(u[i], shifted_u_val, shifted_v_mask);
     }
     // Divide u by the scaling.
     debug_assert_eq!(u[2], 0);
