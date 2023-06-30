@@ -8,7 +8,6 @@ use super::limb::{LimbType, LIMB_BYTES, DoubleLimb,
 use super::limbs_buffer::{CompositeLimbsBuffer, mp_ct_nlimbs,
                           mp_find_last_set_byte_mp, MPIntMutByteSlice, MPIntByteSliceCommon};
 use super::shift_impl::mp_lshift_mp;
-use super::zeroize::Zeroizing;
 
 #[derive(Debug)]
 pub enum MpCtDivisionError {
@@ -74,9 +73,7 @@ fn q_estimate(
     u_head: &[LimbType; 3],
     scaled_v_head: &[LimbType; 2],
     normalized_scaled_v_high: &CtDivDlLNormalizedDivisor) -> LimbType {
-    let (q, r) = |(q, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-        (q.into(), r)
-    }(ct_div_dl_l(&DoubleLimb::new(u_head[0], u_head[1]), normalized_scaled_v_high));
+    let (q, r) = ct_div_dl_l(&DoubleLimb::new(u_head[0], u_head[1]), normalized_scaled_v_high);
     debug_assert!(q.high() <= 1); // As per the normalization of v_high.
     // If q.high() is set, q needs to get capped to fit single limb
     // and r adjusted accordingly.
@@ -123,7 +120,7 @@ fn q_estimate(
     // If v_nlimbs < 2 and j == 0, u[j + n - 2] might not be defined. But in this case v[n-2] (found
     // in scaled_v_head[1]) is zero anyway and the comparison test will always come out negative, so the
     // caller may load arbitrary value into its corresponding location at q_head[2].
-    let qv_head_low: Zeroizing<DoubleLimb> = ct_mul_l_l(scaled_v_head[1], q).into();
+    let qv_head_low: DoubleLimb = ct_mul_l_l(scaled_v_head[1], q).into();
     let over_estimated = !r_carry &
         (ct_gt_l_l(qv_head_low.high(), r) |
          (ct_eq_l_l(qv_head_low.high(), r) & ct_gt_l_l(qv_head_low.low(), u_head[2])));
@@ -195,9 +192,8 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
     // Read-only v won't get scaled in-place, but on the fly as needed. Calculate only its scaled
     // two high limbs, which will be needed for making the q estimates.
     let (scaled_v_high, scaled_v_tail_high) = v_head_scaled(scaling, v, v_nlimbs);
-    let scaled_v_head: Zeroizing<[LimbType; 2]> = Zeroizing::from([scaled_v_high, scaled_v_tail_high]);
-    let normalized_scaled_v_high: Zeroizing<CtDivDlLNormalizedDivisor> =
-        CtDivDlLNormalizedDivisor::new(scaled_v_high).into();
+    let scaled_v_head: [LimbType; 2] = [scaled_v_high, scaled_v_tail_high];
+    let normalized_scaled_v_high = CtDivDlLNormalizedDivisor::new(scaled_v_high);
 
     // Scale u.
     let mut carry = 0;
@@ -222,9 +218,9 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
             } else {
                 0
             };
-            let cur_u_head: Zeroizing<[LimbType; 3]> = Zeroizing::from([u_h, u_l, u_tail_high]);
+            let cur_u_head: [LimbType; 3] = [u_h, u_l, u_tail_high];
 
-            q_estimate(&cur_u_head, &scaled_v_head, normalized_scaled_v_high.deref())
+            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
         };
 
 
@@ -267,14 +263,11 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
         debug_assert_eq!(u_parts.load(j), 0);
     }
     let mut j = v_nlimbs;
-    let scaling: Zeroizing<CtDivDlLNormalizedDivisor> =
-        CtDivDlLNormalizedDivisor::new(scaling).into();
+    let scaling = CtDivDlLNormalizedDivisor::new(scaling);
     while j > 0 {
         j -= 1;
         let u_l = u_parts.load(j);
-        let (u, r) = |(u, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-            (u.into(), r)
-        }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling));
+        let (u, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
         debug_assert_eq!(u.high(), 0);
         u_parts.store(j, u.low());
         u_h = r;
@@ -503,13 +496,12 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     // Read-only v won't get scaled in-place, but on the fly as needed. Calculate only its scaled
     // two high limbs, which will be needed for making the q estimates.
     let (scaled_v_high, scaled_v_tail_high) = v_head_scaled(scaling, v, v_nlimbs);
-    let scaled_v_head: Zeroizing<[LimbType; 2]> = Zeroizing::from([scaled_v_high, scaled_v_tail_high]);
-    let normalized_scaled_v_high: Zeroizing<CtDivDlLNormalizedDivisor> =
-        CtDivDlLNormalizedDivisor::new(scaled_v_high).into();
+    let scaled_v_head: [LimbType; 2] = [scaled_v_high, scaled_v_tail_high];
+    let normalized_scaled_v_high = CtDivDlLNormalizedDivisor::new(scaled_v_high);
 
     // Scale u. Note that as being a power of two, only its (current) most significant high limb is non-zero.
-    let scaled_u_high: Zeroizing<DoubleLimb> = ct_mul_l_l(u_high, scaling).into();
-    let mut r_out_head_shadow: Zeroizing<[LimbType; 2]> = Zeroizing::from([scaled_u_high.low(), scaled_u_high.high()]);
+    let scaled_u_high: DoubleLimb = ct_mul_l_l(u_high, scaling);
+    let mut r_out_head_shadow: [LimbType; 2] = [scaled_u_high.low(), scaled_u_high.high()];
 
     // Note that q_out_nlimbs as calculate above doesn't necessarily equal u_nlimbs - v_nlimbs + 1,
     // but might come out to be one less. It can be shown that q_out_nlimbs = u_nlimbs - v_nlimbs
@@ -597,9 +589,9 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
             } else {
                 0
             };
-            let cur_u_head: Zeroizing<[LimbType; 3]> = Zeroizing::from([r_out_head_shadow[1], r_out_head_shadow[0], u_tail_high]);
+            let cur_u_head: [LimbType; 3] = [r_out_head_shadow[1], r_out_head_shadow[0], u_tail_high];
 
-            q_estimate(&cur_u_head, &scaled_v_head, normalized_scaled_v_high.deref())
+            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
         };
 
         // Virtually extend the v_nlimbs-limb sliding window by a zero on the right,
@@ -687,8 +679,7 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     }
 
     // Finally, divide the resulting remainder in r_out by the scaling again.
-    let scaling: Zeroizing<CtDivDlLNormalizedDivisor> =
-        CtDivDlLNormalizedDivisor::new(scaling).into();
+    let scaling = CtDivDlLNormalizedDivisor::new(scaling);
     let mut u_h = 0;
     // The two high limbs in r_out_head_shadow come first. Descale them and store them into their
     // corresponding locations in the returned r_out[]. Note that if v_nlimbs == 1, then the less
@@ -696,9 +687,7 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     debug_assert!(v_nlimbs > 1 || r_out_head_shadow[0] == 0);
     for k in 0..v_nlimbs.min(2) {
         let u_l = r_out_head_shadow[2 - 1 - k];
-        let (u, r) = |(u, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-            (u.into(), r)
-        }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling));
+        let (u, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
         debug_assert_eq!(u.high(), 0);
         r_out.store_l(v_nlimbs - 1 - k, u.low());
         u_h = r;
@@ -709,9 +698,7 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     while j > 2 {
         j -= 1;
         let u_l = r_out.load_l_full(j - 2);
-        let (u, r) = |(u, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-            (u.into(), r)
-        }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling));
+        let (u, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
         debug_assert_eq!(u.high(), 0);
         r_out.store_l_full(j - 2, u.low());
         u_h = r;
@@ -895,7 +882,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     //   shifted out from u[] on the left.
     // - The most significant shadow limb in u_head_high_shadow[2] will store the overflow, if any,
     //   the scaling.
-    let mut u_head_high_shadow: Zeroizing<[LimbType; 3]> = Zeroizing::from([0; 3]);
+    let mut u_head_high_shadow: [LimbType; 3] = [0; 3];
     u_head_high_shadow[0] = mp_lshift_mp(u, u_lshift_head_len);
     // The (original) u length might not be aligned to the limb size. Move the high limb into the
     // u_head_high_shadow[0] shadow for the duration of the computation. Make sure the limb shifted
@@ -921,9 +908,8 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     // Read-only v won't get scaled in-place, but on the fly as needed. Calculate only its scaled
     // two high limbs, which will be needed for making the q estimates.
     let (scaled_v_high, scaled_v_tail_high) = v_head_scaled(scaling, v, v_nlimbs);
-    let scaled_v_head: Zeroizing<[LimbType; 2]> = Zeroizing::from([scaled_v_high, scaled_v_tail_high]);
-    let normalized_scaled_v_high: Zeroizing<CtDivDlLNormalizedDivisor> =
-        CtDivDlLNormalizedDivisor::new(scaled_v_high).into();
+    let scaled_v_head: [LimbType; 2] = [scaled_v_high, scaled_v_tail_high];
+    let normalized_scaled_v_high = CtDivDlLNormalizedDivisor::new(scaled_v_high);
 
     // Scale u.
     let mut carry = 0;
@@ -953,7 +939,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
             // itself. In case v_nlimbs == 1 and j == 0, the least signigicant of the three u-limbs
             // would be undefined. As per the comment in q_estimate(), it can be set to an arbitrary
             // value in this case, so just leave it zero.
-            let mut cur_u_head: Zeroizing<[LimbType; 3]> = Zeroizing::from([0; 3]);
+            let mut cur_u_head: [LimbType; 3] = [0; 3];
             let mut i = 3;
             while i > 0 && v_nlimbs + j + i >= u_nlimbs - 1 + 3 {
                 i -= 1;
@@ -963,7 +949,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
                 i -= 1;
                 cur_u_head[3 - i - 1] = u.load_l_full(v_nlimbs + j + i - 2);
             }
-            q_estimate(&cur_u_head, &scaled_v_head, normalized_scaled_v_high.deref())
+            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
         };
 
         // Subtract q * v at limb position j upwards in u[].
@@ -1060,7 +1046,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         // would be undefined.  As per the comment in q_estimate(), it can be set to an arbitrary
         // value in this case, so leave it zero.
         let q = {
-            let mut cur_u_head: Zeroizing<[LimbType; 3]> = Zeroizing::from([0; 3]);
+            let mut cur_u_head: [LimbType; 3] = [0; 3];
             cur_u_head[0] = u_high_shadow;
             cur_u_head[1] = if v_nlimbs >= 2 {
                 u.load_l_full(v_nlimbs - 2)
@@ -1073,7 +1059,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
                 0 // Virtual zero shifted in on the right or, if v_nlimbs == 1 and j == 0, undefined.
             };
 
-            q_estimate(&cur_u_head, &scaled_v_head, normalized_scaled_v_high.deref())
+            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
         };
 
         // Virtually shift u one limb to the left, add q * v and drop the (now zero) high limb.
@@ -1124,16 +1110,13 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     }
 
     // Finally, divide the resulting remainder in u by the scaling again.
-    let scaling: Zeroizing<CtDivDlLNormalizedDivisor> =
-        CtDivDlLNormalizedDivisor::new(scaling).into();
+    let scaling = CtDivDlLNormalizedDivisor::new(scaling);
     let mut u_h = 0;
     // The high limb maintained at u_high_shadow comes first. Descale and store in its final
     // location.
     {
         let u_l = u_high_shadow;
-        let (u_val, r) = |(u_val, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-            (u_val.into(), r)
-        }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling));
+        let (u_val, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
         debug_assert_eq!(u_val.high(), 0);
         u.store_l(v_nlimbs - 1, u_val.low());
         u_h = r;
@@ -1143,9 +1126,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     while j > 0 {
         j -= 1;
         let u_l = u.load_l_full(j);
-        let (u_val, r) = |(u_val, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-            (u_val.into(), r)
-        }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling));
+        let (u_val, r) =  ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
         debug_assert_eq!(u_val.high(), 0);
         u.store_l(j, u_val.low());
         u_h = r;
@@ -1273,17 +1254,13 @@ pub fn mp_ct_div_mp_l<UT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
         q_out.zeroize_bytes_above(q_out_len);
     }
 
-    let normalized_v: Zeroizing<CtDivDlLNormalizedDivisor> =
-        CtDivDlLNormalizedDivisor::new(v).into();
-
+    let normalized_v = CtDivDlLNormalizedDivisor::new(v);
     let mut u_h = 0;
     let mut j = u_nlimbs;
     while j > 0 {
         j -= 1;
         let u_l = u.load_l(j);
-        let (q_val, r) = |(q_val, r): (DoubleLimb, LimbType)| -> (Zeroizing<DoubleLimb> , LimbType) {
-            (q_val.into(), r)
-        }(ct_div_dl_l(&DoubleLimb::new(u_h, u_l), normalized_v.deref()));
+        let (q_val, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &normalized_v);
         debug_assert_eq!(q_val.high(), 0);
 
         if let Some(q_out) = &mut q_out {

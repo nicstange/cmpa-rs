@@ -7,7 +7,6 @@ use super::add_impl::mp_ct_sub_cond_mp_mp;
 use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
 use super::div_impl::{mp_ct_div_mp_mp, mp_ct_div_pow2_mp, MpCtDivisionError};
 use subtle::{self, ConditionallySelectable as _};
-use zeroize::Zeroize;
 
 pub fn mp_ct_montgomery_radix_shift_len(n_len: usize) -> usize {
     mp_ct_limbs_align_len(n_len)

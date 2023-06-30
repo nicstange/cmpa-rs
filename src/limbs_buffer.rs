@@ -7,11 +7,7 @@
 
 use core::{self, convert, fmt, marker};
 
-#[cfg(feature = "zeroize")]
-use zeroize::Zeroize as _;
-
 use super::limb::{LimbType, LIMB_BYTES, ct_find_last_set_byte_l};
-use super::zeroize::Zeroizing;
 
 /// Determine the number of [`LimbType`] limbs stored in a multiprecision integer big-endian byte
 /// buffer.
@@ -87,8 +83,6 @@ fn _mp_be_load_l_high_partial(limbs: &[u8], src_end: usize) -> LimbType {
     let mut src: [u8; LIMB_BYTES] = [0; LIMB_BYTES];
     src[LIMB_BYTES - src_end..LIMB_BYTES].copy_from_slice(&limbs[0..src_end]);
     let l = LimbType::from_be_bytes(src);
-    #[cfg(feature = "zeroize")]
-    src.zeroize();
     l
 }
 
@@ -236,7 +230,7 @@ fn _mp_be_store_l_full(limbs: &mut [u8], dst_end: usize, value: LimbType) {
 ///
 fn _mp_be_store_l_high_partial(limbs: &mut [u8], dst_end: usize, value: LimbType) {
     let dst = &mut limbs[0..dst_end];
-    let src: Zeroizing<[u8; LIMB_BYTES]> = value.to_be_bytes().into();
+    let src: [u8; LIMB_BYTES] = value.to_be_bytes();
     dst.copy_from_slice(&src[LIMB_BYTES - dst_end..LIMB_BYTES]);
 }
 
@@ -444,8 +438,6 @@ fn _mp_le_load_l_high_partial(limbs: &[u8], src_begin: usize) -> LimbType {
     let mut src: [u8; LIMB_BYTES] = [0; LIMB_BYTES];
     src[..limbs.len() - src_begin].copy_from_slice(&limbs[src_begin..]);
     let l = LimbType::from_le_bytes(src);
-    #[cfg(feature = "zeroize")]
-    src.zeroize();
     l
 }
 
@@ -592,7 +584,7 @@ fn _mp_le_store_l_full(limbs: &mut [u8], dst_begin: usize, value: LimbType) {
 fn _mp_le_store_l_high_partial(limbs: &mut [u8], dst_begin: usize, value: LimbType) {
     let dst_end = limbs.len();
     let dst = &mut limbs[dst_begin..];
-    let src: Zeroizing<[u8; LIMB_BYTES]> = value.to_le_bytes().into();
+    let src: [u8; LIMB_BYTES] = value.to_le_bytes();
     dst.copy_from_slice(&src[0..dst_end - dst_begin]);
 }
 

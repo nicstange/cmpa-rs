@@ -8,7 +8,7 @@ use subtle::{self, ConditionallySelectable as _, ConstantTimeEq as _, ConstantTi
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
 use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
-use super::zeroize::{Zeroizing, ZeroizeableSubtleChoice};
+use super::zeroize::ZeroizeableSubtleChoice;
 
 /// The basic unit used by the multiprecision integer arithmetic implementation.
 ///
@@ -306,7 +306,7 @@ fn test_ct_mul_l_l() {
 }
 
 pub fn ct_mul_add_l_l_l_c(op0: LimbType, op10: LimbType, op11: LimbType, carry: LimbType) -> (LimbType, LimbType) {
-    let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op10, op11).into();
+    let prod = ct_mul_l_l(op10, op11);
     // Basic property of the multiplication.
     debug_assert!(prod.high() < !1 || prod.high() == !1 && prod.low() == 1);
     let (carry0, result) = ct_add_l_l(op0, carry);
@@ -322,7 +322,7 @@ pub fn ct_mul_add_l_l_l_c(op0: LimbType, op10: LimbType, op11: LimbType, carry: 
 }
 
 pub fn ct_mul_sub_b(op0: LimbType, op10: LimbType, op11: LimbType, borrow: LimbType) -> (LimbType, LimbType) {
-    let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op10, op11).into();
+    let prod = ct_mul_l_l(op10, op11);
     // Basic property of the multiplication.
     debug_assert!(prod.high() < !1 || prod.high() == !1 && prod.low() == 1);
     let (borrow0, result) = ct_sub_l_l(op0, borrow);
@@ -433,7 +433,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
 
     // u as a sequence of half words in little endian order. Allocate one extra half word
     // to accomodate for the scaling and another one to shift in case v had been shifted.
-    let mut u: Zeroizing<[LimbType; 3]> = [u.low(), u.high(), 0].into();
+    let mut u: [LimbType; 3] = [u.low(), u.high(), 0];
     // Conditionally shift u by one half limb in order to align with the shifting of the normalized
     // v, if any.
     let shifted_v_mask = cond_choice_to_mask(*v.shifted_v);
@@ -456,7 +456,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
     debug_assert_eq!(carry, 0);
 
     let (v_h, v_l) = ct_l_to_hls(v.normalized_v);
-    let mut qs: Zeroizing<[LimbType; 2]> = [0; 2].into();
+    let mut qs: [LimbType; 2] = [0; 2];
     for j in [3, 2, 1, 0] {
         let q = {
             // Retrieve the current most significant double half limb, i.e. a limb in width.
@@ -491,7 +491,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
         };
 
         // Subtract q * v at from u at position j.
-        let qv: Zeroizing<DoubleLimb> = ct_mul_l_l(q, v.normalized_v).into();
+        let qv = ct_mul_l_l(q, v.normalized_v);
         debug_assert!(qv.high() < (1 << HALF_LIMB_BITS) - 1);
         let mut borrow = 0;
         for k in 0..3 {

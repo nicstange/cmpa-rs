@@ -7,7 +7,6 @@ use crate::limb::LIMB_BITS;
 use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
 use super::limb::{LimbType, DoubleLimb, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c};
 use super::limbs_buffer::{mp_ct_nlimbs, MPIntMutByteSlice, MPIntByteSliceCommon};
-use super::zeroize::Zeroizing;
 
 /// Conditionally multiply two multiprecision integers of specified endianess.
 ///
@@ -268,7 +267,7 @@ pub fn mp_ct_square_trunc_mp<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: us
             // carry <= 2 || (2 < carry <= 4 && last_prod_high <= !2)
             // holds at loop entry.
             let op1_val = op0.load_l(k);
-            let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op1_val).into();
+            let prod = ct_mul_l_l(op0_val, op1_val);
             let mut result_val = op0.load_l(j + k);
 
             // Multiply last_prod_high, the upper half of the last iteration's multiplication, by
@@ -343,7 +342,7 @@ pub fn mp_ct_square_trunc_mp<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: us
         if j >= result_nlimbs {
             continue;
         }
-        let prod: Zeroizing<DoubleLimb> = ct_mul_l_l(op0_val, op0_val).into();
+        let prod = ct_mul_l_l(op0_val, op0_val);
          let mut result_val = op0.load_l(2 * j);
         // Multiply last_prod_high from the previous loop's last iteration by two.
         let carry0 = last_prod_high >> core::hint::black_box(LIMB_BITS - 1);
