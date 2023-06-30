@@ -5,7 +5,7 @@ use subtle::{self, ConditionallySelectable as _};
 use crate::limb::LIMB_BITS;
 
 use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
-use super::limb::{LimbType, DoubleLimb, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c};
+use super::limb::{LimbType, DoubleLimb, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c, black_box_l};
 use super::limbs_buffer::{mp_ct_nlimbs, MPIntMutByteSlice, MPIntByteSliceCommon};
 
 /// Conditionally multiply two multiprecision integers of specified endianess.
@@ -272,7 +272,7 @@ pub fn mp_ct_square_trunc_mp<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: us
 
             // Multiply last_prod_high, the upper half of the last iteration's multiplication, by
             // two.
-            let carry0 = last_prod_high >> core::hint::black_box(LIMB_BITS - 1);
+            let carry0 = black_box_l(last_prod_high >> LIMB_BITS - 1);
             last_prod_high = last_prod_high.wrapping_mul(2);
             // From the loop invariant, it follows that
             // - if carry <= 2, then last_prod_high <= !3 and
@@ -298,7 +298,7 @@ pub fn mp_ct_square_trunc_mp<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: us
             // If prod.high() == !1, i.e. at the maximum possible value, then
             // the scaled lower half <= 2 * 1 == 2, c.f. the remark above. That is,
             // prod.high() <= !2 || (carry2 == 0 && prod_low <= 2).
-            let carry2 = prod.low() >> core::hint::black_box(LIMB_BITS - 1);
+            let carry2 = black_box_l(prod.low() >> LIMB_BITS - 1);
             let prod_low = prod.low().wrapping_mul(2);
 
             // Add the scaled prod_low to the result.
@@ -345,7 +345,7 @@ pub fn mp_ct_square_trunc_mp<T0: MPIntMutByteSlice>(op0: &mut T0, op0_in_len: us
         let prod = ct_mul_l_l(op0_val, op0_val);
          let mut result_val = op0.load_l(2 * j);
         // Multiply last_prod_high from the previous loop's last iteration by two.
-        let carry0 = last_prod_high >> core::hint::black_box(LIMB_BITS - 1);
+        let carry0 = black_box_l(last_prod_high >> LIMB_BITS - 1);
         last_prod_high = last_prod_high.wrapping_mul(2);
         // From the previous loop's invariant, it again follows that the addition of carry to
         // last_prod_high does not overflow the sum.

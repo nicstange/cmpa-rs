@@ -2,6 +2,8 @@
 //! integer arithmetic.
 use core;
 use core::ops::Deref as _;
+use core::arch::asm;
+use core::convert;
 use core::mem;
 use std::ops::{Deref, DerefMut};
 use subtle::{self, ConditionallySelectable as _, ConstantTimeEq as _, ConstantTimeGreater as _};
@@ -45,6 +47,20 @@ const HALF_LIMB_MASK: LimbType = (1 << HALF_LIMB_BITS) - 1;
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
 mod x86_64_math;
 
+// core::hint::black_box() is inefficient: it writes and reads from memory.
+#[inline(always)]
+pub fn black_box_l(v: LimbType) -> LimbType {
+    let result: LimbType;
+    unsafe { asm!("/* {v} */", v = inout(reg) v => result, options(pure, nomem, nostack)); }
+    result
+}
+
+pub fn ct_is_zero_l(v: LimbType) -> LimbType {
+    // This trick is from subtle::*::ct_eq():
+    // if v is non-zero, then v or -v or both have the high bit set.
+    black_box_l((v | v.wrapping_neg()) >> LIMB_BITS - 1)
+}
+
 pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
     v0.ct_eq(&v1)
 }
@@ -71,7 +87,7 @@ pub fn ct_ge_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
 
 pub fn ct_l_to_subtle_choice(v: LimbType) -> subtle::Choice {
     debug_assert!(v <= 1);
-    subtle::Choice::from(core::hint::black_box(v) as u8)
+    subtle::Choice::from(v as u8)
 }
 
 /// Split a limb into upper and lower half limbs.
@@ -85,7 +101,7 @@ pub fn ct_l_to_subtle_choice(v: LimbType) -> subtle::Choice {
 /// * `v` - the limb to split.
 ///
 fn ct_l_to_hls(v: LimbType) -> (LimbType, LimbType) {
-    (core::hint::black_box(v >> HALF_LIMB_BITS), core::hint::black_box(v & HALF_LIMB_MASK))
+    (black_box_l(v >> HALF_LIMB_BITS), black_box_l(v & HALF_LIMB_MASK))
 }
 
 /// Construct a limb from upper and lower half limbs in constant time.
@@ -115,10 +131,10 @@ fn ct_hls_to_l(vh: LimbType, vl: LimbType) -> LimbType {
 pub fn ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     // Don't rely on overflowing_add() for determining the carry -- that would almost certainly
     // branch and not be constant-time.
-    let v0 = core::hint::black_box(v0);
-    let v1 = core::hint::black_box(v1);
+    let v0 = black_box_l(v0);
+    let v1 = black_box_l(v1);
     let r = v0.wrapping_add(v1);
-    let carry = (((v0 | v1) & !r) | (v0 & v1)) >> core::hint::black_box(LIMB_BITS - 1);
+    let carry = black_box_l((((v0 | v1) & !r) | (v0 & v1)) >> LIMB_BITS - 1);
     (carry, r)
 }
 
@@ -156,10 +172,10 @@ pub fn ct_add_l_l_c(v0: LimbType, v1: LimbType, carry: LimbType) -> (LimbType, L
 pub fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     // Don't rely on overflowing_sub() for determining the borrow -- that would almost certainly
     // branch and not be constant-time.
-    let v0 = core::hint::black_box(v0);
-    let v1 = core::hint::black_box(v1);
+    let v0 = black_box_l(v0);
+    let v1 = black_box_l(v1);
     let r = v0.wrapping_sub(v1);
-    let borrow = (((r | v1) & !v0) | (v1 & r)) >> core::hint::black_box(LIMB_BITS - 1);
+    let borrow = black_box_l((((r | v1) & !v0) | (v1 & r)) >> LIMB_BITS - 1);
     (borrow, r)
 }
 
@@ -217,9 +233,9 @@ impl DoubleLimb {
     ///         significance.
     fn get_half_limb(&self, i: usize) -> LimbType {
         if i & 1 != 0 {
-            core::hint::black_box(self.v[i / 2] >> HALF_LIMB_BITS)
+            black_box_l(self.v[i / 2] >> HALF_LIMB_BITS)
         } else {
-            core::hint::black_box(self.v[i / 2] & HALF_LIMB_MASK)
+            black_box_l(self.v[i / 2] & HALF_LIMB_MASK)
         }
     }
 }
@@ -368,8 +384,8 @@ impl GenericCtDivDlLNormalizedDivisor {
         let v_h = v >> HALF_LIMB_BITS;
         let shifted_v = ZeroizeableSubtleChoice(ct_eq_l_l(v_h, 0));
         let v = LimbType::conditional_select(&v, &(v << HALF_LIMB_BITS), *shifted_v.deref());
-        let v_h = core::hint::black_box(v >> HALF_LIMB_BITS);
-        let scaling = core::hint::black_box(1 << HALF_LIMB_BITS) / (v_h + 1);
+        let v_h = black_box_l(v >> HALF_LIMB_BITS);
+        let scaling = black_box_l(1 << HALF_LIMB_BITS) / (v_h + 1);
         let normalized_v = scaling * v;
         Self { scaling, normalized_v, shifted_v }
     }
@@ -412,8 +428,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
     }
 
     fn _le_limbs_load_half_limb(limbs: &[LimbType], (limb_index, half_limb_shift): (usize, u32)) -> LimbType {
-        let half_limb_shift = core::hint::black_box(half_limb_shift);
-        core::hint::black_box((limbs[limb_index] >> half_limb_shift) & HALF_LIMB_MASK)
+        black_box_l((limbs[limb_index] >> half_limb_shift) & HALF_LIMB_MASK)
     }
 
     fn le_limbs_load_half_limb(limbs: &[LimbType], half_limb_index: usize) -> LimbType {
@@ -421,10 +436,8 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
     }
 
     fn _le_limbs_store_half_limb(limbs: &mut [LimbType], (limb_index, half_limb_shift): (usize, u32), value: LimbType) {
-        let value = core::hint::black_box(value);
-        let half_limb_shift = core::hint::black_box(half_limb_shift);
-        limbs[limb_index] &= !(HALF_LIMB_MASK << half_limb_shift);
-        limbs[limb_index] |= value << half_limb_shift;
+        let mask = HALF_LIMB_MASK << half_limb_shift;
+        limbs[limb_index] = black_box_l(value << half_limb_shift | limbs[limb_index] & !mask);
     }
 
     fn le_limbs_store_half_limb(limbs: &mut [LimbType], half_limb_index: usize, value: LimbType) {
@@ -449,7 +462,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
         let u_val = _le_limbs_load_half_limb(u.as_slice(), (limb_index, half_limb_shift));
         let u_val = v.scaling * u_val;
         let u_val = carry + u_val;
-        carry = core::hint::black_box(u_val >> HALF_LIMB_BITS);
+        carry = black_box_l(u_val >> HALF_LIMB_BITS);
         let u_val = u_val & HALF_LIMB_MASK;
         _le_limbs_store_half_limb(u.as_mut_slice(), (limb_index, half_limb_shift), u_val)
     }
@@ -508,7 +521,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
             let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
             let u_val = u_val.wrapping_sub(borrow);
-            borrow = core::hint::black_box(u_val >> LIMB_BITS - 1);
+            borrow = black_box_l(u_val >> LIMB_BITS - 1);
             let u_val = u_val & HALF_LIMB_MASK;
             _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
         }
@@ -525,7 +538,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
             let u_val = u_val.wrapping_add(carry);
             let u_val = u_val.wrapping_add(v_val);
-            carry = core::hint::black_box(u_val >> HALF_LIMB_BITS);
+            carry = black_box_l(u_val >> HALF_LIMB_BITS);
             let u_val = u_val & HALF_LIMB_MASK;
             _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
         }
@@ -533,7 +546,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
             let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
             let u_val = u_val.wrapping_add(carry);
-            carry = core::hint::black_box(u_val >> HALF_LIMB_BITS);
+            carry = black_box_l(u_val >> HALF_LIMB_BITS);
             let u_val = u_val & HALF_LIMB_MASK;
             _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
         }
