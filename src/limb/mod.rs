@@ -25,7 +25,12 @@ use super::zeroize::{Zeroizing, ZeroizeableSubtleChoice};
 /// are not implemented by e.g. some architecture support runtime library. For now, the smallest
 /// common denominator of `u32` is chosen.
 ///
+
+#[cfg(not(target_arch = "x86_64"))]
 pub type LimbType = u32;
+#[cfg(target_arch = "x86_64")]
+pub type LimbType = u64;
+
 /// The bit width of a [`LimbType`].
 pub const LIMB_BITS: u32 = LimbType::BITS;
 /// The size of a [`LimbType`] in bytes.
@@ -35,6 +40,11 @@ pub const LIMB_BYTES: usize = mem::size_of::<LimbType>();
 const HALF_LIMB_BITS: u32 = LIMB_BITS / 2;
 /// The size of a half a [`LimbType`], i.e. a "halfword", in bytes.
 const HALF_LIMB_MASK: LimbType = (1 << HALF_LIMB_BITS) - 1;
+
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+mod x86_64_math;
+
 
 pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
     v0.ct_eq(&v1)
@@ -233,7 +243,8 @@ impl subtle::ConditionallySelectable for DoubleLimb {
 /// * `v0` - first operand
 /// * `v1` - second operand
 ///
-pub fn ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
+#[allow(unused)]
+pub fn generic_ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
     let (v0h, v0l) = ct_l_to_hls(v0);
     let (v1h, v1l) = ct_l_to_hls(v1);
 
@@ -260,6 +271,12 @@ pub fn ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
 
     DoubleLimb::new(result_high, result_low)
 }
+
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::generic_ct_mul_l_l as ct_mul_l_l;
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+pub use x86_64_math::ct_mul_l_l as ct_mul_l_l;
 
 #[test]
 fn test_ct_mul_l_l() {
@@ -320,20 +337,21 @@ pub fn ct_mul_sub_b(op0: LimbType, op10: LimbType, op11: LimbType, borrow: LimbT
     (borrow, result)
 }
 
-/// A normalized divisor for input to [`ct_div_dl_l()`].
+/// A normalized divisor for input to [`generic_ct_div_dl_l()`].
 ///
-/// In order to avoid scaling the same divisor all over again in loop invoking [`ct_div_dl_l()`],
-/// the latter takes an already scaled divisor as input. This allows for reusing the result
-/// of the scaling operation.
+/// In order to avoid scaling the same divisor all over again in loop invoking
+/// [`generic_ct_div_dl_l()`], the latter takes an already scaled divisor as input. This allows for
+/// reusing the result of the scaling operation.
 ///
 #[cfg_attr(feature = "zeroize", derive(Zeroize))]
-pub struct CtDivDlLNormalizedDivisor {
+#[allow(unused)]
+pub struct GenericCtDivDlLNormalizedDivisor {
     scaling: LimbType,
     normalized_v: LimbType,
     shifted_v: ZeroizeableSubtleChoice,
 }
 
-impl CtDivDlLNormalizedDivisor {
+impl GenericCtDivDlLNormalizedDivisor {
     /// Normalize a divisor for subsequent use with [`ct_div_dl_l()`].
     ///
     /// Runs in constant time.
@@ -367,7 +385,7 @@ impl CtDivDlLNormalizedDivisor {
 /// # Arguments
 ///
 /// * `u` - The [`DoubleLimb`] dividend.
-/// * `v` - The [`CtDivDlLNormalizedDivisor`] divisor.
+/// * `v` - The [`GenericCtDivDlLNormalizedDivisor`] divisor.
 ///
 /// # Note
 ///
@@ -376,7 +394,8 @@ impl CtDivDlLNormalizedDivisor {
 /// _much_ slower than the native double word division instructions available on some
 /// architectures like e.g. the `div` instruction on x86.
 ///
-pub fn ct_div_dl_l(u: &DoubleLimb, v: &CtDivDlLNormalizedDivisor) -> (DoubleLimb, LimbType) {
+#[allow(unused)]
+pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor) -> (DoubleLimb, LimbType) {
     // Division algorithm according to D. E. Knuth, "The Art of Computer Programming", vol 2 for the
     // special case of a double limb dividend interpreted as four half limbs.
     //
@@ -531,6 +550,16 @@ pub fn ct_div_dl_l(u: &DoubleLimb, v: &CtDivDlLNormalizedDivisor) -> (DoubleLimb
 
     (DoubleLimb::new(qs[1], qs[0]), u[0])
 }
+
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::GenericCtDivDlLNormalizedDivisor as CtDivDlLNormalizedDivisor;
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::generic_ct_div_dl_l as ct_div_dl_l;
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+pub use x86_64_math::CtDivDlLNormalizedDivisor as CtDivDlLNormalizedDivisor;
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+pub use x86_64_math::ct_div_dl_l as ct_div_dl_l;
 
 #[test]
 fn test_ct_div_dl_l() {
