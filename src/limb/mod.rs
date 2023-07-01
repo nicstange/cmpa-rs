@@ -1,16 +1,11 @@
 //! Definitions and arithmetic primitives related to [LimbType], the basic unit of multiprecision
 //! integer arithmetic.
-use core;
-use core::ops::Deref as _;
 use core::arch::asm;
 use core::convert;
 use core::mem;
-use std::ops::{Deref, DerefMut};
-use subtle::{self, ConditionallySelectable as _, ConstantTimeEq as _, ConstantTimeGreater as _};
+use core::ops;
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
-use super::cond_helpers::{cond_choice_to_mask, cond_select_with_mask};
-use super::zeroize::ZeroizeableSubtleChoice;
 
 /// The basic unit used by the multiprecision integer arithmetic implementation.
 ///
@@ -44,8 +39,10 @@ const HALF_LIMB_BITS: u32 = LIMB_BITS / 2;
 /// The size of a half a [`LimbType`], i.e. a "halfword", in bytes.
 const HALF_LIMB_MASK: LimbType = (1 << HALF_LIMB_BITS) - 1;
 
+
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
 mod x86_64_math;
+
 
 // core::hint::black_box() is inefficient: it writes and reads from memory.
 #[inline(always)]
@@ -55,39 +52,114 @@ pub fn black_box_l(v: LimbType) -> LimbType {
     result
 }
 
-pub fn ct_is_zero_l(v: LimbType) -> LimbType {
+#[derive(Clone, Copy, Debug)]
+pub struct LimbChoice {
+    mask: LimbType
+}
+
+impl LimbChoice {
+    pub const fn new(cond: LimbType) -> Self {
+        debug_assert!(cond == 0 || cond == 1);
+        Self { mask: (0 as LimbType).wrapping_sub(cond) }
+    }
+
+    pub fn unwrap(&self) -> LimbType {
+        black_box_l(self.mask & 1)
+    }
+
+    pub const fn select(&self, v0: LimbType, v1: LimbType) -> LimbType {
+        v0 ^ (self.mask & (v0 ^ v1))
+    }
+}
+
+impl convert::From<LimbType> for LimbChoice {
+    fn from(value: LimbType) -> Self {
+        Self::new(value)
+    }
+}
+
+impl ops::Not for LimbChoice {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        Self { mask: !self.mask }
+    }
+}
+
+impl ops::BitAnd for LimbChoice {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self { mask: self.mask & rhs.mask }
+    }
+}
+
+impl ops::BitAndAssign for LimbChoice {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.mask &= rhs.mask
+    }
+}
+
+impl ops::BitOr for LimbChoice {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self { mask: self.mask | rhs.mask }
+    }
+}
+
+impl ops::BitOrAssign for LimbChoice {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.mask |= rhs.mask
+    }
+}
+
+/// Prerequisite trait for the [`zeroize::DefaultIsZeroes`] marker trait.
+#[cfg(feature = "zeroize")]
+impl Default for LimbChoice {
+    fn default() -> Self {
+        Self::from(0)
+    }
+}
+
+/// Marker trait enabling a generic [`zeroize::Zeroize`] trait implementation.
+#[cfg(feature = "zeroize")]
+impl zeroize::DefaultIsZeroes for LimbChoice {}
+
+
+fn ct_is_nonzero_l(v: LimbType) -> LimbType {
     // This trick is from subtle::*::ct_eq():
     // if v is non-zero, then v or -v or both have the high bit set.
     black_box_l((v | v.wrapping_neg()) >> LIMB_BITS - 1)
 }
 
-pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
-    v0.ct_eq(&v1)
+fn ct_is_zero_l(v: LimbType) -> LimbType {
+    (1 as LimbType) ^ ct_is_nonzero_l(v)
 }
 
-pub fn ct_neq_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
+pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
+    LimbChoice::from(ct_is_zero_l(v0 ^ v1))
+}
+
+pub fn ct_neq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     !ct_eq_l_l(v0, v1)
 }
 
-pub fn ct_lt_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
-    v1.ct_gt(&v0)
+pub fn ct_lt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
+    let (borrow, _) = ct_sub_l_l(v0, v1);
+    LimbChoice::from(borrow)
 }
 
-pub fn ct_le_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
-    !v0.ct_gt(&v1)
+pub fn ct_le_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
+    !ct_lt_l_l(v1, v0)
 }
 
-pub fn ct_gt_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
+pub fn ct_gt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     ct_lt_l_l(v1, v0)
 }
 
-pub fn ct_ge_l_l(v0: LimbType, v1: LimbType) -> subtle::Choice {
+pub fn ct_ge_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     ct_le_l_l(v1, v0)
-}
-
-pub fn ct_l_to_subtle_choice(v: LimbType) -> subtle::Choice {
-    debug_assert!(v <= 1);
-    subtle::Choice::from(v as u8)
 }
 
 /// Split a limb into upper and lower half limbs.
@@ -240,14 +312,6 @@ impl DoubleLimb {
     }
 }
 
-impl subtle::ConditionallySelectable for DoubleLimb {
-    fn conditional_select(a: &Self, b: &Self, choice: subtle::Choice) -> Self {
-        let choice_mask = cond_choice_to_mask(choice);
-        Self::new(cond_select_with_mask(a.high(), b.high(), choice_mask),
-                  cond_select_with_mask(a.low(), b.low(), choice_mask))
-    }
-}
-
 /// Mutiply two limbs in constant time.
 ///
 /// Returns the result a double precision [`DoubleLimb`].
@@ -364,7 +428,7 @@ pub fn ct_mul_sub_b(op0: LimbType, op10: LimbType, op11: LimbType, borrow: LimbT
 pub struct GenericCtDivDlLNormalizedDivisor {
     scaling: LimbType,
     normalized_v: LimbType,
-    shifted_v: ZeroizeableSubtleChoice,
+    shifted_v: LimbChoice,
 }
 
 impl GenericCtDivDlLNormalizedDivisor {
@@ -382,8 +446,8 @@ impl GenericCtDivDlLNormalizedDivisor {
         // accordingly in mp_ct_div() and allows for constant-time division computation, independent
         // of the value of v.
         let v_h = v >> HALF_LIMB_BITS;
-        let shifted_v = ZeroizeableSubtleChoice(ct_eq_l_l(v_h, 0));
-        let v = LimbType::conditional_select(&v, &(v << HALF_LIMB_BITS), *shifted_v.deref());
+        let shifted_v = ct_eq_l_l(v_h, 0);
+        let v = shifted_v.select(v, v << HALF_LIMB_BITS);
         let v_h = black_box_l(v >> HALF_LIMB_BITS);
         let scaling = black_box_l(1 << HALF_LIMB_BITS) / (v_h + 1);
         let normalized_v = scaling * v;
@@ -449,12 +513,11 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
     let mut u: [LimbType; 3] = [u.low(), u.high(), 0];
     // Conditionally shift u by one half limb in order to align with the shifting of the normalized
     // v, if any.
-    let shifted_v_mask = cond_choice_to_mask(*v.shifted_v);
     for i in [2, 1] {
         let shifted_u_val = u[i] << HALF_LIMB_BITS | u[i - 1] >> HALF_LIMB_BITS;
-        u[i] = cond_select_with_mask(u[i], shifted_u_val, shifted_v_mask);
+        u[i] = v.shifted_v.select(u[i], shifted_u_val);
     }
-    u[0] = cond_select_with_mask(u[0], u[0] << HALF_LIMB_BITS, shifted_v_mask);
+    u[0] = v.shifted_v.select(u[0], u[0] << HALF_LIMB_BITS);
     // Scale u by the divisor normalization scaling.
     let mut carry = 0;
     for i in 0..6 {
@@ -481,10 +544,10 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let q = u_cur_dhl / v_h;
 
             // Check whether q fits a half limb and cap it otherwise.
-            let ov = ct_l_to_subtle_choice(q >> HALF_LIMB_BITS);
-            let q = LimbType::conditional_select(&q, &HALF_LIMB_MASK, ov);
+            let ov = LimbChoice::from(q >> HALF_LIMB_BITS);
+            let q = ov.select(q, HALF_LIMB_MASK);
             let r = u_cur_dhl - q * v_h;
-            let r_carry = ct_l_to_subtle_choice(r >> HALF_LIMB_BITS);
+            let r_carry = LimbChoice::from(r >> HALF_LIMB_BITS);
 
             // As long as r does not overflow b, i.e. a LimbType,
             // check whether q * v[n - 2] > b * r + u[j + n - 2].
@@ -500,7 +563,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let qv_tail_high = q * v_l;
             let over_estimated = !r_carry &
                 ct_gt_l_l(qv_tail_high, r << HALF_LIMB_BITS | u_tail_high);
-            q - LimbType::conditional_select(&0, &1, over_estimated)
+            q - over_estimated.select(0, 1)
         };
 
         // Subtract q * v at from u at position j.
@@ -527,13 +590,12 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
         }
 
         // If q had been overestimated, decrement q and add one v back to u.
-        let over_estimated = ct_l_to_subtle_choice(borrow);
-        let over_estimated_mask = cond_choice_to_mask(over_estimated);
+        let over_estimated = LimbChoice::from(borrow);
         let mut carry = 0;
-        let q = q - cond_select_with_mask(0, 1, over_estimated_mask);
+        let q = q - over_estimated.select(0, 1);
         le_limbs_store_half_limb(qs.as_mut_slice(), j, q);
         for (k, v_val) in [(0, v_l), (1, v_h)] {
-            let v_val = cond_select_with_mask(0, v_val, over_estimated_mask);
+            let v_val = over_estimated.select(0, v_val);
             let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
             let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
             let u_val = u_val.wrapping_add(carry);
@@ -555,7 +617,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
     // Conditionally shift u back by one half limb in order to undo the shifting to align with v.
     for i in [0, 1] {
         let shifted_u_val = u[i] >> HALF_LIMB_BITS | (u[i + 1] & HALF_LIMB_MASK) << HALF_LIMB_BITS;
-        u[i] = cond_select_with_mask(u[i], shifted_u_val, shifted_v_mask);
+        u[i] = v.shifted_v.select(u[i], shifted_u_val);
     }
     // Divide u by the scaling.
     debug_assert_eq!(u[2], 0);
@@ -624,21 +686,21 @@ fn test_ct_div_dl_l() {
 }
 
 // Position of MSB + 1, if any, zero otherwise.
-pub fn ct_find_last_set_bit_l(mut v: LimbType) -> u32 {
-    let mut bits = LIMB_BITS;
+pub fn ct_find_last_set_bit_l(mut v: LimbType) -> usize {
+    let mut bits = LIMB_BITS as LimbType;
     assert!(bits != 0);
     assert!(bits & bits - 1 == 0); // Is a power of two.
-    let mut count: u32 = 0;
+    let mut count: usize = 0;
     while bits > 1 {
         bits /= 2;
         let v_l = v & (1 << bits) - 1;
         let v_h = v >> bits;
         let upper = ct_neq_l_l(v_h, 0);
-        count += u32::conditional_select(&0, &bits, upper);
-        v = LimbType::conditional_select(&v_l, &v_h, upper);
+        count += upper.select(0, bits) as usize;
+        v = upper.select(v_l, v_h);
     }
     debug_assert!(v <= 1);
-    count += v as u32;
+    count += v as usize;
     count
 }
 
@@ -646,7 +708,7 @@ pub fn ct_find_last_set_bit_l(mut v: LimbType) -> u32 {
 fn test_ct_find_last_set_bit_l() {
     assert_eq!(ct_find_last_set_bit_l(0), 0);
 
-    for i in 0..LIMB_BITS {
+    for i in 0..LIMB_BITS as usize {
         let v = 1 << i;
         assert_eq!(ct_find_last_set_bit_l(v), i + 1);
         assert_eq!(ct_find_last_set_bit_l(v - 1), i);

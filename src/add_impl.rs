@@ -1,13 +1,7 @@
 //! Implementation of multiprecision integer addition related primitives.
 
-use crate::cond_helpers::cond_select_with_mask;
-use crate::limb::ct_find_last_set_byte_l;
-
-use super::cond_helpers::cond_choice_to_mask;
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b};
+use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_add_l_l_c, ct_find_last_set_byte_l, ct_sub_l_l, ct_sub_l_l_b, LimbChoice};
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon};
-
-use subtle::{self, ConditionallySelectable as _};
 
 /// Add two multiprecision integers of specified endianess.
 ///
@@ -202,7 +196,7 @@ pub fn mp_ct_add_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> Lim
 /// * `cond` - Whether or not to replace `ob0` by the difference.
 ///
 pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
-    op0: &mut T0, op1: &T1, cond: subtle::Choice
+    op0: &mut T0, op1: &T1, cond: LimbChoice
 ) -> LimbType {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
@@ -211,18 +205,17 @@ pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
         return 0;
     }
 
-    let cond_mask = cond_choice_to_mask(cond);
     let mut borrow = 0;
     for i in 0..op1_nlimbs - 1 {
         let mut op0_val = op0.load_l_full(i);
-        let op1_val = cond_select_with_mask(0, op1.load_l_full(i), cond_mask);
+        let op1_val = cond.select(0, op1.load_l_full(i));
         (borrow, op0_val) = ct_sub_l_l_b(op0_val, op1_val, borrow);
         op0.store_l_full(i, op0_val);
     }
 
     // Propagate the borrow upwards. The first iteration will also account
     // for op1's high limb.
-    let mut op1_val = cond_select_with_mask(0, op1.load_l(op1_nlimbs - 1), cond_mask);
+    let mut op1_val = cond.select(0, op1.load_l(op1_nlimbs - 1));
     for i in op1_nlimbs - 1..op0_nlimbs {
         let mut op0_val = op0.load_l(i);
         (borrow, op0_val) = ct_sub_l_l_b(op0_val, op1_val, borrow);
@@ -248,11 +241,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(0u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(1u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), 0);
     assert_eq!(op0.load_l(1), 0);
@@ -264,11 +257,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, !1);
     op0.store_l(1, 1);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(0u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(1u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
@@ -280,11 +273,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, !1);
     op0.store_l(1, 1);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(0u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(1u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
@@ -297,11 +290,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, 0);
     op1.store_l(0, !0);
     op1.store_l(1, 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(0u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(1u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 1);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), !1);
@@ -316,11 +309,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(0u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(1u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), 0);
     assert_eq!(op0.load_l(1), 0);
@@ -332,11 +325,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, !1);
     op0.store_l(1, 1);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(0u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(1u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
@@ -349,11 +342,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, 0);
     op1.store_l(0, !0);
     op1.store_l(1, 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(0u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, subtle::Choice::from(1u8));
+    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 1);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), !0 >> 8 & !1);

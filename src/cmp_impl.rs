@@ -1,10 +1,9 @@
 //! Implementation of multiprecision integer comparison primitives.
 
-use super::limb::{ct_eq_l_l, ct_neq_l_l, ct_lt_l_l};
+use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l};
 use super::limbs_buffer::MPIntByteSliceCommon;
 #[cfg(test)]
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _};
-use subtle;
 
 /// Compare two multiprecision integers of specified endianess for `==`.
 ///
@@ -15,12 +14,12 @@ use subtle;
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
-pub fn mp_ct_eq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
+pub fn mp_ct_eq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
 
-    let mut is_eq = subtle::Choice::from(1);
+    let mut is_eq = LimbChoice::from(1);
     for i in 0..common_nlimbs {
         let op0_val = op0.load_l(i);
         let op1_val = op1.load_l(i);
@@ -51,9 +50,9 @@ fn test_mp_ct_eq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, 1);
     op1.store_l(0, 1);
-    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 1);
+    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 1);
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -63,9 +62,9 @@ fn test_mp_ct_eq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, 2);
     op1.store_l(0, 1);
     op1.store_l(1, 2);
-    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 0);
-    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 0);
+    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 0);
+    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -73,9 +72,9 @@ fn test_mp_ct_eq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, 1);
     op1.store_l(0, 2);
-    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1).unwrap_u8(), 0);
-    assert_eq!(mp_ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 0);
-    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 0);
+    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1).unwrap(), 0);
+    assert_eq!(mp_ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 0);
+    assert_eq!(mp_ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 }
 
 #[test]
@@ -105,7 +104,7 @@ fn test_mp_ct_eq_ne_ne() {
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
-pub fn mp_ct_neq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
+pub fn mp_ct_neq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     !mp_ct_eq_mp_mp(op0, op1)
 }
 
@@ -118,18 +117,18 @@ pub fn mp_ct_neq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
-pub fn mp_ct_leq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
+pub fn mp_ct_leq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
 
-    let mut is_eq = subtle::Choice::from(1);
+    let mut is_eq = LimbChoice::from(1);
     for i in common_nlimbs..op0_nlimbs {
         let op0_val = op0.load_l(i);
         is_eq &= ct_eq_l_l(op0_val, 0);
     }
 
-    let mut is_lt = subtle::Choice::from(0);
+    let mut is_lt = LimbChoice::from(0);
     for i in common_nlimbs..op1_nlimbs {
         let op1_val = op1.load_l(i);
         is_lt |= ct_neq_l_l(op1_val, 0);
@@ -160,9 +159,9 @@ fn test_mp_ct_leq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, 1);
     // [0 1]
     op1.store_l(0, 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 1);
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -172,9 +171,9 @@ fn test_mp_ct_leq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, 1);
     // [0 2]
     op1.store_l(0, 2);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 1);
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -184,9 +183,9 @@ fn test_mp_ct_leq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, 1);
     // [1 0]
     op1.store_l(1, 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 0);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -196,9 +195,9 @@ fn test_mp_ct_leq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, 1);
     // [0 1]
     op1.store_l(0, 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap_u8(), 0);
-    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 0);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap(), 0);
+    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -209,9 +208,9 @@ fn test_mp_ct_leq_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, 1);
     // [0 1]
     op1.store_l(0, 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap_u8(), 0);
-    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap_u8(), 1);
-    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap_u8(), 0);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1).unwrap(), 0);
+    assert_eq!(mp_ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
+    assert_eq!(mp_ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 }
 
 #[test]
@@ -241,7 +240,7 @@ fn test_mp_ct_leq_ne_ne() {
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
-pub fn mp_ct_lt_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
+pub fn mp_ct_lt_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     !mp_ct_geq_mp_mp(op0, op1)
 }
 
@@ -254,7 +253,7 @@ pub fn mp_ct_lt_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
-pub fn mp_ct_geq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
+pub fn mp_ct_geq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     mp_ct_leq_mp_mp(op1, op0)
 }
 
@@ -267,6 +266,6 @@ pub fn mp_ct_geq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
 ///
-pub fn mp_ct_gt_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> subtle::Choice {
+pub fn mp_ct_gt_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     !mp_ct_leq_mp_mp(op0, op1)
 }
