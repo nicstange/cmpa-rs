@@ -1,6 +1,8 @@
 //! Implementation of multiprecision integer comparison primitives.
 
-use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l};
+use clap::builder::BoolValueParser;
+
+use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b};
 use super::limbs_buffer::MPIntByteSliceCommon;
 #[cfg(test)]
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _};
@@ -19,24 +21,24 @@ pub fn mp_ct_eq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
 
-    let mut is_eq = LimbChoice::from(1);
+    let mut is_neq = 0;
     for i in 0..common_nlimbs {
         let op0_val = op0.load_l(i);
         let op1_val = op1.load_l(i);
-        is_eq &= ct_eq_l_l(op0_val, op1_val);
+        is_neq |= op0_val ^ op1_val;
     }
 
     for i in common_nlimbs..op0_nlimbs {
         let op0_val = op0.load_l(i);
-        is_eq &= ct_eq_l_l(op0_val, 0);
+        is_neq |= op0_val;
     }
 
     for i in common_nlimbs..op1_nlimbs {
         let op1_val = op1.load_l(i);
-        is_eq &= ct_eq_l_l(op1_val, 0);
+        is_neq |= op1_val;
     }
 
-    is_eq
+    LimbChoice::from(ct_is_zero_l(is_neq))
 }
 
 #[cfg(test)]
@@ -122,16 +124,16 @@ pub fn mp_ct_leq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
 
-    let mut is_eq = LimbChoice::from(1);
+    let mut is_eq = black_box_l(1);
     for i in common_nlimbs..op0_nlimbs {
         let op0_val = op0.load_l(i);
-        is_eq &= ct_eq_l_l(op0_val, 0);
+        is_eq &= ct_is_zero_l(op0_val);
     }
 
-    let mut is_lt = LimbChoice::from(0);
+    let mut is_lt = 0 ;
     for i in common_nlimbs..op1_nlimbs {
         let op1_val = op1.load_l(i);
-        is_lt |= ct_neq_l_l(op1_val, 0);
+        is_lt |= ct_is_nonzero_l(op1_val);
     }
 
     let mut i = common_nlimbs;
@@ -139,11 +141,13 @@ pub fn mp_ct_leq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
         i -= 1;
         let op0_val = op0.load_l(i);
         let op1_val = op1.load_l(i);
-        is_lt |= is_eq & ct_lt_l_l(op0_val, op1_val);
-        is_eq &= ct_eq_l_l(op0_val, op1_val);
+        let (borrow, diff) = ct_sub_l_l(op0_val, op1_val);
+
+        is_lt |= is_eq & borrow;
+        is_eq &= ct_is_zero_l(diff | borrow);
     }
 
-    is_lt | is_eq
+    LimbChoice::from(is_lt | is_eq)
 }
 
 #[cfg(test)]

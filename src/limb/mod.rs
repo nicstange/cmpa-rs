@@ -127,13 +127,13 @@ impl Default for LimbChoice {
 impl zeroize::DefaultIsZeroes for LimbChoice {}
 
 
-fn ct_is_nonzero_l(v: LimbType) -> LimbType {
+pub fn ct_is_nonzero_l(v: LimbType) -> LimbType {
     // This trick is from subtle::*::ct_eq():
     // if v is non-zero, then v or -v or both have the high bit set.
     black_box_l((v | v.wrapping_neg()) >> LIMB_BITS - 1)
 }
 
-fn ct_is_zero_l(v: LimbType) -> LimbType {
+pub fn ct_is_zero_l(v: LimbType) -> LimbType {
     (1 as LimbType) ^ ct_is_nonzero_l(v)
 }
 
