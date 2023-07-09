@@ -691,6 +691,38 @@ fn test_ct_div_dl_l() {
     }
 }
 
+pub fn ct_inv_mod_l(v: LimbType) -> LimbType {
+    // Apply Hensel's lifting lemma for v * x - 1 to lift the trivial root
+    // (i.e. inverse of v) mod 2^1 to a root mod 2^LIMB_BITS. Successive steps
+    // double the bits, i.e. if r is a root mod 2^k, one step makes it a root mod 2^2*k.
+    debug_assert_eq!(v & 1, 1);
+    let mut k = 1;
+    let mut r: LimbType = 1;
+    while k < LIMB_BITS {
+        r = (r << 1).wrapping_sub(v.wrapping_mul(r).wrapping_mul(r));
+        k *= 2;
+    }
+
+    r
+}
+
+#[test]
+fn test_ct_inv_mod_l() {
+    for j in 0..LIMB_BITS {
+        let v = ((1 as LimbType) << j) | 1;
+        assert_eq!(v.wrapping_mul(ct_inv_mod_l(v)), 1);
+    }
+
+    for j in 1..LIMB_BITS {
+        let v = ((1 as LimbType) << j).wrapping_sub(1);
+        assert_eq!(v.wrapping_mul(ct_inv_mod_l(v)), 1);
+    }
+
+    let v: LimbType = !0;
+    assert_eq!(v.wrapping_mul(ct_inv_mod_l(v)), 1);
+}
+
+
 // Position of MSB + 1, if any, zero otherwise.
 pub fn ct_find_last_set_bit_l(mut v: LimbType) -> usize {
     let mut bits = LIMB_BITS as LimbType;
