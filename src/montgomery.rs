@@ -1,6 +1,6 @@
 use crate::div_impl::mp_ct_div_lshifted_mp_mp;
 
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, LimbChoice};
+use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, LimbChoice, ct_inv_mod_l};
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_limbs_align_len, mp_ct_nlimbs};
 use super::cmp_impl::mp_ct_geq_mp_mp;
 use super::add_impl::mp_ct_sub_cond_mp_mp;
@@ -17,18 +17,7 @@ pub fn mp_ct_montgomery_radix_shift_nlimbs(n_len: usize) -> usize {
 pub fn mp_ct_montgomery_n0_inv_mod_l<'a, NT: MPIntByteSliceCommon>(n: &NT) -> LimbType {
     debug_assert!(!n.is_empty());
     let n0 = n.load_l(0);
-    debug_assert!(n0 % 2 != 0);
-    // The odd numbers mod 2^LIMB_BITS form a multiplicative group of order 2^(LIMB_BITS - 1).
-    // It follows that n0^(2^(LIMB_BITS - 1) - 1) is n0's inverse mod 2^LIMB_BITS.
-    // The exponent (2^(LIMB_BITS - 1) - 1) has exactly the lower (LIMB_BITS - 1) bits
-    // set. Compute the exponentation of n0 by binary exponentation hard-coded for the
-    // constant exponent.
-    let mut n0_inv = n0;
-    for _i in 0..LIMB_BITS - 2 {
-        n0_inv = n0_inv.wrapping_mul(n0_inv);
-        n0_inv = n0_inv.wrapping_mul(n0);
-    }
-    n0_inv
+    ct_inv_mod_l(n0)
 }
 
 #[test]
