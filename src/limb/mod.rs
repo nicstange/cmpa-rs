@@ -70,6 +70,12 @@ impl LimbChoice {
     pub const fn select(&self, v0: LimbType, v1: LimbType) -> LimbType {
         v0 ^ (self.mask & (v0 ^ v1))
     }
+
+    pub fn select_usize(&self, v0: usize, v1: usize) -> usize {
+        let cond = self.unwrap() as usize;
+        let mask = (0 as usize).wrapping_sub(cond);
+        v0 ^ (mask & (v0 ^ v1))
+    }
 }
 
 impl convert::From<LimbType> for LimbChoice {
