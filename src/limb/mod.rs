@@ -724,3 +724,79 @@ fn test_ct_find_last_set_bit_l() {
 pub fn ct_find_last_set_byte_l(v: LimbType) -> usize {
     ((ct_find_last_set_bit_l(v) + 8 - 1) / 8) as usize
 }
+
+pub fn ct_arithmetic_rshift_l(v: LimbType, rshift: LimbType) -> LimbType {
+    let rshift_nz_mask = LimbChoice::from(ct_is_nonzero_l(rshift)).select(0, !0);
+    let sign_extend = (0 as LimbType).wrapping_sub(v >> LIMB_BITS - 1);
+    let sign_extend = sign_extend << ((LIMB_BITS as LimbType - rshift) & rshift_nz_mask);
+    let sign_extend = sign_extend & rshift_nz_mask;
+    let rshift_lt_max_mask = ct_eq_l_l(rshift, LIMB_BITS as LimbType).select(!0, 0);
+    sign_extend | ((v >> (rshift & rshift_lt_max_mask)) & rshift_lt_max_mask)
+}
+
+#[test]
+fn test_ct_arithmetic_shift_l() {
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            0
+        ),
+        ((1 as LimbType) << LIMB_BITS - 1) - 1
+    );
+
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            (LIMB_BITS - 2) as LimbType
+        ),
+        1
+    );
+
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            (LIMB_BITS - 1) as LimbType
+        ),
+        0
+    );
+
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            LIMB_BITS as LimbType
+        ),
+        0
+    );
+
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            !0 ^ 1,
+            0
+        ),
+        !0 ^ 1
+    );
+
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            !0 ^ 1,
+            (LIMB_BITS - 2) as LimbType
+        ),
+        !0
+    );
+
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            !0 ^ 1,
+            (LIMB_BITS - 1) as LimbType
+        ),
+        !0
+    );
+
+    assert_eq!(
+        ct_arithmetic_rshift_l(
+            !0 ^ 1,
+            LIMB_BITS as LimbType
+        ),
+        !0
+    );
+}
