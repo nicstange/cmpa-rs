@@ -370,6 +370,12 @@ fn test_mp_ct_sub_cond_ne_ne() {
     test_mp_ct_add_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
 }
 
+pub fn mp_ct_sub_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
+    op0: &mut T0, op1: &T1
+) -> LimbType {
+    mp_ct_sub_cond_mp_mp(op0, op1, LimbChoice::from(1))
+}
+
 // Subtract a limb from a multiprecision integer.
 pub fn mp_ct_sub_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
     debug_assert!(ct_find_last_set_byte_l(op1) <= op0.len());
