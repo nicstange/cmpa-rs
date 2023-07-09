@@ -2,7 +2,7 @@
 
 use clap::builder::BoolValueParser;
 
-use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b};
+use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b, LimbType};
 use super::limbs_buffer::MPIntByteSliceCommon;
 #[cfg(test)]
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _};
@@ -273,3 +273,30 @@ pub fn mp_ct_geq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
 pub fn mp_ct_gt_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     !mp_ct_leq_mp_mp(op0, op1)
 }
+
+pub fn mp_ct_is_zero_mp<T0: MPIntByteSliceCommon>(op0: &T0) -> LimbChoice {
+    let mut is_nz: LimbType = 0;
+    for i in 0..op0.nlimbs() {
+        let op0_val = op0.load_l(i);
+        is_nz |= op0_val;
+    }
+    LimbChoice::from(ct_is_zero_l(is_nz))
+}
+
+pub fn mp_ct_is_one_mp<T0: MPIntByteSliceCommon>(op0: &T0) -> LimbChoice {
+    if op0.is_empty() {
+        return LimbChoice::from(0);
+    }
+
+    let tail_is_not_one = op0.load_l(0) ^ 1;
+
+    let mut head_is_nz: LimbType = 0;
+    for i in 1..op0.nlimbs() {
+        let op0_val = op0.load_l(i);
+        head_is_nz |= op0_val;
+    }
+
+    LimbChoice::from(ct_is_zero_l(tail_is_not_one | head_is_nz))
+}
+
+
