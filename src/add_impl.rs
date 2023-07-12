@@ -355,19 +355,19 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
 #[test]
 fn test_mp_ct_sub_cond_be_be() {
     use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_add_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+    test_mp_ct_sub_cond_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_ct_sub_cond_le_le() {
     use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_add_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+    test_mp_ct_sub_cond_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_ct_sub_cond_ne_ne() {
     use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_add_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+    test_mp_ct_sub_cond_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
 }
 
 pub fn mp_ct_sub_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
