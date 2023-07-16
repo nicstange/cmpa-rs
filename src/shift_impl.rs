@@ -103,16 +103,12 @@ pub fn mp_lshift_mp<T0: MPIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 }
 
 #[cfg(test)]
-fn test_fill_limb_with_seq(first: u8, offset_len: usize) -> LimbType {
-    if offset_len >= LIMB_BYTES {
-        return 0;
-    }
+fn test_fill_limb_with_seq(first: u8) -> LimbType {
     let mut l: LimbType = 0;
-    for i in 0..(LIMB_BYTES - offset_len) as u8 {
+    for i in 0..LIMB_BYTES as u8 {
         l <<= 8;
-        l |= ((LIMB_BYTES - offset_len) as u8 - i - 1 + first) as LimbType;
+        l |= (LIMB_BYTES as u8 - i - 1 + first) as LimbType;
     }
-    l <<= 8 * offset_len;
     l
 }
 
@@ -120,74 +116,82 @@ fn test_fill_limb_with_seq(first: u8, offset_len: usize) -> LimbType {
 fn test_mp_lshift_mp_common<T0: MPIntMutByteSlice>(op0_len: usize) {
     use super::limbs_buffer::{MPIntByteSliceCommon, MPIntByteSliceCommonPriv};
 
+    fn test_fill_limb_with_seq_lshifted(limb_index: usize, lshift_distance: usize) -> LimbType {
+        let lshift_len = (lshift_distance + 7) / 8;
+        let lshift_nlimbs = mp_ct_nlimbs(lshift_len);
+        let dst_high_lshift = lshift_distance % LIMB_BITS as usize;
+        let low = if lshift_nlimbs <= limb_index {
+            let src_low = test_fill_limb_with_seq(((limb_index - lshift_nlimbs) * LIMB_BYTES) as u8 + 1);
+            if dst_high_lshift != 0 {
+                src_low >> (LIMB_BITS as usize - dst_high_lshift)
+            } else {
+                src_low
+            }
+        } else {
+            0
+        };
+
+
+        let high = if dst_high_lshift != 0 && limb_index + 1 >= lshift_nlimbs {
+            let src_high = test_fill_limb_with_seq(((limb_index + 1 - lshift_nlimbs) * LIMB_BYTES) as u8 + 1);
+            let src_high = src_high & ((1 << (LIMB_BITS as usize - dst_high_lshift)) - 1);
+            src_high << dst_high_lshift
+        } else {
+            0
+        };
+
+        high | low
+    }
+
     let op0_nlimbs = mp_ct_nlimbs(op0_len);
     for i in 0..op0_nlimbs + 3 {
-        for j in 0..LIMB_BYTES {
+        for j in 0..LIMB_BITS as usize {
             let mut op0 = vec![0u8; op0_len];
             let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
             for k in 0..op0.nlimbs() {
-                let val = test_fill_limb_with_seq(1 + (k * LIMB_BYTES) as u8, 0);
+                let val = test_fill_limb_with_seq(1 + (k * LIMB_BYTES) as u8);
                 if k != op0.nlimbs() - 1 {
                     op0.store_l_full(k, val);
                 } else {
                     op0.store_l(k, val & op0.partial_high_mask());
                 }
             }
-            let shift_len = i * LIMB_BYTES + j;
-            let shifted_out = mp_lshift_mp(&mut op0, 8 * shift_len);
+            let shift_distance = i * LIMB_BITS as usize + j;
+            let shifted_out = mp_lshift_mp(&mut op0, shift_distance);
 
-            for k in 0..i.min(op0.nlimbs()) {
-                assert_eq!(op0.load_l(k), 0);
-            }
-
-            if i < op0.nlimbs() {
-                let expected_val = test_fill_limb_with_seq(1, j);
-                if i != op0.nlimbs() - 1 {
-                    assert_eq!(op0.load_l_full(i), expected_val);
+            for k in 0..op0.nlimbs() {
+                let expected_val = test_fill_limb_with_seq_lshifted(k, shift_distance);
+                let expected_val = if k + 1 != op0.nlimbs() {
+                    expected_val
                 } else {
-                    assert_eq!(op0.load_l(i), expected_val & op0.partial_high_mask());
-                }
+                    expected_val & op0.partial_high_mask()
+                };
+                assert_eq!(op0.load_l(k), expected_val);
             }
 
-            for k in i + 1..op0.nlimbs() {
-                let expected_val = test_fill_limb_with_seq(
-                    (k * LIMB_BYTES - shift_len + 1) as u8,
-                    0
-                );
-
-                if k != op0.nlimbs() - 1 {
-                    assert_eq!(op0.load_l_full(k), expected_val);
+            let op0_high_nbytes = op0.len() % LIMB_BYTES;
+            let expected_shifted_out = if  op0_high_nbytes != 0 {
+                let src_low = if !op0.is_empty() {
+                    test_fill_limb_with_seq_lshifted(op0.nlimbs() - 1, shift_distance)
                 } else {
-                    assert_eq!(op0.load_l(k), expected_val & op0.partial_high_mask());
-                }
-            }
+                    0
+                };
+                let src_high = test_fill_limb_with_seq_lshifted(op0.nlimbs(), shift_distance);
 
-            let (shifted_out_mask, shifted_out_first, shifted_out_offset) = if shift_len < LIMB_BYTES {
-                (
-                    ((1 as LimbType) << 8 * shift_len) - 1,
-                    (op0.len() - shift_len + 1) as u8,
-                    0
-                )
-            } else if shift_len <= op0.len() {
-                (
-                    !0,
-                    (op0.len() - shift_len + 1) as u8,
-                    0
-                )
+                let src_low_rshift = 8 * op0_high_nbytes;
+                let low = src_low >> src_low_rshift;
+                let dst_high_lshift = LIMB_BITS as usize - src_low_rshift;
+                let high = src_high << dst_high_lshift;
+                high | low
             } else {
-                (
-                    !0,
-                    1,
-                    shift_len - op0.len(),
-                )
+                test_fill_limb_with_seq_lshifted(op0.nlimbs(), shift_distance)
             };
-            assert_eq!(
-                shifted_out,
-                test_fill_limb_with_seq(
-                    shifted_out_first,
-                    shifted_out_offset
-                ) & shifted_out_mask
-            );
+            let expected_shifted_out = if shift_distance < LIMB_BITS as usize {
+                expected_shifted_out & ((1 << shift_distance) - 1)
+            } else {
+                expected_shifted_out
+            };
+            assert_eq!(shifted_out, expected_shifted_out)
         }
     }
 }
@@ -344,76 +348,70 @@ pub fn mp_rshift_mp<T0: MPIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 fn test_mp_rshift_mp_common<T0: MPIntMutByteSlice>(op0_len: usize) {
     use super::limbs_buffer::{MPIntByteSliceCommon, MPIntByteSliceCommonPriv};
 
+    // limb_index is offset by one: an index of zero is used
+    // for specifiying the virtual limb rshifted into.
+    fn test_fill_limb_with_seq_rshifted(limb_index: usize, rshift_distance: usize, op_len: usize) -> LimbType {
+        let op_nlimbs = mp_ct_nlimbs(op_len);
+        let op_partial_high_mask = if op_len % LIMB_BYTES != 0 {
+            (1 << 8 * (op_len % LIMB_BYTES)) - 1
+        } else {
+            !0
+        };
+
+        let rshift_len = rshift_distance / 8;
+        let rshift_nlimbs = rshift_len / LIMB_BYTES;
+        let src_low_rshift = rshift_distance % LIMB_BITS as usize;
+        let low = if rshift_nlimbs == 0 && limb_index == 0 {
+            0
+        } else if limb_index + rshift_nlimbs <= op_nlimbs {
+            let src_low = test_fill_limb_with_seq(((limb_index + rshift_nlimbs - 1) * LIMB_BYTES) as u8 + 1);
+            let src_low = if limb_index + rshift_nlimbs == op_nlimbs {
+                src_low & op_partial_high_mask
+            } else {
+                src_low
+            };
+            src_low >> src_low_rshift
+        } else {
+            0
+        };
+
+        let high = if src_low_rshift != 0 && limb_index + rshift_nlimbs + 1 <= op_nlimbs {
+            let src_high = test_fill_limb_with_seq(((limb_index + rshift_nlimbs) * LIMB_BYTES) as u8 + 1);
+            let src_high = if limb_index + rshift_nlimbs + 1 == op_nlimbs {
+                src_high & op_partial_high_mask
+            } else {
+                src_high
+            };
+            src_high << (LIMB_BITS as usize - src_low_rshift)
+        } else {
+            0
+        };
+
+        high | low
+    }
 
     let op0_nlimbs = mp_ct_nlimbs(op0_len);
     for i in 0..op0_nlimbs + 3 {
-        for j in 0..LIMB_BYTES {
+        for j in 0..LIMB_BITS as usize {
             let mut op0 = vec![0u8; op0_len];
             let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
             for k in 0..op0.nlimbs() {
-                let val = test_fill_limb_with_seq(1 + (k * LIMB_BYTES) as u8, 0);
+                let val = test_fill_limb_with_seq(1 + (k * LIMB_BYTES) as u8);
                 if k != op0.nlimbs() - 1 {
                     op0.store_l_full(k, val);
                 } else {
                     op0.store_l(k, val & op0.partial_high_mask());
                 }
             }
-            let shift_len = i * LIMB_BYTES + j;
-            let shifted_out = mp_rshift_mp(&mut op0, 8 * shift_len);
+            let shift_distance = i * LIMB_BITS as usize + j;
+            let shifted_out = mp_rshift_mp(&mut op0, shift_distance);
 
-            let shifted_zeroes_begin = op0.len().max(shift_len) - shift_len;
-            for k in mp_ct_nlimbs(shifted_zeroes_begin)..op0.nlimbs() {
-                assert_eq!(op0.load_l(k), 0);
-            }
-
-            if shifted_zeroes_begin % LIMB_BYTES != 0  {
-                let k = shifted_zeroes_begin / LIMB_BYTES;
-                let expected_val = test_fill_limb_with_seq(
-                    (k * LIMB_BYTES + shift_len + 1) as u8,
-                    0
-                );
-                let high_zeroes = LIMB_BYTES - shifted_zeroes_begin % LIMB_BYTES;
-                let expected_val = expected_val << 8 * high_zeroes >> 8 * high_zeroes;
+            for k in 0..op0.nlimbs() {
+                let expected_val = test_fill_limb_with_seq_rshifted(k + 1, shift_distance, op0_len);
                 assert_eq!(op0.load_l(k), expected_val);
             }
 
-            for k in 0..shifted_zeroes_begin / LIMB_BYTES {
-                let expected_val = test_fill_limb_with_seq(
-                    (k * LIMB_BYTES + shift_len + 1) as u8,
-                    0
-                );
-                assert_eq!(op0.load_l(k), expected_val);
-            }
-
-            let (shifted_out_mask, shifted_out_first, shifted_out_offset) = if shift_len < LIMB_BYTES {
-                (
-                    !0,
-                    1,
-                    LIMB_BYTES - shift_len
-                )
-            } else if shift_len <= op0.len() {
-                (
-                    !0,
-                    (shift_len - LIMB_BYTES + 1) as u8,
-                    0
-                )
-            } else if shift_len < op0.len() + LIMB_BYTES {
-                (
-                    ((1 as LimbType) << 8 * (op0.len() + LIMB_BYTES - shift_len)) - 1,
-                    (shift_len - LIMB_BYTES + 1) as u8,
-                    0
-                )
-            } else {
-                (0, 0, 0)
-            };
-
-            assert_eq!(
-                shifted_out,
-                test_fill_limb_with_seq(
-                    shifted_out_first,
-                    shifted_out_offset
-                ) & shifted_out_mask
-            );
+            assert_eq!(shifted_out, test_fill_limb_with_seq_rshifted(0, shift_distance, op0_len));
         }
     }
 }
