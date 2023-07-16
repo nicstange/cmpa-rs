@@ -831,7 +831,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     }
 
     if virtual_u_in_len < v_len {
-        mp_lshift_mp(u, u_lshift_len);
+        mp_lshift_mp(u, 8 * u_lshift_len);
         if let Some(q_out) = q_out {
             q_out.zeroize_bytes_above(0);
         }
@@ -877,7 +877,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     // - The most significant shadow limb in u_head_high_shadow[2] will store the overflow, if any,
     //   the scaling.
     let mut u_head_high_shadow: [LimbType; 3] = [0; 3];
-    u_head_high_shadow[0] = mp_lshift_mp(u, u_lshift_head_len);
+    u_head_high_shadow[0] = mp_lshift_mp(u, 8 * u_lshift_head_len);
     // The (original) u length might not be aligned to the limb size. Move the high limb into the
     // u_head_high_shadow[0] shadow for the duration of the computation. Make sure the limb shifted
     // out on the left from u just above moves to the left in u_head_high_shadow[] accordingly.
@@ -1164,7 +1164,7 @@ fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, Q
             assert_eq!(u_val & (((1 as LimbType) << (8 * (u_lshift_len % LIMB_BYTES))) - 1), 0);
         }
         assert_eq!(result.load_l(mp_ct_nlimbs(virtual_u_len)), 0);
-        mp_rshift_mp(&mut result, u_lshift_len);
+        mp_rshift_mp(&mut result, 8 * u_lshift_len);
         assert_eq!(mp_ct_eq_mp_mp(u, &result).unwrap(), 1);
     }
 
