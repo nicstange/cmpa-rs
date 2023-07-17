@@ -7,7 +7,8 @@
 
 use core::{self, convert, fmt, marker};
 
-use super::limb::{LimbType, LIMB_BYTES, ct_find_last_set_byte_l};
+use super::limb::{LimbType, LIMB_BYTES, LIMB_BITS, ct_find_last_set_byte_l};
+use super::usize_ct_cmp::ct_eq_usize_usize;
 
 /// Determine the number of [`LimbType`] limbs stored in a multiprecision integer big-endian byte
 /// buffer.
@@ -334,9 +335,9 @@ fn test_mp_be_store_l() {
     assert_eq!(mp_be_load_l(&limbs, 1), 0x0100);
 }
 
-fn mp_be_zeroize_bytes_above(limbs: &mut [u8], nbytes: usize) {
+fn mp_be_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
     let limbs_len = limbs.len();
-    limbs[..limbs_len - nbytes].fill(0);
+    limbs[..limbs_len - begin].fill(0);
 }
 
 #[test]
@@ -363,9 +364,9 @@ fn test_mp_be_zeroize_bytes_above() {
     assert_eq!(mp_be_load_l(&mut limbs, 1), !0);
 }
 
-fn mp_be_zeroize_bytes_below(limbs: &mut [u8], nbytes: usize) {
+fn mp_be_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
     let limbs_len = limbs.len();
-    limbs[limbs_len - nbytes..].fill(0);
+    limbs[limbs_len - end..].fill(0);
 }
 
 #[test]
@@ -688,8 +689,8 @@ fn test_mp_le_store_l() {
     assert_eq!(mp_le_load_l(&limbs, 1), 0x0100);
 }
 
-fn mp_le_zeroize_bytes_above(limbs: &mut [u8], nbytes: usize) {
-    limbs[nbytes..].fill(0);
+fn mp_le_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
+    limbs[begin..].fill(0);
 }
 
 #[test]
@@ -716,8 +717,8 @@ fn test_mp_le_zeroize_bytes_above() {
     assert_eq!(mp_le_load_l(&mut limbs, 1), !0);
 }
 
-fn mp_le_zeroize_bytes_below(limbs: &mut [u8], nbytes: usize) {
-    limbs[..nbytes].fill(0);
+fn mp_le_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
+    limbs[..end].fill(0);
 }
 
 #[test]
@@ -820,10 +821,10 @@ fn test_mp_ne_store_l() {
     assert_eq!(mp_ne_load_l(&limbs, 1), 1);
 }
 
-fn mp_ne_zeroize_bytes_above(limbs: &mut [u8], nbytes: usize) {
-    let begin_limb = nbytes / LIMB_BYTES;
+fn mp_ne_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
+    let begin_limb = begin / LIMB_BYTES;
     let mut begin_aligned = begin_limb * LIMB_BYTES;
-    let begin_in_limb = nbytes - begin_aligned;
+    let begin_in_limb = begin - begin_aligned;
     if begin_in_limb != 0 {
         let mut l = mp_ne_load_l(limbs, begin_limb);
         l &= ((1 as LimbType) << 8 * begin_in_limb) - 1;
@@ -857,10 +858,10 @@ fn test_mp_ne_zeroize_bytes_above() {
     assert_eq!(mp_ne_load_l(&mut limbs, 1), !0);
 }
 
-fn mp_ne_zeroize_bytes_below(limbs: &mut [u8], nbytes: usize) {
-    let end_limb = mp_ct_nlimbs(nbytes);
+fn mp_ne_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
+    let end_limb = mp_ct_nlimbs(end);
     let mut end_aligned = end_limb * LIMB_BYTES;
-    let retain_in_limb = end_aligned - nbytes;
+    let retain_in_limb = end_aligned - end;
     if retain_in_limb != 0 {
         let end_in_limb = LIMB_BYTES - retain_in_limb;
         let mut l = mp_ne_load_l(limbs, end_limb - 1);
@@ -986,8 +987,8 @@ pub trait MPIntMutByteSlice: MPIntMutByteSlicePriv {
 
     fn store_l_full(&mut self, i: usize, value: LimbType);
     fn store_l(&mut self, i: usize, value: LimbType);
-    fn zeroize_bytes_above(&mut self, nbytes: usize);
-    fn zeroize_bytes_below(&mut self, nbytes: usize);
+    fn zeroize_bytes_above(&mut self, begin: usize);
+    fn zeroize_bytes_below(&mut self, end: usize);
 
     fn copy_from<S: MPIntByteSliceCommon>(&'_ mut self, src: &S) {
         let src_nlimbs = src.nlimbs();
@@ -1129,12 +1130,12 @@ impl<'a> MPIntMutByteSlice for MPBigEndianMutByteSlice<'a> {
         mp_be_store_l(self.bytes, i, value)
     }
 
-    fn zeroize_bytes_above(&mut self, nbytes: usize) {
-        mp_be_zeroize_bytes_above(self.bytes, nbytes)
+    fn zeroize_bytes_above(&mut self, begin: usize) {
+        mp_be_zeroize_bytes_above(self.bytes, begin)
     }
 
-    fn zeroize_bytes_below(&mut self, nbytes: usize) {
-        mp_be_zeroize_bytes_below(self.bytes, nbytes)
+    fn zeroize_bytes_below(&mut self, end: usize) {
+        mp_be_zeroize_bytes_below(self.bytes, end)
     }
 }
 
@@ -1256,12 +1257,12 @@ impl<'a> MPIntMutByteSlice for MPLittleEndianMutByteSlice<'a> {
         mp_le_store_l(self.bytes, i, value)
     }
 
-    fn zeroize_bytes_above(&mut self, nbytes: usize) {
-        mp_le_zeroize_bytes_above(self.bytes, nbytes)
+    fn zeroize_bytes_above(&mut self, begin: usize) {
+        mp_le_zeroize_bytes_above(self.bytes, begin)
     }
 
-    fn zeroize_bytes_below(&mut self, nbytes: usize) {
-        mp_le_zeroize_bytes_below(self.bytes, nbytes)
+    fn zeroize_bytes_below(&mut self, end: usize) {
+        mp_le_zeroize_bytes_below(self.bytes, end)
     }
 }
 
@@ -1398,12 +1399,12 @@ impl<'a> MPIntMutByteSlice for MPNativeEndianMutByteSlice<'a> {
         mp_ne_store_l(self.bytes, i, value)
     }
 
-    fn zeroize_bytes_above(&mut self, nbytes: usize) {
-        mp_ne_zeroize_bytes_above(self.bytes, nbytes)
+    fn zeroize_bytes_above(&mut self, begin: usize) {
+        mp_ne_zeroize_bytes_above(self.bytes, begin)
     }
 
-    fn zeroize_bytes_below(&mut self, nbytes: usize) {
-        mp_ne_zeroize_bytes_below(self.bytes, nbytes)
+    fn zeroize_bytes_below(&mut self, end: usize) {
+        mp_ne_zeroize_bytes_below(self.bytes, end)
     }
 }
 
@@ -1529,6 +1530,34 @@ fn test_mp_find_last_set_byte_le() {
 #[test]
 fn test_mp_find_last_set_byte_ne() {
     test_mp_find_last_set_byte_mp_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
+}
+
+pub fn mp_ct_zeroize_bits_above<T0: MPIntMutByteSlice>(op0: &mut T0, begin: usize) {
+    let first_limb_index = begin / LIMB_BITS  as usize;
+    let first_limb_retain_nbits = begin % LIMB_BITS as usize;
+    let first_limb_mask = (1 << first_limb_retain_nbits) - 1;
+    let mut next_mask = !0;
+    for i in 0..op0.nlimbs() {
+        let is_first_limb = ct_eq_usize_usize(i, first_limb_index);
+        let mask = is_first_limb.select(next_mask, first_limb_mask);
+        next_mask = is_first_limb.select(next_mask, 0);
+        let val = op0.load_l(i);
+        op0.store_l(i, val & mask)
+    }
+}
+
+pub fn mp_ct_zeroize_bits_below<T0: MPIntMutByteSlice>(op0: &mut T0, end: usize) {
+    let last_limb_index = end / LIMB_BITS  as usize;
+    let last_limb_clear_nbits = end % LIMB_BITS as usize;
+    let last_limb_mask = !((1 << last_limb_clear_nbits) - 1);
+    let mut next_mask = 0;
+    for i in 0..op0.nlimbs() {
+        let is_last_limb = ct_eq_usize_usize(i, last_limb_index);
+        let mask = is_last_limb.select(next_mask, last_limb_mask);
+        next_mask = is_last_limb.select(next_mask, !0);
+        let val = op0.load_l(i);
+        op0.store_l(i, val & mask)
+    }
 }
 
 /// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
