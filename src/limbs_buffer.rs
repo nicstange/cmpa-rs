@@ -337,6 +337,9 @@ fn test_mp_be_store_l() {
 
 fn mp_be_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
     let limbs_len = limbs.len();
+    if limbs_len <= begin {
+        return;
+    }
     limbs[..limbs_len - begin].fill(0);
 }
 
@@ -366,6 +369,7 @@ fn test_mp_be_zeroize_bytes_above() {
 
 fn mp_be_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
     let limbs_len = limbs.len();
+    let end = end.min(limbs_len);
     limbs[limbs_len - end..].fill(0);
 }
 
@@ -690,6 +694,9 @@ fn test_mp_le_store_l() {
 }
 
 fn mp_le_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
+    if limbs.len() <= begin {
+        return;
+    }
     limbs[begin..].fill(0);
 }
 
@@ -718,6 +725,7 @@ fn test_mp_le_zeroize_bytes_above() {
 }
 
 fn mp_le_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
+    let end = end.min(limbs.len());
     limbs[..end].fill(0);
 }
 
@@ -822,6 +830,9 @@ fn test_mp_ne_store_l() {
 }
 
 fn mp_ne_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
+    if begin >= limbs.len() {
+        return;
+    }
     let begin_limb = begin / LIMB_BYTES;
     let mut begin_aligned = begin_limb * LIMB_BYTES;
     let begin_in_limb = begin - begin_aligned;
@@ -859,6 +870,7 @@ fn test_mp_ne_zeroize_bytes_above() {
 }
 
 fn mp_ne_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
+    let end = end.min(limbs.len());
     let end_limb = mp_ct_nlimbs(end);
     let mut end_aligned = end_limb * LIMB_BYTES;
     let retain_in_limb = end_aligned - end;
@@ -1546,6 +1558,211 @@ pub fn mp_ct_zeroize_bits_above<T0: MPIntMutByteSlice>(op0: &mut T0, begin: usiz
     }
 }
 
+#[cfg(test)]
+fn test_mp_ct_zeroize_bits_above_common<T0: MPIntMutByteSlice>(op0_len: usize) {
+    fn fill_with_ones<T0: MPIntMutByteSlice>(op0: &mut T0) {
+        for i in 0..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                op0.store_l_full(i, !0);
+            } else {
+                op0.store_l(i, op0.partial_high_mask());
+            }
+        }
+    }
+
+    let mut op0 = vec![0u8; op0_len];
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
+    fill_with_ones(&mut op0);
+    for begin in [8 * op0_len, 8 * op0_len + 1, 8 * op0.nlimbs() * LIMB_BYTES, 8 * op0.nlimbs() * LIMB_BYTES + 1] {
+        mp_ct_zeroize_bits_above(&mut op0, begin);
+        for i in 0..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                assert_eq!(op0.load_l_full(i), !0);
+            } else {
+                assert_eq!(op0.load_l(i), op0.partial_high_mask());
+            }
+        }
+    }
+
+    for j in 0..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize;
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_ct_zeroize_bits_above(&mut op0, begin);
+        for i in 0..j {
+            assert_eq!(op0.load_l_full(i), !0);
+        }
+
+        for i in j..op0.nlimbs() {
+            assert_eq!(op0.load_l(i), 0);
+        }
+    }
+
+    for j in 1..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize - 1;
+        let begin = begin.min(8 * op0_len  - 1);
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_ct_zeroize_bits_above(&mut op0, begin);
+        for i in 0..j - 1 {
+            assert_eq!(op0.load_l_full(i), !0);
+        }
+
+        let expected = ((1 as LimbType) << begin % LIMB_BITS as usize) - 1;
+        assert_eq!(op0.load_l(j - 1), expected);
+
+        for i in j..op0.nlimbs() {
+            assert_eq!(op0.load_l(i), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+fn test_mp_ct_zeroize_bits_above_with_aligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_ct_zeroize_bits_above_common::<T0>(0);
+    test_mp_ct_zeroize_bits_above_common::<T0>(LIMB_BYTES);
+    test_mp_ct_zeroize_bits_above_common::<T0>(2 * LIMB_BYTES);
+    test_mp_ct_zeroize_bits_above_common::<T0>(3 * LIMB_BYTES);
+}
+
+#[cfg(test)]
+fn test_mp_ct_zeroize_bits_above_with_unaligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_ct_zeroize_bits_above_common::<T0>(LIMB_BYTES - 1);
+    test_mp_ct_zeroize_bits_above_common::<T0>(2 * LIMB_BYTES - 1);
+    test_mp_ct_zeroize_bits_above_common::<T0>(3 * LIMB_BYTES - 1);
+}
+
+#[test]
+fn test_mp_ct_zeroize_bits_above_be() {
+    test_mp_ct_zeroize_bits_above_with_aligned_lengths::<MPBigEndianMutByteSlice>();
+    test_mp_ct_zeroize_bits_above_with_unaligned_lengths::<MPBigEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_ct_zeroize_bits_above_le() {
+    test_mp_ct_zeroize_bits_above_with_aligned_lengths::<MPLittleEndianMutByteSlice>();
+    test_mp_ct_zeroize_bits_above_with_unaligned_lengths::<MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_ct_zeroize_bits_above_ne() {
+    test_mp_ct_zeroize_bits_above_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
+}
+
+pub fn mp_zeroize_bits_above<T0: MPIntMutByteSlice>(op0: &mut T0, begin: usize) {
+    let first_limb_index = begin / LIMB_BITS  as usize;
+    if op0.nlimbs() <= first_limb_index {
+        return;
+    }
+    let first_limb_retain_nbits = begin % LIMB_BITS as usize;
+    let first_limb_mask = (1 << first_limb_retain_nbits) - 1;
+    op0.store_l(
+        first_limb_index,
+        op0.load_l(first_limb_index) & first_limb_mask
+    );
+
+    op0.zeroize_bytes_above((begin + LIMB_BITS as usize - 1) / LIMB_BITS as usize * LIMB_BYTES);
+}
+
+#[cfg(test)]
+fn test_mp_zeroize_bits_above_common<T0: MPIntMutByteSlice>(op0_len: usize) {
+    fn fill_with_ones<T0: MPIntMutByteSlice>(op0: &mut T0) {
+        for i in 0..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                op0.store_l_full(i, !0);
+            } else {
+                op0.store_l(i, op0.partial_high_mask());
+            }
+        }
+    }
+
+    let mut op0 = vec![0u8; op0_len];
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
+    fill_with_ones(&mut op0);
+    for begin in [8 * op0_len, 8 * op0_len + 1, 8 * op0.nlimbs() * LIMB_BYTES, 8 * op0.nlimbs() * LIMB_BYTES + 1] {
+        mp_zeroize_bits_above(&mut op0, begin);
+        for i in 0..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                assert_eq!(op0.load_l_full(i), !0);
+            } else {
+                assert_eq!(op0.load_l(i), op0.partial_high_mask());
+            }
+        }
+    }
+
+    for j in 0..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize;
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_zeroize_bits_above(&mut op0, begin);
+        for i in 0..j {
+            assert_eq!(op0.load_l_full(i), !0);
+        }
+
+        for i in j..op0.nlimbs() {
+            assert_eq!(op0.load_l(i), 0);
+        }
+    }
+
+    for j in 1..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize - 1;
+        let begin = begin.min(8 * op0_len  - 1);
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_zeroize_bits_above(&mut op0, begin);
+        for i in 0..j - 1 {
+            assert_eq!(op0.load_l_full(i), !0);
+        }
+
+        let expected = ((1 as LimbType) << begin % LIMB_BITS as usize) - 1;
+        assert_eq!(op0.load_l(j - 1), expected);
+
+        for i in j..op0.nlimbs() {
+            assert_eq!(op0.load_l(i), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+fn test_mp_zeroize_bits_above_with_aligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_zeroize_bits_above_common::<T0>(0);
+    test_mp_zeroize_bits_above_common::<T0>(LIMB_BYTES);
+    test_mp_zeroize_bits_above_common::<T0>(2 * LIMB_BYTES);
+    test_mp_zeroize_bits_above_common::<T0>(3 * LIMB_BYTES);
+}
+
+#[cfg(test)]
+fn test_mp_zeroize_bits_above_with_unaligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_zeroize_bits_above_common::<T0>(LIMB_BYTES - 1);
+    test_mp_zeroize_bits_above_common::<T0>(2 * LIMB_BYTES - 1);
+    test_mp_zeroize_bits_above_common::<T0>(3 * LIMB_BYTES - 1);
+}
+
+#[test]
+fn test_mp_zeroize_bits_above_be() {
+    test_mp_zeroize_bits_above_with_aligned_lengths::<MPBigEndianMutByteSlice>();
+    test_mp_zeroize_bits_above_with_unaligned_lengths::<MPBigEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_zeroize_bits_above_le() {
+    test_mp_zeroize_bits_above_with_aligned_lengths::<MPLittleEndianMutByteSlice>();
+    test_mp_zeroize_bits_above_with_unaligned_lengths::<MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_zeroize_bits_above_ne() {
+    test_mp_zeroize_bits_above_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
+}
+
 pub fn mp_ct_zeroize_bits_below<T0: MPIntMutByteSlice>(op0: &mut T0, end: usize) {
     let last_limb_index = end / LIMB_BITS  as usize;
     let last_limb_clear_nbits = end % LIMB_BITS as usize;
@@ -1558,6 +1775,222 @@ pub fn mp_ct_zeroize_bits_below<T0: MPIntMutByteSlice>(op0: &mut T0, end: usize)
         let val = op0.load_l(i);
         op0.store_l(i, val & mask)
     }
+}
+
+#[cfg(test)]
+fn test_mp_ct_zeroize_bits_below_common<T0: MPIntMutByteSlice>(op0_len: usize) {
+    fn fill_with_ones<T0: MPIntMutByteSlice>(op0: &mut T0) {
+        for i in 0..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                op0.store_l_full(i, !0);
+            } else {
+                op0.store_l(i, op0.partial_high_mask());
+            }
+        }
+    }
+
+    let mut op0 = vec![0u8; op0_len];
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
+    fill_with_ones(&mut op0);
+    mp_ct_zeroize_bits_below(&mut op0, 0);
+    for i in 0..op0.nlimbs() {
+        if i + 1 != op0.nlimbs() {
+            assert_eq!(op0.load_l_full(i), !0);
+        } else {
+            assert_eq!(op0.load_l(i), op0.partial_high_mask());
+        }
+    }
+
+    for j in 0..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize;
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_ct_zeroize_bits_below(&mut op0, begin);
+        for i in 0..j {
+            assert_eq!(op0.load_l_full(i), 0);
+        }
+
+        for i in j..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                assert_eq!(op0.load_l(i), !0);
+            } else {
+                assert_eq!(op0.load_l(i), op0.partial_high_mask());
+            }
+        }
+    }
+
+    for j in 1..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize - 1;
+        let begin = begin.min(8 * op0_len  - 1);
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_ct_zeroize_bits_below(&mut op0, begin);
+        for i in 0..j - 1 {
+            assert_eq!(op0.load_l_full(i), 0);
+        }
+
+        let expected = !(((1 as LimbType) << begin % LIMB_BITS as usize) - 1);
+        assert_eq!(op0.load_l(j - 1), expected);
+
+        for i in j..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                assert_eq!(op0.load_l(i), !0);
+            } else {
+                assert_eq!(op0.load_l(i), op0.partial_high_mask());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn test_mp_ct_zeroize_bits_below_with_aligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_ct_zeroize_bits_below_common::<T0>(0);
+    test_mp_ct_zeroize_bits_below_common::<T0>(LIMB_BYTES);
+    test_mp_ct_zeroize_bits_below_common::<T0>(2 * LIMB_BYTES);
+    test_mp_ct_zeroize_bits_below_common::<T0>(3 * LIMB_BYTES);
+}
+
+#[cfg(test)]
+fn test_mp_ct_zeroize_bits_below_with_unaligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_ct_zeroize_bits_below_common::<T0>(LIMB_BYTES - 1);
+    test_mp_ct_zeroize_bits_below_common::<T0>(2 * LIMB_BYTES - 1);
+    test_mp_ct_zeroize_bits_below_common::<T0>(3 * LIMB_BYTES - 1);
+}
+
+#[test]
+fn test_mp_ct_zeroize_bits_below_be() {
+    test_mp_ct_zeroize_bits_below_with_aligned_lengths::<MPBigEndianMutByteSlice>();
+    test_mp_ct_zeroize_bits_below_with_unaligned_lengths::<MPBigEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_ct_zeroize_bits_below_le() {
+    test_mp_ct_zeroize_bits_below_with_aligned_lengths::<MPLittleEndianMutByteSlice>();
+    test_mp_ct_zeroize_bits_below_with_unaligned_lengths::<MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_ct_zeroize_bits_below_ne() {
+    test_mp_ct_zeroize_bits_below_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
+}
+
+pub fn mp_zeroize_bits_below<T0: MPIntMutByteSlice>(op0: &mut T0, end: usize) {
+    let last_limb_index = end / LIMB_BITS  as usize;
+    op0.zeroize_bytes_below(last_limb_index * LIMB_BYTES);
+    if last_limb_index >= op0.nlimbs() {
+        return;
+    }
+    let last_limb_clear_nbits = end % LIMB_BITS as usize;
+    let last_limb_mask = !((1 << last_limb_clear_nbits) - 1);
+    op0.store_l(
+        last_limb_index,
+        op0.load_l(last_limb_index) & last_limb_mask
+    );
+}
+
+#[cfg(test)]
+fn test_mp_zeroize_bits_below_common<T0: MPIntMutByteSlice>(op0_len: usize) {
+    fn fill_with_ones<T0: MPIntMutByteSlice>(op0: &mut T0) {
+        for i in 0..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                op0.store_l_full(i, !0);
+            } else {
+                op0.store_l(i, op0.partial_high_mask());
+            }
+        }
+    }
+
+    let mut op0 = vec![0u8; op0_len];
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
+    fill_with_ones(&mut op0);
+    mp_zeroize_bits_below(&mut op0, 0);
+    for i in 0..op0.nlimbs() {
+        if i + 1 != op0.nlimbs() {
+            assert_eq!(op0.load_l_full(i), !0);
+        } else {
+            assert_eq!(op0.load_l(i), op0.partial_high_mask());
+        }
+    }
+
+    for j in 0..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize;
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_zeroize_bits_below(&mut op0, begin);
+        for i in 0..j {
+            assert_eq!(op0.load_l_full(i), 0);
+        }
+
+        for i in j..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                assert_eq!(op0.load_l(i), !0);
+            } else {
+                assert_eq!(op0.load_l(i), op0.partial_high_mask());
+            }
+        }
+    }
+
+    for j in 1..mp_ct_nlimbs(op0_len) {
+        let begin = j * LIMB_BITS as usize - 1;
+        let begin = begin.min(8 * op0_len  - 1);
+
+        let mut op0 = vec![0u8; op0_len];
+        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+        fill_with_ones(&mut op0);
+        mp_zeroize_bits_below(&mut op0, begin);
+        for i in 0..j - 1 {
+            assert_eq!(op0.load_l_full(i), 0);
+        }
+
+        let expected = !(((1 as LimbType) << begin % LIMB_BITS as usize) - 1);
+        assert_eq!(op0.load_l(j - 1), expected);
+
+        for i in j..op0.nlimbs() {
+            if i + 1 != op0.nlimbs() {
+                assert_eq!(op0.load_l(i), !0);
+            } else {
+                assert_eq!(op0.load_l(i), op0.partial_high_mask());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn test_mp_zeroize_bits_below_with_aligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_zeroize_bits_below_common::<T0>(0);
+    test_mp_zeroize_bits_below_common::<T0>(LIMB_BYTES);
+    test_mp_zeroize_bits_below_common::<T0>(2 * LIMB_BYTES);
+    test_mp_zeroize_bits_below_common::<T0>(3 * LIMB_BYTES);
+}
+
+#[cfg(test)]
+fn test_mp_zeroize_bits_below_with_unaligned_lengths<T0: MPIntMutByteSlice>() {
+    test_mp_zeroize_bits_below_common::<T0>(LIMB_BYTES - 1);
+    test_mp_zeroize_bits_below_common::<T0>(2 * LIMB_BYTES - 1);
+    test_mp_zeroize_bits_below_common::<T0>(3 * LIMB_BYTES - 1);
+}
+
+#[test]
+fn test_mp_zeroize_bits_below_be() {
+    test_mp_zeroize_bits_below_with_aligned_lengths::<MPBigEndianMutByteSlice>();
+    test_mp_zeroize_bits_below_with_unaligned_lengths::<MPBigEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_zeroize_bits_below_le() {
+    test_mp_zeroize_bits_below_with_aligned_lengths::<MPLittleEndianMutByteSlice>();
+    test_mp_zeroize_bits_below_with_unaligned_lengths::<MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_zeroize_bits_below_ne() {
+    test_mp_zeroize_bits_below_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
 }
 
 /// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
