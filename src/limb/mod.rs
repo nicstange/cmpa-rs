@@ -37,7 +37,7 @@ pub const LIMB_BYTES: usize = mem::size_of::<LimbType>();
 /// The bit width of half a [`LimbType`], i.e. a "halfword".
 const HALF_LIMB_BITS: u32 = LIMB_BITS / 2;
 /// The size of a half a [`LimbType`], i.e. a "halfword", in bytes.
-const HALF_LIMB_MASK: LimbType = (1 << HALF_LIMB_BITS) - 1;
+const HALF_LIMB_MASK: LimbType = ct_lsb_mask_l(HALF_LIMB_BITS);
 
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
@@ -168,6 +168,31 @@ pub fn ct_ge_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     ct_le_l_l(v1, v0)
 }
 
+pub const fn ct_lsb_mask_l(nbits: u32) -> LimbType {
+    debug_assert!(nbits <= LIMB_BITS);
+    // The standard way for generating a mask with nbits of the lower bits set is (1 << nbits) -
+    // 1. However, for nbits == LIMB_BITS, the right shift would be undefined behaviour. Split nbits
+    // into nbits_lo < LIMB_BITS and a nbits_hi == (nbits == LIMB_BITS) components and generate
+    // masks for each individually.
+    let nbits_lo = nbits % LIMB_BITS;
+    let nbits_hi = nbits / LIMB_BITS;
+    debug_assert!(nbits_hi <= 1);
+    debug_assert!(nbits_hi == 0 || nbits_lo == 0);
+
+    let mask_for_lo = (1 << nbits_lo) - 1;
+    let mask_for_hi = (0 as LimbType).wrapping_sub(nbits_hi as LimbType);
+    mask_for_lo | mask_for_hi
+}
+
+#[test]
+fn test_ct_lsb_mask_l() {
+    for i in 0..LIMB_BITS {
+        let mask = ct_lsb_mask_l(i);
+        assert_eq!(mask, (1 << i) - 1);
+    }
+    assert_eq!(ct_lsb_mask_l(LIMB_BITS), !0);
+}
+
 /// Split a limb into upper and lower half limbs.
 ///
 /// Returns a pair of upper and lower half limb, in this order.
@@ -223,7 +248,7 @@ fn test_ct_add_l_l() {
     assert_eq!(ct_add_l_l(!0 - 1, 1), (0, !0));
     assert_eq!(ct_add_l_l(!0, 1), (1, 0));
     assert_eq!(ct_add_l_l(1 << (LIMB_BITS - 1), 1 << (LIMB_BITS - 1)), (1, 0));
-    assert_eq!(ct_add_l_l(!0, 1 << (LIMB_BITS - 1)), (1, (1 << (LIMB_BITS - 1)) - 1));
+    assert_eq!(ct_add_l_l(!0, 1 << (LIMB_BITS - 1)), (1, ct_lsb_mask_l(LIMB_BITS - 1)));
     assert_eq!(ct_add_l_l(!0, !0), (1, !0 - 1));
 }
 
@@ -574,7 +599,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
 
         // Subtract q * v at from u at position j.
         let qv = ct_mul_l_l(q, v.normalized_v);
-        debug_assert!(qv.high() < (1 << HALF_LIMB_BITS) - 1);
+        debug_assert!(qv.high() < ct_lsb_mask_l(HALF_LIMB_BITS));
         let mut borrow = 0;
         for k in 0..3 {
             let qv_val = qv.get_half_limb(k);
@@ -729,9 +754,11 @@ pub fn ct_find_last_set_bit_l(mut v: LimbType) -> usize {
     assert!(bits != 0);
     assert!(bits & bits - 1 == 0); // Is a power of two.
     let mut count: usize = 0;
+    let mut lsb_mask = !0;
     while bits > 1 {
         bits /= 2;
-        let v_l = v & (1 << bits) - 1;
+        lsb_mask >>= bits;
+        let v_l = v & lsb_mask;
         let v_h = v >> bits;
         let upper = ct_neq_l_l(v_h, 0);
         count += upper.select(0, bits) as usize;
@@ -770,15 +797,15 @@ pub fn ct_arithmetic_rshift_l(v: LimbType, rshift: LimbType) -> LimbType {
 fn test_ct_arithmetic_shift_l() {
     assert_eq!(
         ct_arithmetic_rshift_l(
-            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            ct_lsb_mask_l(LIMB_BITS - 1),
             0
         ),
-        ((1 as LimbType) << LIMB_BITS - 1) - 1
+        ct_lsb_mask_l(LIMB_BITS - 1)
     );
 
     assert_eq!(
         ct_arithmetic_rshift_l(
-            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            ct_lsb_mask_l(LIMB_BITS - 1),
             (LIMB_BITS - 2) as LimbType
         ),
         1
@@ -786,7 +813,7 @@ fn test_ct_arithmetic_shift_l() {
 
     assert_eq!(
         ct_arithmetic_rshift_l(
-            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            ct_lsb_mask_l(LIMB_BITS - 1),
             (LIMB_BITS - 1) as LimbType
         ),
         0
@@ -794,7 +821,7 @@ fn test_ct_arithmetic_shift_l() {
 
     assert_eq!(
         ct_arithmetic_rshift_l(
-            ((1 as LimbType) << LIMB_BITS - 1) - 1,
+            ct_lsb_mask_l(LIMB_BITS - 1),
             LIMB_BITS as LimbType
         ),
         0

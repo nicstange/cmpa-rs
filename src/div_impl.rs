@@ -1133,6 +1133,7 @@ fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, Q
     fn div_and_check<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>(
         u: &UT::SelfT<'_>, u_in_len: usize , u_lshift_len: usize, v: &VT::SelfT<'_>
     ) {
+        use super::limb::ct_lsb_mask_l;
         use super::add_impl::mp_ct_add_mp_mp;
         use super::cmp_impl::mp_ct_eq_mp_mp;
         use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
@@ -1161,7 +1162,7 @@ fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, Q
         }
         if u_lshift_len % LIMB_BYTES != 0 {
             let u_val = result.load_l(mp_ct_nlimbs(u_lshift_len + 1) - 1);
-            assert_eq!(u_val & (((1 as LimbType) << (8 * (u_lshift_len % LIMB_BYTES))) - 1), 0);
+            assert_eq!(u_val & ct_lsb_mask_l(8 * (u_lshift_len % LIMB_BYTES) as u32), 0);
         }
         assert_eq!(result.load_l(mp_ct_nlimbs(virtual_u_len)), 0);
         mp_ct_rshift_mp(&mut result, 8 * u_lshift_len);

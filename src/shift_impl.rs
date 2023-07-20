@@ -1,5 +1,5 @@
 use super::limbs_buffer::{MPIntMutByteSlice, mp_ct_nlimbs, MPIntMutByteSlicePriv as _, mp_ct_zeroize_bits_below, mp_ct_zeroize_bits_above};
-use super::limb::{LIMB_BYTES, LIMB_BITS, LimbType};
+use super::limb::{LIMB_BYTES, LIMB_BITS, LimbType, ct_lsb_mask_l};
 use super::usize_ct_cmp::{ct_eq_usize_usize, ct_gt_usize_usize, ct_le_usize_usize, ct_lt_usize_usize, ct_ge_usize_usize};
 
 pub fn mp_ct_lshift_mp<T0: MPIntMutByteSlice>(op0: &mut T0, distance: usize) -> LimbType{
@@ -46,7 +46,7 @@ pub fn mp_ct_lshift_mp<T0: MPIntMutByteSlice>(op0: &mut T0, distance: usize) -> 
         // already. Be careful not to use the high source limb part (with a wrong mask + shift) in
         // this case.
         let high_src_mask = src_bits_end_gt_op0_nbits.select(
-            (1 << low_src_rshift) - 1,
+            ct_lsb_mask_l(low_src_rshift as u32),
             0
         );
 
@@ -138,11 +138,11 @@ fn test_mp_ct_lshift_mp_common<T0: MPIntMutByteSlice>(op0_len: usize) {
     fn test_fill_limb_with_seq_lshifted(limb_index: usize, lshift_distance: usize) -> LimbType {
         let lshift_len = (lshift_distance + 7) / 8;
         let lshift_nlimbs = mp_ct_nlimbs(lshift_len);
-        let dst_high_lshift = lshift_distance % LIMB_BITS as usize;
+        let dst_high_lshift = (lshift_distance % LIMB_BITS as usize) as u32;
         let low = if lshift_nlimbs <= limb_index {
             let src_low = test_fill_limb_with_seq(((limb_index - lshift_nlimbs) * LIMB_BYTES) as u8 + 1);
             if dst_high_lshift != 0 {
-                src_low >> (LIMB_BITS as usize - dst_high_lshift)
+                src_low >> LIMB_BITS - dst_high_lshift
             } else {
                 src_low
             }
@@ -153,7 +153,7 @@ fn test_mp_ct_lshift_mp_common<T0: MPIntMutByteSlice>(op0_len: usize) {
 
         let high = if dst_high_lshift != 0 && limb_index + 1 >= lshift_nlimbs {
             let src_high = test_fill_limb_with_seq(((limb_index + 1 - lshift_nlimbs) * LIMB_BYTES) as u8 + 1);
-            let src_high = src_high & ((1 << (LIMB_BITS as usize - dst_high_lshift)) - 1);
+            let src_high = src_high & ct_lsb_mask_l(LIMB_BITS - dst_high_lshift);
             src_high << dst_high_lshift
         } else {
             0
@@ -206,7 +206,7 @@ fn test_mp_ct_lshift_mp_common<T0: MPIntMutByteSlice>(op0_len: usize) {
                 test_fill_limb_with_seq_lshifted(op0.nlimbs(), shift_distance)
             };
             let expected_shifted_out = if shift_distance < LIMB_BITS as usize {
-                expected_shifted_out & ((1 << shift_distance) - 1)
+                expected_shifted_out & ct_lsb_mask_l(shift_distance as u32)
             } else {
                 expected_shifted_out
             };
@@ -314,7 +314,7 @@ pub fn mp_ct_rshift_mp<T0: MPIntMutByteSlice>(op0: &mut T0, distance: usize) -> 
         // already. Be careful not to use the high source limb part (with a wrong mask + shift) in
         // this case.
         let high_src_mask = src_bits_end_gt_op0_nbits.select(
-            (1 << low_src_rshift) - 1,
+            ct_lsb_mask_l(low_src_rshift as u32),
             0
         );
 
@@ -393,7 +393,7 @@ fn test_mp_ct_rshift_mp_common<T0: MPIntMutByteSlice>(op0_len: usize) {
     fn test_fill_limb_with_seq_rshifted(limb_index: usize, rshift_distance: usize, op_len: usize) -> LimbType {
         let op_nlimbs = mp_ct_nlimbs(op_len);
         let op_partial_high_mask = if op_len % LIMB_BYTES != 0 {
-            (1 << 8 * (op_len % LIMB_BYTES)) - 1
+            ct_lsb_mask_l(8 * (op_len % LIMB_BYTES) as u32)
         } else {
             !0
         };

@@ -7,7 +7,7 @@
 
 use core::{self, convert, fmt, marker};
 
-use super::limb::{LimbType, LIMB_BYTES, LIMB_BITS, ct_find_last_set_byte_l};
+use super::limb::{LimbType, LIMB_BYTES, LIMB_BITS, ct_find_last_set_byte_l, ct_lsb_mask_l};
 use super::usize_ct_cmp::ct_eq_usize_usize;
 
 /// Determine the number of [`LimbType`] limbs stored in a multiprecision integer big-endian byte
@@ -838,7 +838,7 @@ fn mp_ne_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
     let begin_in_limb = begin - begin_aligned;
     if begin_in_limb != 0 {
         let mut l = mp_ne_load_l(limbs, begin_limb);
-        l &= ((1 as LimbType) << 8 * begin_in_limb) - 1;
+        l &= ct_lsb_mask_l(8 * begin_in_limb as u32);
         mp_ne_store_l(limbs, begin_limb, l);
         begin_aligned += LIMB_BYTES;
     }
@@ -920,12 +920,12 @@ pub trait MPIntByteSliceCommonPriv: Sized {
 
     fn partial_high_mask(&self) -> LimbType {
         if Self::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
-            let high_npartial = self._len() % LIMB_BYTES as usize;
-            if high_npartial == 0 {
-                !0
+            let high_npartial = if self._len() != 0 {
+                ((self._len()) - 1) % LIMB_BYTES as usize + 1
             } else {
-                ((1 as LimbType) << 8 * high_npartial) - 1
-            }
+                0
+            };
+            ct_lsb_mask_l(8 * high_npartial as u32)
         } else {
             !0
         }
@@ -1547,7 +1547,7 @@ fn test_mp_find_last_set_byte_ne() {
 pub fn mp_ct_zeroize_bits_above<T0: MPIntMutByteSlice>(op0: &mut T0, begin: usize) {
     let first_limb_index = begin / LIMB_BITS  as usize;
     let first_limb_retain_nbits = begin % LIMB_BITS as usize;
-    let first_limb_mask = (1 << first_limb_retain_nbits) - 1;
+    let first_limb_mask = ct_lsb_mask_l(first_limb_retain_nbits as u32);
     let mut next_mask = !0;
     for i in 0..op0.nlimbs() {
         let is_first_limb = ct_eq_usize_usize(i, first_limb_index);
@@ -1612,7 +1612,7 @@ fn test_mp_ct_zeroize_bits_above_common<T0: MPIntMutByteSlice>(op0_len: usize) {
             assert_eq!(op0.load_l_full(i), !0);
         }
 
-        let expected = ((1 as LimbType) << begin % LIMB_BITS as usize) - 1;
+        let expected = ct_lsb_mask_l((begin % LIMB_BITS as usize) as u32);
         assert_eq!(op0.load_l(j - 1), expected);
 
         for i in j..op0.nlimbs() {
@@ -1659,7 +1659,7 @@ pub fn mp_zeroize_bits_above<T0: MPIntMutByteSlice>(op0: &mut T0, begin: usize) 
         return;
     }
     let first_limb_retain_nbits = begin % LIMB_BITS as usize;
-    let first_limb_mask = (1 << first_limb_retain_nbits) - 1;
+    let first_limb_mask = ct_lsb_mask_l(first_limb_retain_nbits as u32);
     op0.store_l(
         first_limb_index,
         op0.load_l(first_limb_index) & first_limb_mask
@@ -1722,7 +1722,7 @@ fn test_mp_zeroize_bits_above_common<T0: MPIntMutByteSlice>(op0_len: usize) {
             assert_eq!(op0.load_l_full(i), !0);
         }
 
-        let expected = ((1 as LimbType) << begin % LIMB_BITS as usize) - 1;
+        let expected = ct_lsb_mask_l((begin % LIMB_BITS as usize) as u32);
         assert_eq!(op0.load_l(j - 1), expected);
 
         for i in j..op0.nlimbs() {
@@ -1766,7 +1766,7 @@ fn test_mp_zeroize_bits_above_ne() {
 pub fn mp_ct_zeroize_bits_below<T0: MPIntMutByteSlice>(op0: &mut T0, end: usize) {
     let last_limb_index = end / LIMB_BITS  as usize;
     let last_limb_clear_nbits = end % LIMB_BITS as usize;
-    let last_limb_mask = !((1 << last_limb_clear_nbits) - 1);
+    let last_limb_mask = !ct_lsb_mask_l(last_limb_clear_nbits as u32);
     let mut next_mask = 0;
     for i in 0..op0.nlimbs() {
         let is_last_limb = ct_eq_usize_usize(i, last_limb_index);
@@ -1833,7 +1833,7 @@ fn test_mp_ct_zeroize_bits_below_common<T0: MPIntMutByteSlice>(op0_len: usize) {
             assert_eq!(op0.load_l_full(i), 0);
         }
 
-        let expected = !(((1 as LimbType) << begin % LIMB_BITS as usize) - 1);
+        let expected = !ct_lsb_mask_l((begin % LIMB_BITS as usize) as u32);
         assert_eq!(op0.load_l(j - 1), expected);
 
         for i in j..op0.nlimbs() {
@@ -1885,7 +1885,7 @@ pub fn mp_zeroize_bits_below<T0: MPIntMutByteSlice>(op0: &mut T0, end: usize) {
         return;
     }
     let last_limb_clear_nbits = end % LIMB_BITS as usize;
-    let last_limb_mask = !((1 << last_limb_clear_nbits) - 1);
+    let last_limb_mask = !ct_lsb_mask_l(last_limb_clear_nbits as u32);
     op0.store_l(
         last_limb_index,
         op0.load_l(last_limb_index) & last_limb_mask
@@ -1948,7 +1948,7 @@ fn test_mp_zeroize_bits_below_common<T0: MPIntMutByteSlice>(op0_len: usize) {
             assert_eq!(op0.load_l_full(i), 0);
         }
 
-        let expected = !(((1 as LimbType) << begin % LIMB_BITS as usize) - 1);
+        let expected = !ct_lsb_mask_l((begin % LIMB_BITS as usize) as u32);
         assert_eq!(op0.load_l(j - 1), expected);
 
         for i in j..op0.nlimbs() {
@@ -2172,14 +2172,14 @@ impl<'a, ST: MPIntMutByteSlice, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a
         } else {
             let mut value = value;
             let mut npartial = segment_slice.len() % LIMB_BYTES;
-            let value_mask = (1 << 8 * npartial) - 1;
+            let value_mask = ct_lsb_mask_l(8 * npartial as u32);
             segment_slice.store_l(i - segment_offset, value & value_mask);
             value >>= 8 * npartial;
             let mut segment_index = segment_index;
             while npartial != LIMB_BYTES && segment_index < self.segments.len() {
                 let partial = &mut self.segments[segment_index].high_next_partial;
                 if !partial.is_empty() {
-                    let value_mask = (1 << 8 * partial.len()) - 1;
+                    let value_mask = ct_lsb_mask_l(8 * partial.len() as u32);
                     partial.store_l(0, value & value_mask);
                     value >>= 8 * partial.len();
                     npartial += partial.len();
