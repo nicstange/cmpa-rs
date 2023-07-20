@@ -192,7 +192,7 @@ fn test_mp_ct_montgomery_redc_le_le() {
     test_mp_ct_montgomery_redc::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
 }
 
-fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon,
+pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon,
                                  T1: MPIntByteSliceCommon, NT: MPIntByteSliceCommon> (
     result: &mut RT, op0: &T0, op1: &T1, n: &NT, n0_inv_mod_l: LimbType,
     cond: LimbChoice
@@ -517,6 +517,13 @@ fn test_mp_ct_montgomery_mul_mod_cond_ne_ne_ne_ne() {
                                          MPNativeEndianMutByteSlice>()
 }
 
+pub fn mp_ct_montgomery_mul_mod<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon,
+                                T1: MPIntByteSliceCommon, NT: MPIntByteSliceCommon> (
+    result: &mut RT, op0: &T0, op1: &T1, n: &NT, n0_inv_mod_l: LimbType
+) {
+    mp_ct_montgomery_mul_mod_cond(result, op0, op1, n, n0_inv_mod_l, LimbChoice::from(1))
+}
+
 pub fn mp_ct_to_montgomery_form_direct<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
     t: &mut TT, n: &NT
 ) -> Result<(), MpCtDivisionError> {
@@ -536,7 +543,7 @@ pub fn mp_ct_montgomery_radix2_mod_n<RX2T: MPIntMutByteSlice, NT: MPIntByteSlice
 pub fn mp_ct_to_montgomery_form<MGT: MPIntMutByteSlice, TT: MPIntByteSliceCommon, NT: MPIntByteSliceCommon, RX2T: MPIntByteSliceCommon> (
     mg_t_out: &mut MGT, t: &TT, n: &NT, n0_inv_mod_l: LimbType, radix2_mod_n: &RX2T
 ) {
-    mp_ct_montgomery_mul_mod_cond(mg_t_out, t, radix2_mod_n, n, n0_inv_mod_l, LimbChoice::from(1));
+    mp_ct_montgomery_mul_mod(mg_t_out, t, radix2_mod_n, n, n0_inv_mod_l);
 }
 
 

@@ -215,6 +215,12 @@ fn test_mp_ct_mul_trunc_cond_ne_ne() {
     test_mp_ct_mul_trunc_cond_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
 }
 
+pub fn mp_ct_mul_trunc_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
+    op0: &mut T0, op0_in_len: usize, op1: &T1
+) {
+    mp_ct_mul_trunc_cond_mp_mp(op0, op0_in_len, op1, LimbChoice::from(1))
+}
+
 /// Square a multiprecision integer of specified endianess.
 ///
 /// The operand's contents will be replaced by the computed square.
