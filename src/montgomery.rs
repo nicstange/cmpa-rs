@@ -273,63 +273,8 @@ fn test_mp_ct_montgomery_redc_le_le() {
     test_mp_ct_montgomery_redc::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
 }
 
-// ATTENTION: does not read or update the most significant limb in t, it's getting returned
-// separately as t_high_shadow.
-fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
-    t_carry: LimbType, t_high_shadow: LimbType,
-    t: &mut TT, n: &NT, neg_n0_inv_mod_l: LimbType,
-    cond_mul: LimbChoice) -> (LimbType, LimbType
-) {
-    debug_assert!(cond_mul.unwrap() == 0 || t_carry <= 1); // The REDC loop invariant.
-    debug_assert!(!n.is_empty());
-    debug_assert!(t.len() >= n.len());
-    let n_nlimbs = n.nlimbs();
-    let t_nlimbs = t.nlimbs();
-
-    let (m, mut carry) = {
-        let t_val = t.load_l(0);
-        let m = cond_mul.select(0, t_val.wrapping_mul(neg_n0_inv_mod_l));
-        let n_val = n.load_l(0);
-        let (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, 0);
-        debug_assert!(t_val == 0);
-        (m, carry)
-    };
-
-    for j in 0..n_nlimbs - 1 {
-        // Do not read the potentially partial, stale high limb directly from t, use the
-        // t_high_shadow shadow instead.
-        let mut t_val = if j + 1 != t_nlimbs - 1 {
-            t.load_l_full(j + 1)
-        } else {
-            t_high_shadow
-        };
-        let n_val = n.load_l(j + 1);
-        (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, carry);
-        t.store_l_full(j, t_val);
-    }
-
-    for j in n_nlimbs - 1..t_nlimbs - 1 {
-        // Do not read the potentially partial, stale high limb directly from t, use the t_high_shadow
-        // shadow instead.
-        let mut t_val = if j + 1 != t_nlimbs - 1 {
-            t.load_l_full(j + 1)
-        } else {
-            t_high_shadow
-        };
-        (carry, t_val) = ct_add_l_l(t_val, carry);
-        t.store_l_full(j, t_val);
-    }
-
-    // Replicated function entry invariant.
-    debug_assert!(cond_mul.unwrap() == 0 || t_carry <= 1);
-    // Do not update t's potentially partial high limb with a value that could overflow in the
-    // course of the reduction. Return it separately in a t_high_shadow shadow instead.
-    let (t_carry, t_high_shadow) = ct_add_l_l(carry, t_carry);
-    (t_carry, t_high_shadow)
-}
-
 pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon,
-                                 T1: MPIntByteSliceCommon, NT: MPIntByteSliceCommon> (
+                                     T1: MPIntByteSliceCommon, NT: MPIntByteSliceCommon> (
     result: &mut RT, op0: &T0, op1: &T1, n: &NT, n0_inv_mod_l: LimbType,
     cond: LimbChoice
 ) {
@@ -343,17 +288,6 @@ pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCo
 
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
-    if op1_nlimbs == 0 {
-        // The product is zero, but if cond == 0, result is supposed to receive op0 instead of the
-        // product. And it must be done in constant-time.
-        for i in 0..op0_nlimbs {
-            let result_val = cond.select(op0.load_l(i), 0);
-            result.store_l(i, result_val);
-        }
-        result.zeroize_bytes_above(op0.len());
-        return;
-    }
-
     let n_nlimbs = n.nlimbs();
     let n0_val = n.load_l(0);
     debug_assert!(n0_val.wrapping_mul(n0_inv_mod_l) == 1);
@@ -367,89 +301,29 @@ pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCo
     for i in 0..op0_nlimbs {
         debug_assert!(result_carry <= 1); // Loop invariant.
         let op0_val = op0.load_l(i);
+
+        // If cond == false, then the Montgomery kernel's multiplication factor,
+        // MpCtMontgomeryRedcKernel will be set to zero below and repeated application
+        // of the kernel would effectively shift the result by one word to the right,
+        // pulling in result_carry from the left.
         result_carry = cond.select(op0_val, result_carry);
-        let (m, mut carry_high, mut carry_low) = {
-            // Do not read the potentially partial, stale high limb directly from result, use the
-            // result_high_shadow shadow instead.
-            let result_val = if n_nlimbs != 1 {
-                result.load_l_full(0)
-            } else {
-                result_high_shadow
-            };
 
-            let op1_val = cond.select(0, op1.load_l(0));
-            let (op0_op1_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, 0);
-
-            let m = cond.select(0, result_val.wrapping_mul(neg_n0_inv_mod_l));
-            let n_val = n.load_l(0);
-            let (m_n_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, m, n_val, 0);
-
-            debug_assert_eq!(result_val, 0);
-            let (carry_high, carry_low) = ct_add_l_l(op0_op1_add_carry, m_n_add_carry);
-            (m, carry_high, carry_low)
+        // Do not read the potentially partial, stale high limb directly from result, use the
+        // result_high_shadow shadow instead.
+        let result_val = if n_nlimbs != 1 {
+            result.load_l_full(0)
+        } else {
+            result_high_shadow
         };
+        let op1_val = cond.select(0, op1.load_l(0));
+        let (mut op0_op1_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, 0);
 
-        for j in 0..(op1_nlimbs - 1) {
-            debug_assert!(carry_high <= 1); // Loop invariant LI0.
-            debug_assert!(carry_high == 0 || carry_low <= !1); // Loop invariant LI1.
+        let mut redc_kernel = MpCtMontgomeryRedcKernel::start(LIMB_BITS, result_val, n0_val, neg_n0_inv_mod_l);
+        redc_kernel.m = cond.select(0, redc_kernel.m);
+
+        let mut j = 0;
+        while j + 1 < op1_nlimbs {
             let op1_val = cond.select(0, op1.load_l(j + 1));
-            let n_val = n.load_l(j + 1);
-
-            // Do not read the potentially partial, stale high limb directly from result, use the
-            // result_high_shadow shadow instead.
-            let result_val = if j + 1 != n_nlimbs - 1 {
-                result.load_l_full(j + 1)
-            } else {
-                result_high_shadow
-            };
-
-            // Assume carry_high == 1 and op0_op1_add_carry == !0 below.
-            // If carry_high == 1, then carry_low <= !1 per the loop invariant LI1.
-            // If op0_op1_add_carry == !0, then
-            // - either the op0_val * op1_val product's high_limb <= !2 and both the
-            //   additions in ct_mul_add_l_l_l_c() wrapped around,
-            // - or the high limb was == !1, the low limb <= 1 (as per a basic property of
-            //   multiplications) and only one of the two additions wrapped.
-            // In the first case, result_val <= !1 as per a basic property of
-            // wrapping additions.
-            // For the second case, note that adding carry_low <= !1 to the product's low limb <= 1
-            // does not wrap and equals !0, at most. Adding this to the input result_val with
-            // wraparound likewise yields a value <= !1.
-            let (op0_op1_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, carry_low);
-            debug_assert!(carry_high == 0 || op0_op1_add_carry <= !1 || result_val <= !1);
-
-            // Assume carry_high == 1 and op0_op1_add_carry == !0, from which it follows
-            // that result_val <= !1 at this point.
-            // If m_n_add_carry == !0 below, then
-            // - the m * n_val product's high limb was == !1 and the low limb <= 1
-            // - and the addition of the low limb to result_val did overflow.
-            // But that would contradic result_val <= !1. It follows that
-            // m_n_add_carry <= !1.
-            let (m_n_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, m, n_val, 0);
-            debug_assert!(carry_high == 0 || op0_op1_add_carry <= !1 || m_n_add_carry <= !1);
-
-            let carry0;
-            (carry0, carry_low) = ct_add_l_l(op0_op1_add_carry, carry_high);
-            // Basic property of adding a one with wraparound:
-            debug_assert!(carry0 == 0 || carry_low == 0);
-            debug_assert!(carry0 == 0 || m_n_add_carry <= !1);
-            let carry1;
-            (carry1, carry_low) = ct_add_l_l(carry_low, m_n_add_carry);
-            debug_assert!(carry0 == 0 || carry1 == 0); // Loop invariant LI0 still holds.
-            // Loop invariant LI1 still holds as well, because from the above it follows that ...
-            debug_assert!(carry0 == 0 || carry_low <= !1);
-            // ... and moreover, from a basic property of addition with workaround:
-            debug_assert!(carry1 == 0 || carry_low <= !1);
-            carry_high = carry0 + carry1;
-
-            result.store_l_full(j, result_val);
-        }
-
-        // If op1_nlimbs < n_nlimbs, handle the rest by only adding the tail of m * n to it.
-        for j in (op1_nlimbs - 1)..(n_nlimbs - 1) {
-            debug_assert!(carry_high <= 1); // Loop invariant LI0.
-            debug_assert!(carry_high == 0 || carry_low <= !1); // Loop invariant LI1.
-            let n_val = n.load_l(j + 1);
 
             // Do not read the potentially partial, stale high limb directly from result, use the
             // result_high_shadow shadow instead.
@@ -459,40 +333,80 @@ pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCo
                 result_high_shadow
             };
 
-            (carry_low, result_val) = ct_mul_add_l_l_l_c(result_val, m, n_val, carry_low);
-            (carry_high, carry_low) = ct_add_l_l(carry_low, carry_high);
+            (op0_op1_add_carry, result_val) = ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, op0_op1_add_carry);
+
+            let n_val = n.load_l(j + 1);
+            let result_val = redc_kernel.update(result_val, n_val);
             result.store_l_full(j, result_val);
-
-            // Loop invariants LI0  and LI1 are maintained trivially as per properties
-            // of wrapping addition.
-            debug_assert!(carry_high <= 1);
-            debug_assert!(carry_high == 0 || carry_low <= !1);
+            j += 1;
         }
+        debug_assert_eq!(j + 1, op1_nlimbs);
 
-        // Finally, handle the most significant limb, it's effectively the sum
-        // of the previously computed result_carry and this loop iteration's final
-        // (carry_high, carry_low).
-        debug_assert!(cond.unwrap() == 0 || result_carry <= 1); // Outer loop's invariant replicated.
-        // Inner loops' invariants LI0 and LI1 replicated:
-        debug_assert!(carry_high <= 1);
-        debug_assert!(carry_high == 0 || carry_low <= !1);
-        (result_carry, carry_low) = ct_add_l_l(carry_low, result_carry);
-        // Do not update result's potentially partial high limb with a value that could overflow in
-        // the course of the reduction. Maintain it separately in a result_high_shadow shadow
-        // instead.
-        result_high_shadow = carry_low;
-        // Adding a value of result_carry <= 1 to carry_low <= !1 would not wrap.
-        debug_assert!(carry_high == 0 || result_carry == 0);
-        result_carry += carry_high;
-        debug_assert!(result_carry <= 1); // Outer loop invariant still maintained.
+        // If op1_nlimbs < n_nlimbs, handle the rest by propagating the multiplication carry and
+        // continue redcing.
+        while j + 1 < n_nlimbs {
+            // Do not read the potentially partial, stale high limb directly from result, use the
+            // result_high_shadow shadow instead.
+            let mut result_val = if j + 1 != n_nlimbs - 1 {
+                result.load_l_full(j + 1)
+            } else {
+                result_high_shadow
+            };
+
+            (op0_op1_add_carry, result_val) = ct_add_l_l(result_val, op0_op1_add_carry);
+
+            let n_val = n.load_l(j + 1);
+            let result_val = redc_kernel.update(result_val, n_val);
+            result.store_l_full(j, result_val);
+            j += 1;
+        }
+        debug_assert_eq!(j + 1, n_nlimbs);
+
+        let mut result_val;
+        debug_assert!(cond.unwrap() == 0 || result_carry <= 1);
+        debug_assert!(cond.unwrap() == 1 || op0_op1_add_carry == 0);
+        (result_carry, result_val) = ct_add_l_l(result_carry, op0_op1_add_carry);
+        debug_assert!(result_carry <= 1);
+        debug_assert!(result_carry == 0 || result_val == 0);
+
+        (result_carry, result_val) = redc_kernel.finish(result_val);
+        debug_assert!(result_carry <= 1);
+        debug_assert!(cond.unwrap() == 1 || result_carry == 0);
+        result_high_shadow = result_val;
     }
 
     // If op0_nlimbs < the montgomery radix shift distance, handle the rest by REDCing it.
     for _i in op0_nlimbs..mp_ct_montgomery_radix_shift_nlimbs(n.len()) {
-        (result_carry, result_high_shadow) = mp_ct_montgomery_redc_one_cond_mul(
-            result_carry, result_high_shadow, result,
-            n, neg_n0_inv_mod_l, cond
-        );
+        // Do not read the potentially partial, stale high limb directly from result, use the
+        // result_high_shadow shadow instead.
+        let result_val = if n_nlimbs != 1 {
+            result.load_l_full(0)
+        } else {
+            result_high_shadow
+        };
+
+        let mut redc_kernel = MpCtMontgomeryRedcKernel::start(LIMB_BITS, result_val, n0_val, neg_n0_inv_mod_l);
+        redc_kernel.m = cond.select(0, redc_kernel.m);
+
+        let mut j = 0;
+        while j + 1 < n_nlimbs {
+            // Do not read the potentially partial, stale high limb directly from result, use the
+            // result_high_shadow shadow instead.
+            let result_val = if j + 1 != n_nlimbs - 1 {
+                result.load_l_full(j + 1)
+            } else {
+                result_high_shadow
+            };
+
+            let n_val = n.load_l(j + 1);
+            let result_val = redc_kernel.update(result_val, n_val);
+            result.store_l_full(j, result_val);
+            j += 1;
+        }
+        debug_assert_eq!(j + 1, n_nlimbs);
+
+        (result_carry, result_high_shadow) = redc_kernel.finish(result_carry);
+        debug_assert!(result_carry <= 1);
     }
 
     // Now apply the high limb shadow back.
