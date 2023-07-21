@@ -1,6 +1,6 @@
 use crate::div_impl::mp_ct_div_lshifted_mp_mp;
 
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, LimbChoice, ct_inv_mod_l};
+use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, LimbChoice, ct_inv_mod_l, ct_lsb_mask_l};
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_limbs_align_len, mp_ct_nlimbs};
 use super::cmp_impl::mp_ct_geq_mp_mp;
 use super::add_impl::mp_ct_sub_cond_mp_mp;
@@ -41,67 +41,122 @@ fn test_mp_ct_montgomery_n0_inv_mod_l() {
     }
 }
 
-// ATTENTION: does not read or update the most significant limb in t, it's getting returned
-// separately as t_high_shadow.
-fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
-    t_carry: LimbType, t_high_shadow: LimbType,
-    t: &mut TT, n: &NT, neg_n0_inv_mod_l: LimbType,
-    cond_mul: LimbChoice) -> (LimbType, LimbType
-) {
-    debug_assert!(cond_mul.unwrap() == 0 || t_carry <= 1); // The REDC loop invariant.
-    debug_assert!(!n.is_empty());
-    debug_assert!(t.len() >= n.len());
-    let n_nlimbs = n.nlimbs();
-    let t_nlimbs = t.nlimbs();
-
-    let (m, mut carry) = {
-        let t_val = t.load_l(0);
-        let m = cond_mul.select(0, t_val.wrapping_mul(neg_n0_inv_mod_l));
-        let n_val = n.load_l(0);
-        let (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, 0);
-        debug_assert!(t_val == 0);
-        (m, carry)
-    };
-
-    for j in 0..n_nlimbs - 1 {
-        // Do not read the potentially partial, stale high limb directly from t, use the
-        // t_high_shadow shadow instead.
-        let mut t_val = if j + 1 != t_nlimbs - 1 {
-            t.load_l_full(j + 1)
-        } else {
-            t_high_shadow
-        };
-        let n_val = n.load_l(j + 1);
-        (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, carry);
-        t.store_l_full(j, t_val);
-    }
-
-    for j in n_nlimbs - 1..t_nlimbs - 1 {
-        // Do not read the potentially partial, stale high limb directly from t, use the t_high_shadow
-        // shadow instead.
-        let mut t_val = if j + 1 != t_nlimbs - 1 {
-            t.load_l_full(j + 1)
-        } else {
-            t_high_shadow
-        };
-        (carry, t_val) = ct_add_l_l(t_val, carry);
-        t.store_l_full(j, t_val);
-    }
-
-    // Replicated function entry invariant.
-    debug_assert!(cond_mul.unwrap() == 0 || t_carry <= 1);
-    // Do not update t's potentially partial high limb with a value that could overflow in the
-    // course of the reduction. Return it separately in a t_high_shadow shadow instead.
-    let (t_carry, t_high_shadow) = ct_add_l_l(carry, t_carry);
-    (t_carry, t_high_shadow)
+struct MpCtMontgomeryRedcKernel {
+    redc_pow2_rshift: u32,
+    redc_pow2_mask: LimbType,
+    m: LimbType,
+    last_redced_val: LimbType,
+    carry: LimbType,
 }
 
+impl MpCtMontgomeryRedcKernel {
+    const fn redc_rshift_lo(redc_pow2_rshift: u32, redc_pow2_mask: LimbType, val: LimbType) -> LimbType {
+        // There are two possible cases where redc_pow2_rshift == 0:
+        // a.) redc_pow2_exp == 0. In this case !redc_pow2_mask == !0.
+        // b.) redc_pow2_exp == LIMB_BITS. In this case !redc_pow2_mask == !!0 == 0.
+        (val & !redc_pow2_mask) >> redc_pow2_rshift
+    }
+
+    const fn redc_lshift_hi(redc_pow2_rshift: u32, redc_pow2_mask: LimbType, val: LimbType) -> LimbType {
+        // There are two possible cases where redc_pow2_rshift == 0:
+        // a.) redc_pow2_exp == 0. In this case redc_pow2_mask == 0 as well.
+        // b.) redc_pow2_exp == LIMB_BITS. In this case redc_pow2_mask == !0.
+        (val & redc_pow2_mask) << (LIMB_BITS - redc_pow2_rshift) % LIMB_BITS
+    }
+
+    fn start(redc_pow2_exp: u32, t0_val: LimbType, n0_val: LimbType,
+             neg_n0_inv_mod_l: LimbType) -> Self {
+        debug_assert!(redc_pow2_exp <= LIMB_BITS);
+
+        // Calculate the shift distance for right shifting a redced limb into its final position.
+        // Be careful to keep it < LIMB_BITS for not running into undefined behaviour with the
+        // shift.  See the comments in redc_rshift_lo()/redc_rshift_hi() for the mask<->rshift
+        // interaction.
+        let redc_pow2_rshift = redc_pow2_exp % LIMB_BITS;
+        let redc_pow2_mask = ct_lsb_mask_l(redc_pow2_exp as u32);
+
+        // For any i >= j, if n' == -n^{-1} mod 2^i, then n' mod 2^j == -n^{-1} mod 2^j.
+        let neg_n0_inv_mod_l = neg_n0_inv_mod_l & redc_pow2_mask;
+        debug_assert_eq!(neg_n0_inv_mod_l.wrapping_mul(n0_val) & redc_pow2_mask, redc_pow2_mask);
+
+        let m = t0_val.wrapping_mul(neg_n0_inv_mod_l) & redc_pow2_mask;
+
+        let (carry, redced_t0_val) = ct_mul_add_l_l_l_c(t0_val, m, n0_val, 0);
+        debug_assert_eq!(redced_t0_val & redc_pow2_mask, 0);
+        // If redc_pow2_exp < LIMB_BITS, the upper bits of the reduced zeroth limb
+        // will become the lower bits of the resulting zeroth limb.
+        let last_redced_val = Self::redc_rshift_lo(redc_pow2_rshift, redc_pow2_mask, redced_t0_val);
+
+        Self { redc_pow2_rshift, redc_pow2_mask, m, last_redced_val, carry }
+    }
+
+    fn update(&mut self, t_val: LimbType, n_val: LimbType) -> LimbType {
+        let redced_t_val;
+        (self.carry, redced_t_val) = ct_mul_add_l_l_l_c(t_val, self.m, n_val, self.carry);
+
+        // If redc_pow2_exp < LIMB_BITS, the lower bits of the reduced current limb correspond to
+        // the upper bits of the returned result limb.
+        let result_val = self.last_redced_val
+            | Self::redc_lshift_hi(
+                self.redc_pow2_rshift,
+                self.redc_pow2_mask,
+                redced_t_val
+            );
+        // If redc_pow2_exp < LIMB_BITS, the upper bits of the reduced current limb
+        // will become the lower bits of the subsequently returned result limb.
+        self.last_redced_val = Self::redc_rshift_lo(
+            self.redc_pow2_rshift,
+            self.redc_pow2_mask,
+            redced_t_val
+        );
+
+        result_val
+    }
+
+    fn finish(self, t_val: LimbType) -> (LimbType, LimbType) {
+        debug_assert_eq!(t_val & !self.redc_pow2_mask, 0);
+        let (carry, redced_t_val) = ct_add_l_l(t_val, self.carry);
+        (
+            carry,
+            self.last_redced_val
+                | Self::redc_lshift_hi(
+                    self.redc_pow2_rshift,
+                    self.redc_pow2_mask,
+                    redced_t_val
+                )
+         )
+    }
+
+    fn finish_in_twos_complement(self, t_val: LimbType) -> (LimbType, LimbType) {
+        let t_val_sign = t_val >> LIMB_BITS - 1;
+        let (carry, redced_t_val) = ct_add_l_l(t_val, self.carry);
+        // In two's complement representation, the addition overflows iff the sign
+        // bit (indicating a virtual borrow) is getting neutralized.
+        debug_assert!(carry == 0 || t_val_sign == 1);
+        debug_assert!(carry == 0 || redced_t_val >> LIMB_BITS - 1 == 0);
+        debug_assert!(carry == 1 || redced_t_val >> LIMB_BITS - 1 == t_val_sign);
+        let redced_t_val_sign = carry ^ t_val_sign;
+        debug_assert!(redced_t_val >> LIMB_BITS - 1 == redced_t_val_sign);
+        let redced_t_val_extended_sign = (0 as LimbType).wrapping_sub(redced_t_val_sign) & !self.redc_pow2_mask;
+        (
+            redced_t_val_sign,
+            self.last_redced_val
+                | Self::redc_lshift_hi(
+                    self.redc_pow2_rshift,
+                    self.redc_pow2_mask,
+                redced_t_val
+                )
+                | redced_t_val_extended_sign
+        )
+    }
+}
 
 pub fn mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(t: &mut TT, n: &NT, n0_inv_mod_l: LimbType) {
     debug_assert!(!n.is_empty());
     debug_assert!(t.len() >= n.len());
     debug_assert!(t.len() <= 2 * n.len());
     let t_nlimbs = t.nlimbs();
+    let n_nlimbs = n.nlimbs();
     let n0_val = n.load_l(0);
     debug_assert!(n0_val.wrapping_mul(n0_inv_mod_l) == 1);
     let neg_n0_inv_mod_l = !n0_inv_mod_l + 1;
@@ -111,10 +166,36 @@ pub fn mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(t:
     // order to avoid overflowing it. Use a shadow instead.
     let mut t_high_shadow = t.load_l(t_nlimbs - 1);
     for _i in 0..mp_ct_montgomery_radix_shift_nlimbs(n.len()) {
-        (reduced_t_carry, t_high_shadow) =
-            mp_ct_montgomery_redc_one_cond_mul(
-                reduced_t_carry, t_high_shadow, t, n, neg_n0_inv_mod_l, LimbChoice::from(1)
-            );
+        let mut redc_kernel = MpCtMontgomeryRedcKernel::start(LIMB_BITS, t.load_l(0), n0_val, neg_n0_inv_mod_l);
+        let mut j = 0;
+        while j + 2 < n_nlimbs {
+            debug_assert!(j < t_nlimbs - 1);
+            t.store_l_full(j, redc_kernel.update(t.load_l_full(j + 1), n.load_l_full(j + 1)));
+            j += 1;
+        }
+
+        debug_assert_eq!(j + 2, n_nlimbs);
+        // Do not read the potentially partial, stale high limb directly from t, use the
+        // t_high_shadow shadow instead.
+        let t_val = if j + 2 != t_nlimbs {
+            t.load_l_full(j + 1)
+        } else {
+            t_high_shadow
+        };
+        t.store_l_full(j, redc_kernel.update(t_val, n.load_l(j + 1)));
+        j += 1;
+
+        while j + 2 < t_nlimbs {
+            t.store_l_full(j, redc_kernel.update(t.load_l_full(j + 1), 0));
+            j += 1;
+        }
+        if j + 1 == t_nlimbs - 1 {
+            t.store_l_full(j, redc_kernel.update(t_high_shadow, 0));
+            j += 1;
+        }
+        debug_assert_eq!(j, t_nlimbs - 1);
+
+        (reduced_t_carry, t_high_shadow) = redc_kernel.finish(reduced_t_carry);
     }
 
     // Now apply the high limb shadow back.
@@ -190,6 +271,61 @@ fn test_mp_ct_montgomery_redc_le_le() {
  fn test_mp_ct_montgomery_redc_ne_ne() {
     use super::limbs_buffer::MPNativeEndianMutByteSlice;
     test_mp_ct_montgomery_redc::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+}
+
+// ATTENTION: does not read or update the most significant limb in t, it's getting returned
+// separately as t_high_shadow.
+fn mp_ct_montgomery_redc_one_cond_mul<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+    t_carry: LimbType, t_high_shadow: LimbType,
+    t: &mut TT, n: &NT, neg_n0_inv_mod_l: LimbType,
+    cond_mul: LimbChoice) -> (LimbType, LimbType
+) {
+    debug_assert!(cond_mul.unwrap() == 0 || t_carry <= 1); // The REDC loop invariant.
+    debug_assert!(!n.is_empty());
+    debug_assert!(t.len() >= n.len());
+    let n_nlimbs = n.nlimbs();
+    let t_nlimbs = t.nlimbs();
+
+    let (m, mut carry) = {
+        let t_val = t.load_l(0);
+        let m = cond_mul.select(0, t_val.wrapping_mul(neg_n0_inv_mod_l));
+        let n_val = n.load_l(0);
+        let (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, 0);
+        debug_assert!(t_val == 0);
+        (m, carry)
+    };
+
+    for j in 0..n_nlimbs - 1 {
+        // Do not read the potentially partial, stale high limb directly from t, use the
+        // t_high_shadow shadow instead.
+        let mut t_val = if j + 1 != t_nlimbs - 1 {
+            t.load_l_full(j + 1)
+        } else {
+            t_high_shadow
+        };
+        let n_val = n.load_l(j + 1);
+        (carry, t_val) = ct_mul_add_l_l_l_c(t_val, m, n_val, carry);
+        t.store_l_full(j, t_val);
+    }
+
+    for j in n_nlimbs - 1..t_nlimbs - 1 {
+        // Do not read the potentially partial, stale high limb directly from t, use the t_high_shadow
+        // shadow instead.
+        let mut t_val = if j + 1 != t_nlimbs - 1 {
+            t.load_l_full(j + 1)
+        } else {
+            t_high_shadow
+        };
+        (carry, t_val) = ct_add_l_l(t_val, carry);
+        t.store_l_full(j, t_val);
+    }
+
+    // Replicated function entry invariant.
+    debug_assert!(cond_mul.unwrap() == 0 || t_carry <= 1);
+    // Do not update t's potentially partial high limb with a value that could overflow in the
+    // course of the reduction. Return it separately in a t_high_shadow shadow instead.
+    let (t_carry, t_high_shadow) = ct_add_l_l(carry, t_carry);
+    (t_carry, t_high_shadow)
 }
 
 pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon,
