@@ -1,10 +1,45 @@
 #![cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
 
-use core::arch::asm;
+use core::{arch::asm, borrow};
+use std::result;
 use super::{LimbType, DoubleLimb};
 
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
+
+pub fn ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+    let result: LimbType;
+    let carry: LimbType;
+    unsafe {
+        asm!("xor {carry:r}, {carry:r};\
+              add {v0:r}, {v1:r};\
+              setc {carry:l};\
+              ",
+             v0 = inout(reg) v0 => result,
+             v1 = in(reg) v1,
+             carry = out(reg) carry,
+             options(pure, nomem, nostack),
+        );
+    }
+    (carry, result)
+}
+
+pub fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+    let result: LimbType;
+    let borrow: LimbType;
+    unsafe {
+        asm!("xor {borrow:r}, {borrow:r};\
+              sub {v0:r}, {v1:r};\
+              setc {borrow:l};\
+              ",
+             v0 = inout(reg) v0 => result,
+             v1 = in(reg) v1,
+             borrow = out(reg) borrow,
+             options(pure, nomem, nostack),
+        );
+    }
+    (borrow, result)
+}
 
 pub fn ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
     let mut l: LimbType = v0;

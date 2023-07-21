@@ -231,7 +231,8 @@ fn ct_hls_to_l(vh: LimbType, vl: LimbType) -> LimbType {
 /// * `v0` - first operand
 /// * `v1` - second operand
 ///
-pub fn ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+#[allow(unused)]
+pub fn generic_ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     // Don't rely on overflowing_add() for determining the carry -- that would almost certainly
     // branch and not be constant-time.
     let v0 = black_box_l(v0);
@@ -240,6 +241,12 @@ pub fn ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     let carry = black_box_l((((v0 | v1) & !r) | (v0 & v1)) >> LIMB_BITS - 1);
     (carry, r)
 }
+
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::generic_ct_add_l_l as ct_add_l_l;
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+pub use x86_64_math::ct_add_l_l as ct_add_l_l;
 
 #[test]
 fn test_ct_add_l_l() {
@@ -272,7 +279,8 @@ pub fn ct_add_l_l_c(v0: LimbType, v1: LimbType, carry: LimbType) -> (LimbType, L
 /// * `v0` - first operand
 /// * `v1` - second operand
 ///
-pub fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+#[allow(unused)]
+pub fn generic_ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     // Don't rely on overflowing_sub() for determining the borrow -- that would almost certainly
     // branch and not be constant-time.
     let v0 = black_box_l(v0);
@@ -281,6 +289,12 @@ pub fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     let borrow = black_box_l((((r | v1) & !v0) | (v1 & r)) >> LIMB_BITS - 1);
     (borrow, r)
 }
+
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::generic_ct_sub_l_l as ct_sub_l_l;
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+pub use x86_64_math::ct_sub_l_l as ct_sub_l_l;
 
 #[test]
 fn test_ct_sub_l_l() {
