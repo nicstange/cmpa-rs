@@ -7,6 +7,34 @@ use super::{LimbType, DoubleLimb};
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
 
+pub fn ct_is_nonzero_l(v: LimbType) -> LimbType {
+    let result: LimbType;
+    unsafe {
+        asm!("xor {result:r}, {result:r};\
+              test {v:r}, {v:r};\
+              setnz {result:l};\
+              ",
+             v = in(reg) v,
+             result = out(reg) result
+        );
+    }
+    result
+}
+
+pub fn ct_is_zero_l(v: LimbType) -> LimbType {
+    let result: LimbType;
+    unsafe {
+        asm!("xor {result:r}, {result:r};\
+              test {v:r}, {v:r};\
+              setz {result:l};\
+              ",
+             v = in(reg) v,
+             result = out(reg) result
+        );
+    }
+    result
+}
+
 pub fn ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     let result: LimbType;
     let carry: LimbType;

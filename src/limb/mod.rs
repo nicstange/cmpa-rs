@@ -132,16 +132,29 @@ impl Default for LimbChoice {
 #[cfg(feature = "zeroize")]
 impl zeroize::DefaultIsZeroes for LimbChoice {}
 
-
-pub fn ct_is_nonzero_l(v: LimbType) -> LimbType {
+#[allow(unused)]
+pub fn generic_ct_is_nonzero_l(v: LimbType) -> LimbType {
     // This trick is from subtle::*::ct_eq():
     // if v is non-zero, then v or -v or both have the high bit set.
     black_box_l((v | v.wrapping_neg()) >> LIMB_BITS - 1)
 }
 
-pub fn ct_is_zero_l(v: LimbType) -> LimbType {
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::generic_ct_is_nonzero_l as ct_is_nonzero_l;
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+pub use x86_64_math::ct_is_nonzero_l as ct_is_nonzero_l;
+
+#[allow(unused)]
+pub fn generic_ct_is_zero_l(v: LimbType) -> LimbType {
     (1 as LimbType) ^ ct_is_nonzero_l(v)
 }
+
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::generic_ct_is_zero_l as ct_is_zero_l;
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+pub use x86_64_math::ct_is_zero_l as ct_is_zero_l;
 
 pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     LimbChoice::from(ct_is_zero_l(v0 ^ v1))
