@@ -42,7 +42,7 @@ fn test_mp_ct_montgomery_neg_n0_inv_mod_l() {
     }
 }
 
-struct MpCtMontgomeryRedcKernel {
+pub struct MpCtMontgomeryRedcKernel {
     redc_pow2_rshift: u32,
     redc_pow2_mask: LimbType,
     m: LimbType,
@@ -65,8 +65,8 @@ impl MpCtMontgomeryRedcKernel {
         (val & redc_pow2_mask) << (LIMB_BITS - redc_pow2_rshift) % LIMB_BITS
     }
 
-    fn start(redc_pow2_exp: u32, t0_val: LimbType, n0_val: LimbType,
-             neg_n0_inv_mod_l: LimbType) -> Self {
+    pub fn start(redc_pow2_exp: u32, t0_val: LimbType, n0_val: LimbType,
+                 neg_n0_inv_mod_l: LimbType) -> Self {
         debug_assert!(redc_pow2_exp <= LIMB_BITS);
 
         // Calculate the shift distance for right shifting a redced limb into its final position.
@@ -91,7 +91,7 @@ impl MpCtMontgomeryRedcKernel {
         Self { redc_pow2_rshift, redc_pow2_mask, m, last_redced_val, carry }
     }
 
-    fn update(&mut self, t_val: LimbType, n_val: LimbType) -> LimbType {
+    pub fn update(&mut self, t_val: LimbType, n_val: LimbType) -> LimbType {
         let redced_t_val;
         (self.carry, redced_t_val) = ct_mul_add_l_l_l_c(t_val, self.m, n_val, self.carry);
 
@@ -114,7 +114,7 @@ impl MpCtMontgomeryRedcKernel {
         result_val
     }
 
-    fn finish(self, t_val: LimbType) -> (LimbType, LimbType) {
+    pub fn finish(self, t_val: LimbType) -> (LimbType, LimbType) {
         debug_assert_eq!(t_val & !self.redc_pow2_mask, 0);
         let (carry, redced_t_val) = ct_add_l_l(t_val, self.carry);
         (
@@ -128,9 +128,10 @@ impl MpCtMontgomeryRedcKernel {
          )
     }
 
-    fn finish_in_twos_complement(self, t_val: LimbType) -> (LimbType, LimbType) {
+    pub fn finish_in_twos_complement(self, t_val: LimbType) -> (LimbType, LimbType) {
         let t_val_sign = t_val >> LIMB_BITS - 1;
         let (carry, redced_t_val) = ct_add_l_l(t_val, self.carry);
+
         // In two's complement representation, the addition overflows iff the sign
         // bit (indicating a virtual borrow) is getting neutralized.
         debug_assert!(carry == 0 || t_val_sign == 1);
