@@ -1,7 +1,12 @@
-use crate::limb::{ct_sub_l_l, ct_add_l_l_c, ct_is_zero_l, ct_is_nonzero_l, ct_arithmetic_rshift_l};
+use core::array;
 
+use crate::cmp_impl::mp_ct_gt_mp_mp;
+use crate::limb::{ct_sub_l_l, ct_add_l_l_c, ct_is_nonzero_l, ct_arithmetic_rshift_l};
+use crate::mp_ct_is_zero_mp;
 use super::limb::{LimbType, LimbChoice, LIMB_BITS, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_add_l_l};
-use super::limbs_buffer::MPIntMutByteSlice;
+use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon, MPNativeEndianMutByteSlice};
+use super::montgomery::{MpCtMontgomeryRedcKernel, ct_montgomery_neg_n0_inv_mod_l};
+use super::cmp_impl::{mp_ct_lt_mp_mp, mp_ct_is_one_mp, MpCtGeqKernel};
 
 // Implementation of Euclid's algorithm after
 // [BERN_YANG19] "Fast constant-time gcd computation and modular inversion", Daniel J. Bernstein and
@@ -76,26 +81,20 @@ impl TransitionMatrix {
         self.row_shift[1] += 1;
     }
 
-    // Apply the transition matrix to the column vector (f, g).  {f,g}_shadow_head[0] shadows the
+    // Apply the transition matrix to the column vector (f, g), for which its is guarranteed by
+    // construction that the matrix' row shifts (or rather the powers of two thereof) evenly divide
+    // the intermediate results after plain multiplication. {f,g}_shadow_head[0] shadows the
     // potentially partial high limbs of f and g respectively, {f,g}_shadow_head[1] is used to store
     // temporary excess (before right-shifting) and two's complement sign bits.
-    fn apply_to<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(
+    fn apply_to_f_g<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(
         &self,
+        t_is_neg_mask: &[[LimbType; 2]; 2],
         f_shadow_head: &mut [LimbType; 2], f: &mut FT,
         g_shadow_head: &mut [LimbType; 2], g: &mut GT
     ) {
         let nlimbs = f.nlimbs();
         assert_eq!(nlimbs, g.nlimbs());
         assert!(nlimbs != 0);
-
-        let t_f_f_is_neg = LimbChoice::from(self.t[0][0] >> LIMB_BITS - 1);
-        let t_f_g_is_neg = LimbChoice::from(self.t[0][1] >> LIMB_BITS - 1);
-        let t_g_f_is_neg = LimbChoice::from(self.t[1][0] >> LIMB_BITS - 1);
-        let t_g_g_is_neg = LimbChoice::from(self.t[1][1] >> LIMB_BITS - 1);
-        let t_is_neg_mask: [[LimbType; 2]; 2] = [
-            [t_f_f_is_neg.select(0, !0), t_f_g_is_neg.select(0, !0)],
-            [t_g_f_is_neg.select(0, !0), t_g_g_is_neg.select(0, !0)],
-        ];
 
         let row_shift_mask: [LimbType; 2] = [
             LimbChoice::from(ct_is_nonzero_l(self.row_shift[0])).select(0, !0),
@@ -113,27 +112,27 @@ impl TransitionMatrix {
         // cur_orig[] contains the original limbs of both, f and g, at
         // the current position, last_orig[] the ones from the previous,
         // less significant position.
-        fn mat_mul_compute_row(carry: &mut [LimbType; 2],
-                               borrow: &mut LimbType,
-                               cur_orig: &[LimbType; 2],
-                               last_orig: &[LimbType; 2],
-                               t_row: &[LimbType; 2],
-                               t_row_is_neg_mask: &[LimbType; 2]) -> LimbType {
+        fn mat_mul_row_compute_limb(carry: &mut [LimbType; 2],
+                                    borrow: &mut LimbType,
+                                    cur_orig_val: &[LimbType; 2],
+                                    last_orig_val: &[LimbType; 2],
+                                    t_row: &[LimbType; 2],
+                                    t_row_is_neg_mask: &[LimbType; 2]) -> LimbType {
             // t_{i, f} * f
-            let t_if_f = ct_mul_l_l(t_row[0], cur_orig[0]);
+            let t_if_f = ct_mul_l_l(t_row[0], cur_orig_val[0]);
             let (f_carry, result) = (t_if_f.high(), t_if_f.low());
             // + t_{i, g} * g + carry[0]
-            let (g_carry, result) = ct_mul_add_l_l_l_c(result, t_row[1], cur_orig[1], carry[0]);
+            let (g_carry, result) = ct_mul_add_l_l_l_c(result, t_row[1], cur_orig_val[1], carry[0]);
             // Update the carry for the next round.
             (carry[1], carry[0]) = ct_add_l_l_c(f_carry, g_carry, carry[1]);
             // If t_{i, f} is negative, don't sign extend it all the way up to
             // nlimbs, but simply account for it by subtracting f shifted by one
             // limb position to the left: write the (virtually) sign extended t_{i, f} as
             // 2^LIMB_BITS * (-1) + t_{i, f} and multiply by f.
-            let (f_borrow, result) = ct_sub_l_l(result, last_orig[0] & t_row_is_neg_mask[0]);
+            let (f_borrow, result) = ct_sub_l_l(result, last_orig_val[0] & t_row_is_neg_mask[0]);
             debug_assert!(f_borrow == 0 || result >= 1);
             // Similar for negative t_{i, g}.
-            let (g_borrow, result) = ct_sub_l_l(result, last_orig[1] & t_row_is_neg_mask[1]);
+            let (g_borrow, result) = ct_sub_l_l(result, last_orig_val[1] & t_row_is_neg_mask[1]);
             debug_assert!(g_borrow == 0 || result >= 1);
             debug_assert!((f_borrow + g_borrow) < 2 || result >= 2);
             debug_assert!(*borrow <= 2); // Loop invariant.
@@ -148,7 +147,7 @@ impl TransitionMatrix {
             let cur_orig_val: [LimbType; 2] = [f.load_l_full(k), g.load_l_full(k)];
             let mut new_val: [LimbType; 2] = [0; 2];
             for i in 0..2 {
-                new_val[i] = mat_mul_compute_row(
+                new_val[i] = mat_mul_row_compute_limb(
                     &mut carry[i], &mut borrow[i],
                     &cur_orig_val, &last_orig_val,
                     &self.t[i], &t_is_neg_mask[i]
@@ -177,7 +176,7 @@ impl TransitionMatrix {
             let cur_orig_val: [LimbType; 2] = [f_shadow_head[k], g_shadow_head[k]];
             let mut new_val: [LimbType; 2] = [0; 2];
             for i in 0..2 {
-                new_val[i] = mat_mul_compute_row(
+                new_val[i] = mat_mul_row_compute_limb(
                     &mut carry[i], &mut borrow[i],
                     &cur_orig_val, &last_orig_val,
                     &self.t[i], &t_is_neg_mask[i]
@@ -212,6 +211,224 @@ impl TransitionMatrix {
         }
         f_shadow_head[1] = last_new_val[0];
         g_shadow_head[1] = last_new_val[1];
+    }
+
+    // Multiplicate the matrix times a column vector and reduce the result modulo n.
+    // n needs to be odd as a prerequisite of the fused Montgomery reductions.
+    fn apply_to_mod_odd_n<UFT: MPIntMutByteSlice, UGT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+        &self, t_is_neg_mask: &[[LimbType; 2]; 2],
+        u_f: &mut UFT, u_g: &mut UGT, n: &NT, neg_n0_inv_mod_l: LimbType
+    ) {
+        // The matrix' rows are to be scaled by their associated 1/2^row_shift[i] each. Unlike the
+        // primary f and g, which are getting reduced iteratively to their final GCD, the new column
+        // vector's entry are not evenly divisible by this power of two in general. Apply a
+        // Montgomery reduction to divide by 2^row_shift[i] mod n. In fact, there's one individual
+        // Montgomery reduction running for each of the two rows respectively, of course. In order
+        // to take advantage of cache locality, the Montgomery reductions are fused with the row *
+        // column multiplication loop over the result entries' limbs.
+
+        fn mat_mul_row_scale_mod_odd_n_compute_start(
+            u_first_orig: &[LimbType; 2],
+            t_row: &[LimbType; 2],
+            row_shift: u32,
+            n0_val: LimbType, neg_n0_inv_mod_l: LimbType
+        ) -> ([LimbType; 2], MpCtMontgomeryRedcKernel) {
+            let mut carry: [LimbType; 2] = [0; 2];
+            // t_{i, f} * u_f
+            let u_i_f = ct_mul_l_l(t_row[0], u_first_orig[0]);
+            let (carry_i_f, u_i_f) = (u_i_f.high(), u_i_f.low());
+            // t_{i, f} * u_f + t_{i, g} * u_g
+            let (carry_i_g, u_i) = ct_mul_add_l_l_l_c(u_i_f, t_row[1], u_first_orig[1], 0);
+            (carry[1], carry[0]) = ct_add_l_l(carry_i_f, carry_i_g);
+            debug_assert!(carry[1] <= 1);
+
+            let redc_kernel = MpCtMontgomeryRedcKernel::start(row_shift, u_i, n0_val, neg_n0_inv_mod_l);
+            (carry, redc_kernel)
+        }
+
+        fn mat_mul_row_scale_mod_odd_n_compute_limb(
+            carry: &mut [LimbType; 2],
+            borrow: &mut LimbType,
+            redc_kernel: &mut MpCtMontgomeryRedcKernel,
+            n_val: LimbType,
+            u_cur_orig_val: &[LimbType; 2],
+            u_last_orig_val: &[LimbType; 2],
+            t_row: &[LimbType; 2],
+            t_row_is_neg_mask: &[LimbType; 2]
+        ) -> LimbType {
+            // t_{i, f} * u_f
+            let u_i_f = ct_mul_l_l(t_row[0], u_cur_orig_val[0]);
+            let (carry_i_f, u_i_f) = (u_i_f.high(), u_i_f.low());
+            // t_{i, f} * u_f + t_{i, g} * u_g + carry[0]
+            let (carry_i_g, u_i) = ct_mul_add_l_l_l_c(u_i_f, t_row[1], u_cur_orig_val[1], carry[0]);
+
+            // Update the carry for the next round.
+            (carry[1], carry[0]) = ct_add_l_l_c(carry_i_f, carry_i_g, carry[1]);
+
+            // If t_{i, f} is negative, don't sign extend it all the way up to
+            // nlimbs, but simply account for it by subtracting u_f shifted by one
+            // limb position to the left: write the (virtually) sign extended t_{i, f} as
+            // 2^LIMB_BITS * (-1) + t_{i, f} and multiply by u_f.
+            let (borrow_i_f, u_i) = ct_sub_l_l(u_i, u_last_orig_val[0] & t_row_is_neg_mask[0]);
+            debug_assert!(borrow_i_f == 0 || u_i >= 1);
+            // Analoguous for negative t_{i, g}.
+            let (borrow_i_g, u_i) = ct_sub_l_l(u_i, u_last_orig_val[1] & t_row_is_neg_mask[1]);
+            debug_assert!(borrow_i_f + borrow_i_g < 2 || u_i >= 2);
+
+            // Apply the borrow from last iteration and update it for the next round
+            debug_assert!(*borrow <= 2); // Loop invariant.
+            let (borrow0, u_i) = ct_sub_l_l(u_i, *borrow);
+            *borrow = borrow0 + borrow_i_f + borrow_i_g;
+            debug_assert!(*borrow <= 2); // Loop invariant still true.
+
+            redc_kernel.update(u_i, n_val)
+        }
+
+        debug_assert!(!n.is_empty());
+        let n_nlimbs = n.nlimbs();
+        debug_assert!(u_f.nlimbs() == n_nlimbs);
+        debug_assert_eq!(mp_ct_lt_mp_mp(u_f, n).unwrap(), 1);
+        debug_assert!(u_g.nlimbs() == n_nlimbs);
+        debug_assert_eq!(mp_ct_lt_mp_mp(u_g, n).unwrap(), 1);
+
+        let n0_val = n.load_l(0);
+        let mut u_last_orig_val: [LimbType; 2] = [u_f.load_l(0), u_g.load_l(0)];
+        let mut carry: [[LimbType; 2]; 2] = [[0; 2]; 2];
+        let mut redc_kernel: [MpCtMontgomeryRedcKernel; 2] = array::from_fn(|i: usize| {
+            let redc_kernel;
+            (carry[i], redc_kernel) = mat_mul_row_scale_mod_odd_n_compute_start(
+                &u_last_orig_val,
+                &self.t[i],
+                self.row_shift[i] as u32,
+               n0_val, neg_n0_inv_mod_l
+            );
+            redc_kernel
+        });
+
+        // In order to improve cache locality, compare the resulting (redced) column vector
+        // entries against n[] on the fly each. (For positive values, the Montgomery reduction
+        // yiels a value in the range [0, 2*n[] and a n needs to get conditionally subtracted
+        // to bring it into range).
+        let mut u_geq_n_kernel: [MpCtGeqKernel; 2] = array::from_fn(|_| MpCtGeqKernel::new());
+        let mut last_n_val = n0_val;
+
+        let mut borrow: [LimbType; 2] = [0; 2];
+        let mut j = 0;
+        while j + 1 < n_nlimbs {
+            let n_val = n.load_l(j + 1);
+            let u_cur_orig_val: [LimbType; 2] = [u_f.load_l(j + 1), u_g.load_l(j + 1)];
+            let mut u_new_val: [LimbType; 2] = [0; 2];
+            for i in 0..2 {
+                let u_i_new_val = mat_mul_row_scale_mod_odd_n_compute_limb(
+                    &mut carry[i],
+                    &mut borrow[i],
+                    &mut redc_kernel[i],
+                    n_val, &u_cur_orig_val, &u_last_orig_val, &self.t[i], &t_is_neg_mask[i]
+                );
+                u_new_val[i] = u_i_new_val;
+                u_geq_n_kernel[i].update(u_i_new_val, last_n_val);
+            }
+            u_f.store_l_full(j, u_new_val[0]);
+            u_g.store_l_full(j, u_new_val[1]);
+            u_last_orig_val = u_cur_orig_val;
+            last_n_val = n_val;
+            j += 1;
+        }
+        debug_assert_eq!(j + 1, n_nlimbs);
+
+        let mut u_head_new_val: [LimbType; 2] = [0; 2];
+        for i in 0..2 {
+            let u_i = carry[i][0];
+            // If t_i_f/t_i_g is negative, subtract the corresponding high limb of the original
+            // u_f/u_g from the value, c.f. the comment in mat_mul_row_scale_mod_n_compute_limb().
+            let (borrow_i_f, u_i_new_val) = ct_sub_l_l(u_i, u_last_orig_val[0] & t_is_neg_mask[i][0]);
+            debug_assert!(borrow_i_f == 0 || u_i_new_val >= 1);
+            // Analoguous for negative t_{i, g}.
+            let (borrow_i_g, u_i_new_val) = ct_sub_l_l(u_i_new_val, u_last_orig_val[1] & t_is_neg_mask[i][1]);
+            debug_assert!(borrow_i_f + borrow_i_g < 2 || u_i_new_val >= 2);
+
+            // Apply the borrow from last iteration and update it for the next round
+            debug_assert!(borrow[i] <= 2); // Loop (on j from above) invariant.
+            let (borrow0, u_i_new_val) = ct_sub_l_l(u_i_new_val, borrow[i]);
+            borrow[i] = borrow0 + borrow_i_f + borrow_i_g;
+            debug_assert!(borrow[i] <= 2); // Loop invariant still true.
+
+            // The scaled transition matrices always have (induced and sub-multiplicative) maximum
+            // norm <= 1, meaning that their application to a row vector, like (u_f, u_g) does not
+            // increase the maximum over the absolute values of the two resulting entries. Upon
+            // entry to this function, the invariant 0 <= u_f, u_g < n had been true by assumption.
+            // From that, it follows that the unscaled resulting column vectors have
+            // absolute values < 2^row_shift[i] * |n|,
+            // with row_shift[i] <= STEPS_PER_BATCH == LIMB_BITS - 2.
+            // u_i currently holds the (unscaled) top limb with such an column entry vector,
+            // carry[1] and borrow any carry or borrow on its left.
+            // With the upper bounds from above, it follows that the unscaled result in
+            // u_i does not exceed its width; in particular, the effective borrow equals
+            // its high (sign) bit.
+            debug_assert!(carry[i][1] == 0 || borrow[i] != 0);
+            debug_assert!(borrow[i] - carry[i][1] <= 1);
+            debug_assert_eq!(borrow[i] - carry[i][1], u_i_new_val >> LIMB_BITS - 1);
+            u_head_new_val[i] = u_i_new_val ;
+        }
+        // Final reduction outside of the loop over i in [0, 1] above, because the operation
+        // consumes the kernels and this requires destructuring of the redc_kernel[] array.
+        let [redc_kernel_u_f, redc_kernel_u_g] = redc_kernel;
+        let [mut u_f_geq_n_kernel, mut u_g_geq_n_kernel] = u_geq_n_kernel;
+        let (u_f_sign, u_f_new_val) = redc_kernel_u_f.finish_in_twos_complement(u_head_new_val[0]);
+        u_f_geq_n_kernel.update(u_f_new_val, last_n_val);
+        u_f.store_l(j, u_f_new_val & u_f.partial_high_mask());
+        let (u_g_sign, u_g_new_val) = redc_kernel_u_g.finish_in_twos_complement(u_head_new_val[1]);
+        u_g_geq_n_kernel.update(u_g_new_val, last_n_val);
+        u_g.store_l(j, u_g_new_val & u_g.partial_high_mask());
+
+        // The resulting, redced entries are int the range (-n[], 2 * n): the not yet reduced values
+        // are in the range 2^row_shift[i] * (-n[], n) and the Montgomery reduction adds a
+        // (positive) value in the range (0, 2^row_shift[i] * n[]) to that before dividing by
+        // 2^row_shift[i].
+        let u_f_geq_n = u_f_geq_n_kernel.finish().select(0, u_f_sign ^ 1);
+        let u_g_geq_n = u_g_geq_n_kernel.finish().select(0, u_g_sign ^ 1);
+
+        // Either add or subtract one n (or don't do anything at all), depending on u_i_sign and
+        // u_i_geq_n.
+        fn u_i_into_range<UT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(u_i: &mut UT,
+                                                                           u_i_sign: LimbType,
+                                                                           u_i_geq_n: LimbType,
+                                                                           n: &NT) {
+            // If u_i_sign, n[] needs to get added to u_i[].
+            // If u_i_geq_n, n[] needs to get subtracted from u_i[]. Negate it by standard two's
+            // complement negation, !n[] + 1, before adding it to u_i[].
+            let neg_n = LimbChoice::from(u_i_geq_n);
+            let neg_n_mask = neg_n.select(0, !0);
+            let mut neg_n_carry = neg_n.select(0, 1);
+            let cond_mask = LimbChoice::from(u_i_sign | u_i_geq_n).select(0, !0);
+            let mut carry = 0;
+            for i in 0..n.nlimbs() {
+                let n_val;
+                (neg_n_carry, n_val) = ct_add_l_l(n.load_l(i) ^ neg_n_mask, neg_n_carry);
+                let new_u_i_val;
+                (carry, new_u_i_val) = ct_add_l_l_c(u_i.load_l(i), n_val & cond_mask, carry);
+                if i + 1 != u_i.nlimbs() {
+                    u_i.store_l_full(i, new_u_i_val);
+                } else {
+                    u_i.store_l(i, new_u_i_val & u_i.partial_high_mask());
+                }
+            }
+            debug_assert_eq!(mp_ct_gt_mp_mp(n, u_i).unwrap(), 1);
+        }
+
+        u_i_into_range(u_f, u_f_sign, u_f_geq_n, n);
+        u_i_into_range(u_g, u_g_sign, u_g_geq_n, n);
+    }
+
+    fn t_is_neg_mask(&self) -> [[LimbType; 2]; 2] {
+        let t_f_f_is_neg = LimbChoice::from(self.t[0][0] >> LIMB_BITS - 1);
+        let t_f_g_is_neg = LimbChoice::from(self.t[0][1] >> LIMB_BITS - 1);
+        let t_g_f_is_neg = LimbChoice::from(self.t[1][0] >> LIMB_BITS - 1);
+        let t_g_g_is_neg = LimbChoice::from(self.t[1][1] >> LIMB_BITS - 1);
+        [
+            [t_f_f_is_neg.select(0, !0), t_f_g_is_neg.select(0, !0)],
+            [t_g_f_is_neg.select(0, !0), t_g_g_is_neg.select(0, !0)],
+        ]
     }
 }
 
@@ -251,26 +468,26 @@ fn batch_divsteps(
 }
 
 fn nbatches(len: usize) -> usize {
-    // For the minimum number of steps, c.f. [BERN_YANG19], Theorem G.6.
+    // For the minimum number of steps, c.f. [BERN_YANG19], Theorem 11.2.
     // Assuming len = f.len().min()(g.len()), then bits == len * 8, but the second operand, g, is
     // assumed to be even initially and to have been halved before getting input to the GCD, hence the +1 below.
     let nbits = len * 8 + 1;
-    let b = nbits + 1; // The +1 to account for taking the log2 of the Euclidean norm of (f, g).
-    let nsteps = if b <= 21 {
-        19 * b / 7
-    } else if b <= 46 {
-        (49 * b + 23) / 17
+    let d = nbits + 1; // The +1 to account for taking the log2 of the Euclidean norm of (f, g).
+    let nsteps = if d < 46 {
+        (49 * d + 80) / 17
     } else {
-        49 * b / 17
+        (49 * d + 57) / 17
     };
     (nsteps + STEPS_PER_BATCH - 1) / STEPS_PER_BATCH
 }
 
-pub fn mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(f: &mut FT, g: &mut GT) {
+fn mp_ct_gcd_ext<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(
+    mut update_ext_state: UES, f: &mut FT, g: &mut GT
+) -> LimbChoice {
     let nlimbs = f.nlimbs();
-    assert_eq!(nlimbs, g.nlimbs());
-    assert!(nlimbs != 0);
-    assert_eq!(f.load_l(0) & 1, 1);
+    debug_assert_eq!(nlimbs, g.nlimbs());
+    debug_assert!(nlimbs != 0);
+    debug_assert_eq!(f.load_l(0) & 1, 1);
     let nbatches = nbatches(f.len().max(g.len()));
 
     // One shadow limb is for shadowing potentially partial high limbs of f or g respectively and
@@ -288,7 +505,9 @@ pub fn mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(f: &mut FT, g: &m
         debug_assert_eq!(f_low & 1, 1);
         let transition_matrix;
         (delta, transition_matrix) = batch_divsteps(delta, f_low, g_low);
-        transition_matrix.apply_to(&mut f_shadow_head, f, &mut g_shadow_head, g);
+        let t_is_neg_mask = transition_matrix.t_is_neg_mask();
+        transition_matrix.apply_to_f_g(&t_is_neg_mask, &mut f_shadow_head, f, &mut g_shadow_head, g);
+        update_ext_state(&transition_matrix, &t_is_neg_mask);
     }
 
     debug_assert_eq!(g_shadow_head[0], 0);
@@ -300,8 +519,18 @@ pub fn mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(f: &mut FT, g: &m
 
     debug_assert!(f_shadow_head[1] == 0 || f_shadow_head[1] == !0);
     let f_is_neg = LimbChoice::from(f_shadow_head[1] >> LIMB_BITS - 1);
-    let neg_mask = f_is_neg.select(0, !0);
-    let mut carry = f_is_neg.select(0, 1);
+    f.store_l(nlimbs - 1, f_shadow_head[0] & f.partial_high_mask());
+
+    f_is_neg
+}
+
+pub fn mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(f: &mut FT, g: &mut GT) {
+    let gcd_is_neg = mp_ct_gcd_ext(|_, _| {}, f, g);
+
+    // If the GCD came out as negative, negate before returning.
+    let neg_mask = gcd_is_neg.select(0, !0);
+    let mut carry = gcd_is_neg.select(0, 1);
+    let nlimbs = f.nlimbs();
     let mut k = 0;
     while k + 1 < nlimbs {
         let mut f_val = f.load_l_full(k);
@@ -310,14 +539,14 @@ pub fn mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(f: &mut FT, g: &m
         f.store_l_full(k, f_val);
         k += 1;
     }
-    let mut f_val = f_shadow_head[0];
+    let mut f_val = f.load_l(nlimbs - 1);
     f_val ^= neg_mask;
     (_, f_val) = ct_add_l_l(f_val, carry);
-    f.store_l(nlimbs - 1, f_val);
+    f.store_l(nlimbs - 1, f_val & f.partial_high_mask());
 }
 
 #[cfg(test)]
-fn test_mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
+fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MPIntByteSliceCommon as _, MPIntByteSliceCommonPriv as _};
     use super::mul_impl::mp_ct_mul_trunc_mp_l;
@@ -447,17 +676,208 @@ fn test_mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
 #[test]
 fn test_mp_ct_gcd_be_be() {
     use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_gcd::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+    test_mp_ct_gcd_common::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_ct_gcd_le_le() {
     use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_gcd::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+    test_mp_ct_gcd_common::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
 }
 
 #[test]
 fn test_mp_ct_gcd_ne_ne() {
     use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_gcd::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+    test_mp_ct_gcd_common::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+}
+
+
+#[derive(Debug)]
+pub enum MpCtInvModOddError {
+    OperandsNotCoprime,
+}
+
+pub fn mp_ct_inv_mod_odd<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+    result: &mut RT, op0: &mut T0, n: &NT, scratch: [&mut [u8]; 2]
+) -> Result<(), MpCtInvModOddError> {
+    debug_assert_eq!(n.nlimbs(), op0.nlimbs());
+    debug_assert_eq!(result.nlimbs(), n.nlimbs());
+    debug_assert!(!n.is_empty());
+    debug_assert_eq!(n.load_l(0) & 1, 1);
+
+    // The column vector (ext_u0, ext_u1) tracking the coefficents of the extended
+    // Euclidean algorithm for the modular inversion case will be stored in
+    // (result, ext_u1_scratch).
+    let [f_work_scratch, ext_u1_scratch] = scratch;
+    let work_scratch_len = MPNativeEndianMutByteSlice::limbs_align_len(n.len());
+    debug_assert!(f_work_scratch.len() >= work_scratch_len);
+    let (mut f_work_scratch, _) = f_work_scratch.split_at_mut(work_scratch_len);
+    let mut f_work_scratch = MPNativeEndianMutByteSlice::from_bytes(&mut f_work_scratch).unwrap();
+    debug_assert!(ext_u1_scratch.len() >= work_scratch_len);
+    let (mut ext_u1_scratch, _) = ext_u1_scratch.split_at_mut(work_scratch_len);
+    let mut ext_u1_scratch = MPNativeEndianMutByteSlice::from_bytes(&mut ext_u1_scratch).unwrap();
+
+    // ext_u0 starts out as 0.
+    result.zeroize_bytes_above(0);
+    // ext_u1 starts out as 1. If the modulus is == 1, the result is undefined (the multiplicative group
+    // does not exist). Force the result to zero in this case.
+    let n_is_one = mp_ct_is_one_mp(n);
+    ext_u1_scratch.zeroize_bytes_above(0);
+    ext_u1_scratch.store_l_full(0, 1 ^ n_is_one.unwrap());
+
+    f_work_scratch.copy_from(n);
+    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l(n);
+
+    let gcd_is_neg = mp_ct_gcd_ext(
+        |t, t_is_neg_mask| {
+            t.apply_to_mod_odd_n(t_is_neg_mask, result, &mut ext_u1_scratch, n, neg_n0_inv_mod_l);
+        },
+        &mut f_work_scratch, op0
+    );
+
+    // Check whether the GCD is one (or -1) and return an error otherwise.
+    let neg_mask = gcd_is_neg.select(0, !0);
+    let mut expected_val = gcd_is_neg.select(1, !0);
+    let nlimbs = n.nlimbs();
+    for i in 0..nlimbs {
+        if f_work_scratch.load_l_full(i) != expected_val {
+            return Err(MpCtInvModOddError::OperandsNotCoprime);
+        }
+        expected_val = neg_mask;
+    }
+
+    // If the computed GCD came out as a negative 1, the inverse needs
+    // to get negated mod f. Note that -result mod f == f - result.
+    debug_assert!(mp_ct_is_zero_mp(result).unwrap() == 0 || n_is_one.unwrap() != 0);
+    let neg_mask = n_is_one.select(neg_mask, 0);
+    let mut neg_carry = (gcd_is_neg & !n_is_one).select(0, 1);
+    let mut carry = 0;
+    for i in 0..nlimbs {
+        let result_val = result.load_l(i);
+        let cond_neg_result_val;
+        (neg_carry, cond_neg_result_val) = ct_add_l_l(result_val ^ neg_mask, neg_carry);
+        let cond_f_val = n.load_l(i) & neg_mask;
+        let result_val;
+        (carry, result_val) = ct_add_l_l_c(cond_f_val, cond_neg_result_val, carry);
+        if i + 1 != nlimbs {
+            result.store_l_full(i, result_val);
+        } else {
+            result.store_l(i, result_val & result.partial_high_mask());
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn test_mp_ct_inv_mod_odd_common<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
+    use super::limb::LIMB_BYTES;
+    use super::mul_impl::mp_ct_mul_trunc_mp_l;
+    use super::limbs_buffer::{MPIntByteSliceCommon as _, MPIntByteSliceCommonPriv as _};
+
+    fn test_one<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+        op0: &T0, n: &NT
+    ) {
+        use super::mul_impl::mp_ct_mul_trunc_mp_mp;
+        use super::div_impl::mp_ct_div_mp_mp;
+
+        let mut op0_work_scratch = vec![0u8; op0.len()];
+        let mut op0_work_scratch = T0::from_bytes(&mut op0_work_scratch).unwrap();
+        op0_work_scratch.copy_from(op0);
+
+        let mut op0_inv_mod_n = vec![0u8; RT::limbs_align_len(n.len())];
+        let mut op0_inv_mod_n = RT::from_bytes(&mut op0_inv_mod_n).unwrap();
+
+        let mut scratch0 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len())];
+        let mut scratch1 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len())];
+
+        mp_ct_inv_mod_odd(&mut op0_inv_mod_n, &mut op0_work_scratch, n, [&mut scratch0, &mut scratch1]).unwrap();
+
+        // If n == 1, the multiplicative group does not exist and the result is fixed to zero.
+        if mp_ct_is_one_mp(n).unwrap() != 0 {
+            assert_eq!(mp_ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
+            return;
+        }
+
+        // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
+        let mut product_buf = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];
+        let mut product = MPNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
+        product.copy_from(&op0_inv_mod_n);
+        mp_ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
+        mp_ct_div_mp_mp::<_, _, MPNativeEndianMutByteSlice>(None, &mut product, n, None).unwrap();
+        assert_eq!(mp_ct_is_one_mp(&product).unwrap(), 1);
+    }
+
+    for l in [LIMB_BYTES - 1, 2 * LIMB_BYTES - 1, 3 * LIMB_BYTES - 1, 4 * LIMB_BYTES - 1] {
+        let n_len = NT::limbs_align_len(l);
+        let op0_len = T0::limbs_align_len(l);
+        let n_op0_min_len = n_len.min(op0_len);
+        let n_op0_high_min_len = (n_op0_min_len - 1) % LIMB_BYTES + 1;
+
+        let mut n_buf = vec![0u8; n_len];
+        let mut op0_buf = vec![0u8; op0_len];
+        let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
+        let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+        n.store_l(0, 3);
+        op0.store_l(0, 2);
+        test_one::<RT, _, _>(&op0, &n);
+
+        for i in 0..8 * LIMB_BYTES.min(n_op0_min_len) - 1 {
+            for j in 1..8 * LIMB_BYTES.min(n_op0_min_len) - 1 {
+                let mut n_buf = vec![0u8; n_len];
+                let mut op0_buf = vec![0u8; op0_len];
+                let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
+                let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+                let limb_index = i / (8 * LIMB_BYTES);
+                let i = i % (8 * LIMB_BYTES);
+                n.store_l(limb_index, 1 << i);
+                n.store_l(0, n.load_l(0) | 1);
+                let limb_index = j / (8 * LIMB_BYTES);
+                let j = j % (8 * LIMB_BYTES);
+                op0.store_l(limb_index, 1 << j);
+                test_one::<RT, _, _>(&op0, &n);
+            }
+        }
+
+        let mut n_buf = vec![0u8; n_len];
+        let mut op0_buf = vec![0u8; op0_len];
+        let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
+        let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+        n.store_l(0, 1);
+        while n.load_l(n.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
+            mp_ct_mul_trunc_mp_l(&mut n, n_len, 251);
+        }
+        op0.store_l(0, 1);
+        while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
+            mp_ct_mul_trunc_mp_l(&mut op0, op0_len, 241);
+        }
+        while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len) - 1 == 0 {
+            mp_ct_mul_trunc_mp_l(&mut op0, op0_len, 2);
+        }
+        test_one::<RT, _, _>(&op0, &n);
+    }
+}
+
+#[test]
+fn test_mp_ct_inv_mod_odd_be_be_be() {
+    use super::limbs_buffer::MPBigEndianMutByteSlice;
+    test_mp_ct_inv_mod_odd_common::<MPBigEndianMutByteSlice,
+                                    MPBigEndianMutByteSlice,
+                                    MPBigEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_ct_inv_mod_odd_le_le_le() {
+    use super::limbs_buffer::MPLittleEndianMutByteSlice;
+    test_mp_ct_inv_mod_odd_common::<MPLittleEndianMutByteSlice,
+                                    MPLittleEndianMutByteSlice,
+                                    MPLittleEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_ct_inv_mod_odd_ne_ne_ne() {
+    use super::limbs_buffer::MPNativeEndianMutByteSlice;
+    test_mp_ct_inv_mod_odd_common::<MPNativeEndianMutByteSlice,
+                                    MPNativeEndianMutByteSlice,
+                                    MPNativeEndianMutByteSlice>()
 }
