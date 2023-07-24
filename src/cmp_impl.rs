@@ -1,8 +1,6 @@
 //! Implementation of multiprecision integer comparison primitives.
 
-use clap::builder::BoolValueParser;
-
-use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b, LimbType};
+use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b, LimbType, ct_lt_or_eq_l_l};
 use super::limbs_buffer::MPIntByteSliceCommon;
 #[cfg(test)]
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _};
@@ -110,6 +108,47 @@ pub fn mp_ct_neq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
     !mp_ct_eq_mp_mp(op0, op1)
 }
 
+pub struct MpCtLeqKernel {
+    tail_is_leq: LimbType
+}
+
+impl MpCtLeqKernel {
+    pub fn new() -> Self {
+        Self { tail_is_leq: 1 }
+    }
+
+    pub fn update(&mut self, v0_val: LimbType, v1_val: LimbType) {
+        let (is_lt, is_eq) = ct_lt_or_eq_l_l(v0_val, v1_val);
+        // Consider the result from the tail comparisons only if the currently
+        // inspected limbs are equal.
+        self.tail_is_leq &= is_eq;
+        // If the current v0_val is < v1_val, the tail does not matter.
+        self.tail_is_leq |= is_lt;
+    }
+
+    pub fn finish(self) -> LimbChoice {
+        LimbChoice::from(self.tail_is_leq)
+    }
+}
+
+pub struct MpCtGeqKernel {
+    leq_kernel: MpCtLeqKernel
+}
+
+impl MpCtGeqKernel {
+    pub fn new() -> Self {
+        Self { leq_kernel: MpCtLeqKernel::new() }
+    }
+
+    pub fn update(&mut self, v0_val: LimbType, v1_val: LimbType) {
+        self.leq_kernel.update(v1_val, v0_val)
+    }
+
+    pub fn finish(self) -> LimbChoice {
+        self.leq_kernel.finish()
+    }
+}
+
 /// Compare two multiprecision integers of specified endianess for `<=`.
 ///
 /// Evaluates to `true` iff `op0` is less or equal than `op1` in value.
@@ -124,30 +163,18 @@ pub fn mp_ct_leq_mp_mp<T0: MPIntByteSliceCommon, T1: MPIntByteSliceCommon>(op0: 
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
 
-    let mut is_eq = black_box_l(1);
+    let mut leq_kernel = MpCtLeqKernel::new();
+    for i in 0..common_nlimbs {
+        leq_kernel.update(op0.load_l(i), op1.load_l(i));
+    }
     for i in common_nlimbs..op0_nlimbs {
-        let op0_val = op0.load_l(i);
-        is_eq &= ct_is_zero_l(op0_val);
+        leq_kernel.update(op0.load_l(i), 0);
     }
-
-    let mut is_lt = 0 ;
     for i in common_nlimbs..op1_nlimbs {
-        let op1_val = op1.load_l(i);
-        is_lt |= ct_is_nonzero_l(op1_val);
+        leq_kernel.update(0, op1.load_l(i));
     }
 
-    let mut i = common_nlimbs;
-    while i > 0 {
-        i -= 1;
-        let op0_val = op0.load_l(i);
-        let op1_val = op1.load_l(i);
-        let (borrow, diff) = ct_sub_l_l(op0_val, op1_val);
-
-        is_lt |= is_eq & borrow;
-        is_eq &= ct_is_zero_l(diff | borrow);
-    }
-
-    LimbChoice::from(is_lt | is_eq)
+    leq_kernel.finish()
 }
 
 #[cfg(test)]

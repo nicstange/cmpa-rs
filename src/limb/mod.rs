@@ -164,6 +164,12 @@ pub fn ct_neq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     !ct_eq_l_l(v0, v1)
 }
 
+pub fn ct_lt_or_eq_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+    let (borrow, diff) = ct_sub_l_l(v0, v1);
+    debug_assert!(diff != 0 || borrow == 0);
+    (borrow, ct_is_zero_l(diff))
+}
+
 pub fn ct_lt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     let (borrow, _) = ct_sub_l_l(v0, v1);
     LimbChoice::from(borrow)
@@ -171,6 +177,10 @@ pub fn ct_lt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
 
 pub fn ct_le_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     !ct_lt_l_l(v1, v0)
+}
+
+pub fn ct_gt_or_eq_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+    ct_lt_or_eq_l_l(v1, v0)
 }
 
 pub fn ct_gt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
