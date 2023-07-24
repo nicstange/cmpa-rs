@@ -947,7 +947,7 @@ pub trait MPIntByteSliceCommonPriv: Sized {
     fn take(self, nbytes: usize) -> (Self, Self);
 }
 
-pub trait MPIntByteSliceCommon: MPIntByteSliceCommonPriv {
+pub trait MPIntByteSliceCommon: MPIntByteSliceCommonPriv + fmt::LowerHex {
     fn len(&self) -> usize {
         self._len()
     }
@@ -964,6 +964,51 @@ pub trait MPIntByteSliceCommon: MPIntByteSliceCommonPriv {
 
     fn load_l_full(&self, i: usize) -> LimbType;
     fn load_l(&self, i: usize) -> LimbType;
+
+    fn fmt_lower_hex(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn nibble_to_hexchar(nibble: u8) -> char {
+            let c = match nibble {
+                0x0..=0x9 => b'0' + (nibble - 0x0),
+                0xa..=0xf => b'a' + (nibble - 0xa),
+                _ => unreachable!(),
+            };
+            c as char
+        }
+
+        fn fmt_byte(f: &mut fmt::Formatter<'_>, v: u8) -> fmt::Result {
+            <fmt::Formatter<'_> as fmt::Write>::write_char(f, nibble_to_hexchar(v >> 4))?;
+            <fmt::Formatter<'_> as fmt::Write>::write_char(f, nibble_to_hexchar(v & 0xf))?;
+            Ok(())
+        }
+
+        fn fmt_l(f: &mut fmt::Formatter<'_>, v: LimbType, len: usize) -> fmt::Result {
+            for i in 0..len {
+                fmt_byte(f, (v >> 8 * (len - i - 1)) as u8)?;
+            }
+            Ok(())
+        }
+
+        if f.alternate() {
+            f.write_str("0x")?;
+        }
+        if self.is_empty() {
+            f.write_str("(empty)")?;
+            return Ok(())
+        }
+
+        let v = self.load_l(self.nlimbs() - 1);
+        fmt_l(f, v, (self.len() - 1) % LIMB_BYTES + 1)?;
+
+        let mut i = 0;
+        while i + 1 < self.nlimbs() {
+            <fmt::Formatter<'_> as fmt::Write>::write_char(f, '_')?;
+            let v = self.load_l(self.nlimbs() - 2 - i);
+            fmt_l(f, v, LIMB_BYTES)?;
+            i += 1;
+        }
+
+        Ok(())
+    }
 }
 
 pub trait MPIntByteSlicePriv: MPIntByteSliceCommon {
@@ -1079,6 +1124,13 @@ impl<'a> MPIntByteSlice for MPBigEndianByteSlice<'a> {
         Self::from_bytes(self.bytes).unwrap()
     }
 }
+
+impl<'a> fmt::LowerHex for MPBigEndianByteSlice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_lower_hex(f)
+    }
+}
+
 pub struct MPBigEndianMutByteSlice<'a> {
     bytes: &'a mut [u8]
 }
@@ -1151,6 +1203,12 @@ impl<'a> MPIntMutByteSlice for MPBigEndianMutByteSlice<'a> {
     }
 }
 
+impl<'a> fmt::LowerHex for MPBigEndianMutByteSlice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_lower_hex(f)
+    }
+}
+
 pub struct MPLittleEndianByteSlice<'a> {
     bytes: &'a [u8]
 }
@@ -1206,6 +1264,13 @@ impl<'a> MPIntByteSlice for MPLittleEndianByteSlice<'a> {
         Self::from_bytes(self.bytes).unwrap()
     }
 }
+
+impl<'a> fmt::LowerHex for MPLittleEndianByteSlice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_lower_hex(f)
+    }
+}
+
 pub struct MPLittleEndianMutByteSlice<'a> {
     bytes: &'a mut [u8]
 }
@@ -1278,6 +1343,12 @@ impl<'a> MPIntMutByteSlice for MPLittleEndianMutByteSlice<'a> {
     }
 }
 
+impl<'a> fmt::LowerHex for MPLittleEndianMutByteSlice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_lower_hex(f)
+    }
+}
+
 #[derive(Debug)]
 pub struct UnalignedMPByteSliceLenError {}
 
@@ -1342,6 +1413,13 @@ impl<'a> MPIntByteSlice for MPNativeEndianByteSlice<'a> {
         Self::from_bytes(self.bytes).unwrap()
     }
 }
+
+impl<'a> fmt::LowerHex for MPNativeEndianByteSlice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_lower_hex(f)
+    }
+}
+
 pub struct MPNativeEndianMutByteSlice<'a> {
     bytes: &'a mut [u8]
 }
@@ -1417,6 +1495,12 @@ impl<'a> MPIntMutByteSlice for MPNativeEndianMutByteSlice<'a> {
 
     fn zeroize_bytes_below(&mut self, end: usize) {
         mp_ne_zeroize_bytes_below(self.bytes, end)
+    }
+}
+
+impl<'a> fmt::LowerHex for MPNativeEndianMutByteSlice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_lower_hex(f)
     }
 }
 
