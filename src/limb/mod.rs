@@ -814,11 +814,47 @@ fn test_ct_find_last_set_bit_l() {
         let v = 1 << i;
         assert_eq!(ct_find_last_set_bit_l(v), i + 1);
         assert_eq!(ct_find_last_set_bit_l(v - 1), i);
+        assert_eq!(ct_find_last_set_bit_l(!(v - 1)), LIMB_BITS as usize);
     }
 }
 
 pub fn ct_find_last_set_byte_l(v: LimbType) -> usize {
     ((ct_find_last_set_bit_l(v) + 8 - 1) / 8) as usize
+}
+
+// Position of LSB, if any, LIMB_BITS otherwise.
+pub fn ct_find_first_set_bit_l(mut v: LimbType) -> usize {
+    let mut bits = LIMB_BITS as LimbType;
+    assert!(bits != 0);
+    assert!(bits & bits - 1 == 0); // Is a power of two.
+    let mut count: usize = LIMB_BITS as usize;
+    let mut lsb_mask = !0;
+    while bits > 1 {
+        bits /= 2;
+        lsb_mask >>= bits;
+        let v_l = v & lsb_mask;
+        let v_h = v >> bits;
+        let lower = ct_neq_l_l(v_l, 0);
+        count -= lower.select(0, bits) as usize;
+        v = lower.select(v_h, v_l);
+    }
+    debug_assert!(v <= 1);
+    count -= v as usize;
+    count
+}
+
+#[test]
+fn test_ct_find_first_set_bit_l() {
+    assert_eq!(ct_find_first_set_bit_l(0), LIMB_BITS as usize);
+
+    for i in 0..LIMB_BITS as usize {
+        let v = 1 << i;
+        assert_eq!(ct_find_first_set_bit_l(v), i);
+        if i != 0 {
+            assert_eq!(ct_find_first_set_bit_l(v - 1), 0);
+        }
+        assert_eq!(ct_find_first_set_bit_l(!(v - 1)), i);
+    }
 }
 
 pub fn ct_arithmetic_rshift_l(v: LimbType, rshift: LimbType) -> LimbType {
