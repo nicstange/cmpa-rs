@@ -283,9 +283,9 @@ pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCo
     // approach to fused multiplication and Montgomery reduction, as described in "Analyzing
     // and Comparing Montgomery Multiplication Algorithm", IEEE Micro, 16(3):26-33, June 1996.
     debug_assert!(!n.is_empty());
-    debug_assert_eq!(result.len(), n.len());
-    debug_assert!(op0.len() <= n.len());
-    debug_assert!(op1.len() <= n.len());
+    debug_assert_eq!(result.nlimbs(), n.nlimbs());
+    debug_assert!(op0.nlimbs() <= n.nlimbs());
+    debug_assert!(op1.nlimbs() <= n.nlimbs());
 
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
@@ -410,7 +410,7 @@ pub fn mp_ct_montgomery_mul_mod_cond<RT: MPIntMutByteSlice, T0: MPIntByteSliceCo
     }
 
     // Now apply the high limb shadow back.
-    debug_assert!(result.len() == n.len());
+    debug_assert!(result.nlimbs() == n.nlimbs());
     let result_high_shadow_mask = n.partial_high_mask();
     let result_high_shadow_shift = n.partial_high_shift();
     assert!(result_high_shadow_shift == 0 || result_carry == 0);
