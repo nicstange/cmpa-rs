@@ -395,7 +395,7 @@ pub fn mp_ct_sub_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> Lim
     let mut op0_val = op0.load_l(op0_nlimbs - 1);
     (borrow, op0_val) = ct_sub_l_l(op0_val, borrow);
     let op0_high_mask = op0.partial_high_mask();
-    op0.store_l(op0_nlimbs, op0_val & op0_high_mask);
+    op0.store_l(op0_nlimbs - 1, op0_val & op0_high_mask);
     debug_assert!(op0.partial_high_shift() == 0 || borrow == op0_val >> (LIMB_BITS - 1));
 
     borrow
