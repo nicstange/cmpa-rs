@@ -4,6 +4,7 @@ mod add_impl;
 mod cmp_impl;
 mod div_impl;
 mod euclid;
+pub mod hexstr;
 mod invmod_impl;
 mod limb;
 mod limbs_buffer;
