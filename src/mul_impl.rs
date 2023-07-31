@@ -40,6 +40,14 @@ pub fn mp_ct_mul_trunc_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommo
     op0: &mut T0, op0_in_len: usize, op1: &T1, cond: LimbChoice
 ) {
     debug_assert!(op0_in_len <= op0.len());
+    // If op1's length is zero, interpret that as a zero.
+    if op1.is_empty() {
+        let cond_mask = cond.select(0, !0);
+        for j in 0..op0.nlimbs() {
+            op0.store_l(j, op0.load_l(j) & !cond_mask);
+        }
+        return;
+    }
     let op1_nlimbs = op1.nlimbs();
 
     let result_high_mask = op0.partial_high_mask();
