@@ -7,7 +7,7 @@
 
 use core::{self, convert, fmt, marker};
 
-use super::limb::{LimbType, LIMB_BYTES, LIMB_BITS, ct_find_last_set_byte_l, ct_lsb_mask_l, LimbChoice, ct_find_first_set_bit_l, ct_is_zero_l};
+use super::limb::{LimbType, LIMB_BYTES, LIMB_BITS, ct_find_last_set_byte_l, ct_lsb_mask_l, LimbChoice, ct_find_first_set_bit_l, ct_find_last_set_bit_l, ct_is_zero_l};
 use super::usize_ct_cmp::ct_eq_usize_usize;
 
 /// Determine the number of [`LimbType`] limbs stored in a multiprecision integer big-endian byte
@@ -1681,6 +1681,66 @@ fn test_mp_find_first_set_bit_le() {
 #[test]
 fn test_mp_find_first_set_bit_ne() {
     test_mp_find_first_set_bit_mp::<MPNativeEndianMutByteSlice>()
+}
+
+pub fn mp_ct_find_last_set_bit_mp<T0: MPIntByteSliceCommon>(op0: &T0) -> (LimbChoice, usize) {
+    let mut head_is_zero = LimbChoice::from(1);
+    let mut nleading_zeroes: usize = 0;
+    let mut i = op0.nlimbs();
+    while i > 0 {
+        i -= 1;
+        let op0_val = op0.load_l(i);
+        nleading_zeroes += head_is_zero.select(
+            0,
+            LIMB_BITS as LimbType - ct_find_last_set_bit_l(op0_val) as LimbType
+        ) as usize;
+        head_is_zero &= LimbChoice::from(ct_is_zero_l(op0_val));
+    }
+    (!head_is_zero, op0.nlimbs() * LIMB_BITS as usize - nleading_zeroes)
+}
+
+#[cfg(test)]
+fn test_mp_find_last_set_bit_mp<T0: MPIntMutByteSlice>() {
+    let mut limbs: [u8; 3 * LIMB_BYTES] = [0u8; 3 * LIMB_BYTES];
+    let limbs = T0::from_bytes(&mut limbs).unwrap();
+    let (is_nonzero, first_set_bit_pos) = mp_ct_find_last_set_bit_mp(&limbs);
+    assert_eq!(is_nonzero.unwrap(), 0);
+    assert_eq!(first_set_bit_pos, 0);
+
+    for i in 0..3 * LIMB_BITS as usize {
+        let mut limbs: [u8; 3 * LIMB_BYTES] = [0u8; 3 * LIMB_BYTES];
+        let mut limbs = T0::from_bytes(&mut limbs).unwrap();
+        let limb_index = i / LIMB_BITS as usize;
+        let bit_pos_in_limb = i % LIMB_BITS as usize;
+
+        limbs.store_l(limb_index, 1 << bit_pos_in_limb);
+        let (is_nonzero, last_set_bit_pos) = mp_ct_find_last_set_bit_mp(&limbs);
+        assert!(is_nonzero.unwrap() != 0);
+        assert_eq!(last_set_bit_pos, i + 1);
+
+        limbs.store_l(limb_index, (1 << bit_pos_in_limb) - 1);
+        for j in 0..limb_index {
+            limbs.store_l(j, !0);
+        }
+        let (is_nonzero, last_set_bit_pos) = mp_ct_find_last_set_bit_mp(&limbs);
+        assert_eq!(is_nonzero.unwrap() != 0, i != 0);
+        assert_eq!(last_set_bit_pos, i);
+    }
+}
+
+#[test]
+fn test_mp_find_last_set_bit_be() {
+    test_mp_find_last_set_bit_mp::<MPBigEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_find_last_set_bit_le() {
+    test_mp_find_last_set_bit_mp::<MPLittleEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_find_last_set_bit_ne() {
+    test_mp_find_last_set_bit_mp::<MPNativeEndianMutByteSlice>()
 }
 
 pub fn mp_ct_zeroize_bits_above<T0: MPIntMutByteSlice>(op0: &mut T0, begin: usize) {
