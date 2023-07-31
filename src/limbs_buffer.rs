@@ -2192,6 +2192,64 @@ fn test_mp_zeroize_bits_below_ne() {
     test_mp_zeroize_bits_below_with_aligned_lengths::<MPNativeEndianMutByteSlice>();
 }
 
+pub fn mp_ct_swap_cond<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>(
+    op0: &mut T0, op1: &mut T1, cond: LimbChoice
+) {
+    debug_assert_eq!(op0.nlimbs(), op1.nlimbs());
+    let nlimbs = op0.nlimbs();
+    let cond_mask = cond.select(0, !0);
+    for i in 0..nlimbs {
+        let mut op0_val = op0.load_l(i);
+        let mut op1_val = op1.load_l(i);
+        op0_val ^= op1_val;
+        op1_val ^= op0_val & cond_mask;
+        op0_val ^= op1_val;
+        op0.store_l(i, op0_val);
+        op1.store_l(i, op1_val);
+    }
+}
+
+#[cfg(test)]
+fn test_mp_ct_swap_cond_common<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
+    use super::cmp_impl::mp_ct_eq_mp_mp;
+
+    let len = T0::limbs_align_len(2 * LIMB_BYTES - 1);
+    let len = T1::limbs_align_len(len);
+
+    let mut op0_orig = vec![0xccu8; len];
+    let mut op0 = op0_orig.clone();
+    let op0_orig = T0::from_bytes(&mut op0_orig).unwrap();
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
+
+    let mut op1_orig = vec![0xbbu8; len];
+    let mut op1 = op1_orig.clone();
+    let op1_orig = T0::from_bytes(&mut op1_orig).unwrap();
+    let mut op1 = T0::from_bytes(&mut op1).unwrap();
+
+    mp_ct_swap_cond(&mut op0, &mut op1, LimbChoice::from(0));
+    assert_ne!(mp_ct_eq_mp_mp(&op0, &op0_orig).unwrap(), 0);
+    assert_ne!(mp_ct_eq_mp_mp(&op1, &op1_orig).unwrap(), 0);
+
+    mp_ct_swap_cond(&mut op0, &mut op1, LimbChoice::from(1));
+    assert_ne!(mp_ct_eq_mp_mp(&op0, &op1_orig).unwrap(), 0);
+    assert_ne!(mp_ct_eq_mp_mp(&op1, &op0_orig).unwrap(), 0);
+}
+
+#[test]
+fn test_mp_ct_swap_cond_be_be() {
+    test_mp_ct_swap_cond_common::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_ct_swap_cond_le_le() {
+    test_mp_ct_swap_cond_common::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>();
+}
+
+#[test]
+fn test_mp_ct_swap_cond_ne_ne() {
+    test_mp_ct_swap_cond_common::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>();
+}
+
 /// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
 /// segments.
 struct CompositeLimbsBufferSegment<'a, ST: MPIntByteSliceCommon> {
