@@ -6,6 +6,7 @@ mod div_impl;
 mod euclid;
 pub mod hexstr;
 mod invmod_impl;
+mod lcm_impl;
 mod limb;
 mod limbs_buffer;
 mod montgomery;
