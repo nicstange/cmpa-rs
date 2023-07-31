@@ -149,8 +149,12 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
     let u_nlimbs = mp_ct_nlimbs(u_len);
 
     if let Some(q_out) = &mut q_out {
-        // Check that q_out has enough space for storing the maximum possible quotient.
-        if q_out.len() + v_len < u_len + 1 {
+        // Check that q_out has enough space for storing the maximum possible quotient. In general,
+        // at most one more bit than the bit width difference between u and v is needed. The byte
+        // granularity is too coarse to catch that, so only check the absolute lower bound here.
+        // The code storing the quotient below will verify that the head limb is zero in case
+        // it's not been provided storage for.
+        if q_out.len() + v_len < u_len {
             return Err(MpCtDivisionError::InsufficientQuotientSpace);
         }
     };
@@ -162,10 +166,10 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
         return Ok(());
     }
 
-    let q_out_len = u_len + 1 - v_len;
-    let q_out_nlimbs = mp_ct_nlimbs(q_out_len);
+    let q_out_max_len = u_len + 1 - v_len;
+    let q_out_max_nlimbs = mp_ct_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
-        q_out.zeroize_bytes_above(q_out_len);
+        q_out.zeroize_bytes_above(q_out_max_len);
     }
 
     // Create a padding buffer extending u at its more significant end:
@@ -201,7 +205,7 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
     // The extra high limb in u_h_pad, initialized to zero, would have absorbed the last carry.
     debug_assert_eq!(carry, 0);
 
-    let mut j = q_out_nlimbs;
+    let mut j = q_out_max_nlimbs;
     while j > 0 {
         j -= 1;
         let q = {
@@ -238,7 +242,12 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
         let over_estimated = LimbChoice::from(borrow);
         if let Some(q_out) = &mut q_out {
             let q = q - over_estimated.select(0, 1);
-            q_out.store_l(j, q);
+            if j != q_out.nlimbs() {
+                debug_assert!(j < q_out.nlimbs());
+                q_out.store_l(j, q);
+            } else  if q != 0 {
+                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            }
         }
         let mut carry = 0;
         let add_back_scaling = over_estimated.select(0, scaling);
@@ -457,8 +466,12 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     let virtual_u_nlimbs = mp_ct_nlimbs(virtual_u_len);
 
     if let Some(q_out) = &mut q_out {
-        // Check that q_out has enough space for storing the maximum possible quotient.
-        if q_out.len() + v_len < virtual_u_len + 1 {
+        // Check that q_out has enough space for storing the maximum possible quotient.  In general,
+        // at most one more bit than the bit width difference between u and v is needed. The byte
+        // granularity is too coarse to catch that, so only check the absolute lower bound here.
+        // The code storing the quotient below will verify that the head limb is zero in case it's
+        // not been provided storage for.
+        if q_out.len() + v_len < virtual_u_len {
             return Err(MpCtDivisionError::InsufficientQuotientSpace);
         }
     };
@@ -479,10 +492,10 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
         return Ok(());
     }
 
-    let q_out_len = virtual_u_len + 1 - v_len;
-    let q_out_nlimbs = mp_ct_nlimbs(q_out_len);
+    let q_out_max_len = virtual_u_len + 1 - v_len;
+    let q_out_max_nlimbs = mp_ct_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
-        q_out.zeroize_bytes_above(q_out_len);
+        q_out.zeroize_bytes_above(q_out_max_len);
     };
 
     // Normalize divisor's high limb.
@@ -498,8 +511,8 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     let scaled_u_high: DoubleLimb = ct_mul_l_l(u_high, scaling);
     let mut r_out_head_shadow: [LimbType; 2] = [scaled_u_high.low(), scaled_u_high.high()];
 
-    // Note that q_out_nlimbs as calculate above doesn't necessarily equal u_nlimbs - v_nlimbs + 1,
-    // but might come out to be one less. It can be shown that q_out_nlimbs = u_nlimbs - v_nlimbs
+    // Note that q_out_max_nlimbs as calculate above doesn't necessarily equal u_nlimbs - v_nlimbs + 1,
+    // but might come out to be one less. It can be shown that q_out_max_nlimbs = u_nlimbs - v_nlimbs
     // implies that the scaling of u above would not have overflown into the scaled_u_high.high()
     // now found in the r_out_head_shadow[] high limb at index 1.
     //
@@ -513,7 +526,7 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     //   and
     //     v_nlimbs = q_vl + 1.
     //   By definition (all subsequent divisions are meant to be integer divisions),
-    //     q_out_nlimbs
+    //     q_out_max_nlimbs
     //          = (u.len() - v.len() + 1 + LIMB_BYTES - 1) / LIMB_BYTES
     //          = (u.len() - v.len()) / LIMB_BYTES + 1
     //          = (u.len() - 1 - (v.len() - 1)) / LIMB_BYTES + 1
@@ -538,25 +551,25 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     //   LIMB_BYTES - (r_ul + 1) >= LIMB_BYTES - r_vl,
     //   the scaling is guaranteed not to overflow into the next higher limb. Observe
     //   how this latter condition is equivalent to r_vl > r_ul, which, as shown above,
-    //   is in turn equivalent to q_out_nlimbs taking the smaller of the two possible values:
-    //   q_out_nlimbs = u_nlimbs - v_nlimbs. ]
+    //   is in turn equivalent to q_out_max_nlimbs taking the smaller of the two possible values:
+    //   q_out_max_nlimbs = u_nlimbs - v_nlimbs. ]
     //
     // This matters insofar, as the current setup of r_out_head_shadow[] is such that the sliding
     // window approach to the division from below would start at the point in the virtual, scaled u
     // valid only for the case that the scaling did overflow, i.e. at the (virtual) limb position
     // just above the one which should have been taken for the non-overflowing case. The quotient
     // limb obtained for this initial position would come out to zero, but this superfluous
-    // computation would consume one iteration from the total count of q_out_nlimbs ones actually
-    // needed. Simply incrementing q_out_nlimbs to account for that would not work, as there would
-    // be no slot for storing the extra zero high limb of q available in the output q_out[]
-    // argument. Instead, if q_out_nlimbs is the smaller of the two possible values, i.e. equals
-    // u_nlimbs - v_nlimbs, tweak r_out_head_shadow[] to the state it would have had after one (otherwise
-    // superfluous) initial iteration of the division loop.
+    // computation would consume one iteration from the total count of q_out_max_nlimbs ones
+    // actually needed. Simply incrementing q_out_max_nlimbs to account for that would not work, as
+    // there would be no slot for storing the extra zero high limb of q available in the output
+    // q_out[] argument. Instead, if q_out_max_nlimbs is the smaller of the two possible values,
+    // i.e. equals u_nlimbs - v_nlimbs, tweak r_out_head_shadow[] to the state it would have had
+    // after one (otherwise superfluous) initial iteration of the division loop.
     debug_assert!(
-        v_nlimbs + q_out_nlimbs == virtual_u_nlimbs + 1 ||
-            v_nlimbs + q_out_nlimbs == virtual_u_nlimbs
+        v_nlimbs + q_out_max_nlimbs == virtual_u_nlimbs + 1 ||
+            v_nlimbs + q_out_max_nlimbs == virtual_u_nlimbs
     );
-    if v_nlimbs + q_out_nlimbs == virtual_u_nlimbs {
+    if v_nlimbs + q_out_max_nlimbs == virtual_u_nlimbs {
         debug_assert_eq!(r_out_head_shadow[1], 0);
         r_out_head_shadow[1] = r_out_head_shadow[0];
         r_out_head_shadow[0] = 0;
@@ -570,7 +583,7 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     // zero as per the basic long division algorithm's underlying principle. That is, it can
     // be removed from the left, thereby effectively moving the sliding window one limb to
     // the right.
-    let mut j = q_out_nlimbs;
+    let mut j = q_out_max_nlimbs;
     while j > 0 {
         j -= 1;
         let q = {
@@ -644,7 +657,12 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
         let over_estimated = LimbChoice::from(borrow);
         if let Some(q_out) = &mut q_out {
             let q = q - over_estimated.select(0, 1);
-            q_out.store_l(j, q);
+            if j != q_out.nlimbs() {
+                debug_assert!(j < q_out.nlimbs());
+                q_out.store_l(j, q);
+            } else  if q != 0 {
+                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            }
         }
         let add_back_scaling = over_estimated.select(0, scaling);
         let mut carry = 0;
@@ -820,8 +838,12 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     let virtual_u_in_len = u_in_len + u_lshift_len;
 
     if let Some(q_out) = &mut q_out {
-        // Check that q_out has enough space for storing the maximum possible quotient.
-        if q_out.len() + v_len < virtual_u_in_len + 1 {
+        // Check that q_out has enough space for storing the maximum possible quotient. In general,
+        // at most one more bit than the bit width difference between u and v is needed. The byte
+        // granularity is too coarse to catch that, so only check the absolute lower bound here.
+        // The code storing the quotient below will verify that the head limb is zero in case it's
+        // not been provided storage for.
+        if q_out.len() + v_len < virtual_u_in_len {
             return Err(MpCtDivisionError::InsufficientQuotientSpace);
         }
     }
@@ -838,10 +860,10 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         return Ok(());
     }
 
-    let q_out_len = virtual_u_in_len + 1 - v_len;
-    let q_out_nlimbs = mp_ct_nlimbs(q_out_len);
+    let q_out_max_len = virtual_u_in_len + 1 - v_len;
+    let q_out_max_nlimbs = mp_ct_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
-        q_out.zeroize_bytes_above(q_out_len);
+        q_out.zeroize_bytes_above(q_out_max_len);
     }
 
     // The unaligned part of u_lshift_len will be taken into account by shifting the dividend by
@@ -922,7 +944,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     // Now, in a first step, run the regular long division on the head part of the shifted u,
     // i.e. on the original u shifted left by u_lshift_len_head.
     let u_lshift_tail_nlimbs = u_lshift_tail_len / LIMB_BYTES; // The len is aligned.
-    let q_out_head_nlimbs = q_out_nlimbs - u_lshift_tail_nlimbs;
+    let q_out_head_nlimbs = q_out_max_nlimbs - u_lshift_tail_nlimbs;
     let mut j = q_out_head_nlimbs;
     while j > 0 {
         j -= 1;
@@ -980,7 +1002,12 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         let over_estimated = LimbChoice::from(borrow);
         if let Some(q_out) = &mut q_out {
             let q = q - over_estimated.select(0, 1);
-            q_out.store_l( u_lshift_tail_nlimbs + j, q);
+            if u_lshift_tail_nlimbs + j != q_out.nlimbs() {
+                debug_assert!(u_lshift_tail_nlimbs + j < q_out.nlimbs());
+                q_out.store_l(u_lshift_tail_nlimbs + j, q);
+            } else  if q != 0 {
+                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            }
         }
         let add_back_scaling = over_estimated.select(0, scaling);
         let mut carry = 0;
@@ -1082,7 +1109,12 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         let over_estimated = LimbChoice::from(borrow);
         if let Some(q_out) = &mut q_out {
             let q = q - over_estimated.select(0, 1);
-            q_out.store_l(j, q);
+            if j != q_out.nlimbs() {
+                debug_assert!(j < q_out.nlimbs());
+                q_out.store_l(j, q);
+            } else  if q != 0 {
+                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            }
         }
 
         let add_back_scaling = over_estimated.select(0, scaling);
