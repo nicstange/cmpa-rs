@@ -1,6 +1,6 @@
 use super::cmp_impl::ct_is_zero_mp;
 use super::div_impl::ct_div_mp_mp;
-use super::euclid::ct_gcd_mp_mp;
+use super::euclid_impl::ct_gcd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
     ct_find_last_set_bit_mp, ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon,

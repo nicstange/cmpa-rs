@@ -3,7 +3,7 @@
 mod add_impl;
 mod cmp_impl;
 mod div_impl;
-mod euclid;
+mod euclid_impl;
 pub mod hexstr;
 mod invmod_impl;
 mod lcm_impl;
@@ -37,7 +37,7 @@ pub use cmp_impl::{
 
 pub use div_impl::{ct_div_mp_l, ct_div_mp_mp, CtDivMpError};
 
-pub use euclid::{ct_gcd_mp_mp, ct_gcd_odd_mp_mp, ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
+pub use euclid_impl::{ct_gcd_mp_mp, ct_gcd_odd_mp_mp, ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
 
 pub use invmod_impl::{ct_inv_mod_mp_mp, CtInvModMpMpError};
 

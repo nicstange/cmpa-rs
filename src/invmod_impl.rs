@@ -1,6 +1,6 @@
 use super::add_impl::{ct_add_mp_mp, ct_sub_mp_mp};
 use super::cmp_impl::{ct_is_zero_mp, ct_lt_mp_mp};
-use super::euclid::{ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
+use super::euclid_impl::{ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
 use super::limb::{ct_is_nonzero_l, ct_sub_l_l_b, LIMB_BITS};
 use super::limbs_buffer::{
     clear_bits_above_mp, ct_clear_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs,

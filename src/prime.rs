@@ -1,5 +1,5 @@
 use super::cmp_impl::{ct_is_one_mp, ct_leq_mp_l, ct_lt_mp_mp};
-use super::euclid::ct_gcd_odd_mp_mp;
+use super::euclid_impl::ct_gcd_odd_mp_mp;
 use super::hexstr;
 use super::limb::{
     ct_eq_l_l, ct_geq_l_l, ct_is_zero_l, ct_lt_l_l, ct_sub_l_l_b, LimbChoice, LimbType, LIMB_BITS,
