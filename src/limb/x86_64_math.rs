@@ -1,7 +1,6 @@
 #![cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
 
-use core::{arch::asm, borrow};
-use std::result;
+use core::arch::asm;
 use super::{LimbType, DoubleLimb};
 
 #[cfg(feature = "zeroize")]

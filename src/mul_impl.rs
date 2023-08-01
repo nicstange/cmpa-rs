@@ -1,9 +1,6 @@
 //! Implementation of multiprecision integer multiplication primitives.
 
-use core::ops::Deref as _;
-use crate::limb::LIMB_BITS;
-
-use super::limb::{LimbType, LimbChoice, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c, black_box_l};
+use super::limb::{LIMB_BITS, LimbType, LimbChoice, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c, black_box_l};
 use super::limbs_buffer::{ct_mp_nlimbs, MpIntMutByteSlice, MpIntByteSliceCommon};
 
 /// Conditionally multiply two multiprecision integers of specified endianess.

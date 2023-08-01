@@ -1,10 +1,8 @@
-use crate::div_impl::ct_div_lshifted_mp_mp;
-
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, LimbChoice, ct_inv_mod_l, ct_lsb_mask_l};
-use super::limbs_buffer::{MpIntMutByteSlice, MpIntMutByteSlicePriv as _, MpIntByteSliceCommon, MpNativeEndianMutByteSlice, ct_mp_limbs_align_len, ct_mp_nlimbs};
+use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LimbChoice, ct_inv_mod_l, ct_lsb_mask_l};
+use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpNativeEndianMutByteSlice, ct_mp_limbs_align_len, ct_mp_nlimbs};
 use super::cmp_impl::ct_geq_mp_mp;
 use super::add_impl::ct_sub_cond_mp_mp;
-use super::div_impl::{ct_div_mp_mp, ct_div_pow2_mp, CtDivMpError};
+use super::div_impl::{ct_div_pow2_mp, ct_div_lshifted_mp_mp, CtDivMpError};
 
 fn ct_montgomery_radix_shift_len(n_len: usize) -> usize {
     ct_mp_limbs_align_len(n_len)
@@ -23,6 +21,7 @@ pub fn ct_montgomery_neg_n0_inv_mod_l_mp<'a, NT: MpIntByteSliceCommon>(n: &NT) -
 
 #[test]
 fn test_ct_montgomery_neg_n0_inv_mod_l_mp() {
+    use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpBigEndianMutByteSlice;
 
     for n0 in 0 as LimbType..128 {
@@ -213,6 +212,9 @@ pub fn ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(t:
 
 #[cfg(test)]
 fn test_ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
+    use super::div_impl::ct_div_mp_mp;
+    use super::limb::LIMB_BYTES;
+
     for i in 0..64 {
         const MERSENNE_PRIME_13: LimbType = 8191 as LimbType;
         let n_high = MERSENNE_PRIME_13.wrapping_mul((16385 as LimbType).wrapping_mul(i));
@@ -428,8 +430,9 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<RT: MpIntMutByteSlice, T0: MpIntByteSlic
 fn test_ct_montgomery_mul_mod_cond_mp_mp<RT: MpIntMutByteSlice,
                                          T0: MpIntMutByteSlice, T1: MpIntMutByteSlice,
                                          NT: MpIntMutByteSlice>() {
-    use crate::limbs_buffer::MpIntByteSliceCommonPriv;
-
+    use super::div_impl::ct_div_mp_mp;
+    use super::limb::LIMB_BYTES;
+    use super::limbs_buffer::{MpIntByteSliceCommonPriv as _,  MpIntMutByteSlicePriv as _};
     use super::mul_impl::ct_mul_trunc_cond_mp_mp;
 
     for i in 0..16 {
@@ -599,8 +602,10 @@ pub fn ct_to_montgomery_form_mp<MGT: MpIntMutByteSlice, TT: MpIntByteSliceCommon
 
 #[cfg(test)]
 fn test_ct_to_montgomery_form_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice, RX2T: MpIntMutByteSlice>() {
-    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
+    use super::div_impl::ct_div_mp_mp;
     use super::cmp_impl::ct_eq_mp_mp;
+    use super::limb::LIMB_BYTES;
+    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
 
     for i in 0..16 {
         const MERSENNE_PRIME_13: LimbType = 8191 as LimbType;

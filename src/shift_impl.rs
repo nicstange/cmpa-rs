@@ -1,5 +1,5 @@
-use super::limbs_buffer::{MpIntMutByteSlice, ct_mp_nlimbs, MpIntMutByteSlicePriv as _, ct_zeroize_bits_below_mp, ct_zeroize_bits_above_mp};
-use super::limb::{LIMB_BYTES, LIMB_BITS, LimbType, ct_lsb_mask_l};
+use super::limbs_buffer::{MpIntMutByteSlice, ct_mp_nlimbs, ct_zeroize_bits_below_mp, ct_zeroize_bits_above_mp};
+use super::limb::{LIMB_BITS, LimbType, ct_lsb_mask_l};
 use super::usize_ct_cmp::{ct_eq_usize_usize, ct_gt_usize_usize, ct_leq_usize_usize, ct_lt_usize_usize, ct_geq_usize_usize};
 
 pub fn ct_lshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> LimbType{
@@ -123,6 +123,8 @@ pub fn ct_lshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 
 #[cfg(test)]
 fn test_fill_limb_with_seq(first: u8) -> LimbType {
+    use super::limb::LIMB_BYTES;
+
     let mut l: LimbType = 0;
     for i in 0..LIMB_BYTES as u8 {
         l <<= 8;
@@ -133,6 +135,7 @@ fn test_fill_limb_with_seq(first: u8) -> LimbType {
 
 #[cfg(test)]
 fn test_ct_lshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommon, MpIntByteSliceCommonPriv};
 
     fn test_fill_limb_with_seq_lshifted(limb_index: usize, lshift_distance: usize) -> LimbType {
@@ -218,6 +221,7 @@ fn test_ct_lshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 
 #[cfg(test)]
 fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+    use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpIntByteSliceCommon;
 
     let mut op0: [u8; 1] = [0xff; 1];
@@ -245,6 +249,8 @@ fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
 
 #[cfg(test)]
 fn test_ct_lshift_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+    use super::limb::LIMB_BYTES;
+
     for i in 0..LIMB_BYTES + 3 {
         let mut op0: [u8; 0] = [0; 0];
         let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
@@ -386,6 +392,7 @@ pub fn ct_rshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 
 #[cfg(test)]
 fn test_ct_rshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommon, MpIntByteSliceCommonPriv};
 
     // limb_index is offset by one: an index of zero is used
@@ -458,6 +465,7 @@ fn test_ct_rshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 
 #[cfg(test)]
 fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+    use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpIntByteSliceCommon;
 
     let mut op0: [u8; 1] = [0xff; 1];
@@ -485,6 +493,8 @@ fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
 
 #[cfg(test)]
 fn test_ct_rshift_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+    use super::limb::LIMB_BYTES;
+
     for i in 0..LIMB_BYTES + 3 {
         let mut op0: [u8; 0] = [0; 0];
         let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();

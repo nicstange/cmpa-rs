@@ -141,8 +141,6 @@ fn be_mp_load_l(limbs: &[u8], i: usize) -> LimbType {
 
 #[test]
 fn test_be_mp_load_l() {
-    use super::limb::LIMB_BITS;
-
     let limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     assert_eq!(be_mp_load_l(&limbs, 0), 0);
     assert_eq!(be_mp_load_l(&limbs, 1), 0);
@@ -290,8 +288,6 @@ fn be_mp_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
 
 #[test]
 fn test_be_mp_store_l() {
-    use super::limb::LIMB_BITS;
-
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     be_mp_store_l(&mut limbs, 0, 1 << (LIMB_BITS - 1));
     be_mp_store_l(&mut limbs, 1, 1);
@@ -500,8 +496,6 @@ fn le_mp_load_l(limbs: &[u8], i: usize) -> LimbType {
 
 #[test]
 fn test_le_mp_load_l() {
-    use super::limb::LIMB_BITS;
-
     let limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     assert_eq!(le_mp_load_l(&limbs, 0), 0);
     assert_eq!(le_mp_load_l(&limbs, 1), 0);
@@ -648,8 +642,6 @@ fn le_mp_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
 
 #[test]
 fn test_le_mp_store_l() {
-    use super::limb::LIMB_BITS;
-
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     le_mp_store_l(&mut limbs, 0, 1 << (LIMB_BITS - 1));
     le_mp_store_l(&mut limbs, 1, 1);
@@ -814,8 +806,6 @@ fn ne_mp_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
 
 #[test]
 fn test_ne_mp_store_l() {
-    use super::limb::LIMB_BITS;
-
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     ne_mp_store_l(&mut limbs, 0, 1 << (LIMB_BITS - 1));
     ne_mp_store_l(&mut limbs, 1, 1);
@@ -1596,8 +1586,6 @@ fn test_find_last_set_byte_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
 
 #[cfg(test)]
 fn test_find_last_set_byte_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
-    use super::limb::LIMB_BITS;
-
     let mut op0: [u8; 0] = [0; 0];
     let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     assert_eq!(find_last_set_byte_mp(&op0), 0);
@@ -2450,8 +2438,6 @@ impl<'a, ST: MpIntMutByteSlice, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a
 
 #[test]
 fn test_composite_limbs_buffer_load_be() {
-    use super::limb::LIMB_BITS;
-
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
@@ -2497,8 +2483,6 @@ fn test_composite_limbs_buffer_load_be() {
 
 #[test]
 fn test_composite_limbs_buffer_load_le() {
-    use super::limb::LIMB_BITS;
-
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     let buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
@@ -2544,8 +2528,6 @@ fn test_composite_limbs_buffer_load_le() {
 
 #[test]
 fn test_composite_limbs_buffer_load_ne() {
-    use super::limb::LIMB_BITS;
-
     let mut buf0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
@@ -2605,8 +2587,6 @@ fn test_composite_limbs_buffer_load_ne() {
 
 #[cfg(test)]
 fn test_composite_limbs_buffer_store_with_unaligned_lengths<ST: MpIntMutByteSlice>() {
-    use super::limb::LIMB_BITS;
-
     debug_assert_eq!(ST::SUPPORTS_UNALIGNED_BUFFER_LENGTHS, true);
 
     let mut buf0: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
@@ -2639,8 +2619,6 @@ fn test_composite_limbs_buffer_store_with_unaligned_lengths<ST: MpIntMutByteSlic
 
 #[cfg(test)]
 fn test_composite_limbs_buffer_store_with_aligned_lengths<ST: MpIntMutByteSlice>() {
-    use super::limb::LIMB_BITS;
-
     let mut buf0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut buf1: [u8; 0] = [0; 0];
     let mut buf2: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];

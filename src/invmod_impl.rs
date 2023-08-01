@@ -1,8 +1,8 @@
 use super::cmp_impl::{ct_is_zero_mp, ct_lt_mp_mp};
-use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpNativeEndianMutByteSlice, MpIntMutByteSlicePriv as _, MpIntByteSliceCommonPriv as _, zeroize_bits_above_mp, ct_zeroize_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs};
+use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpNativeEndianMutByteSlice, MpIntByteSliceCommonPriv as _, zeroize_bits_above_mp, ct_zeroize_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs};
 use super::add_impl::{ct_add_mp_mp,ct_sub_mp_mp};
 use super::shift_impl::{ct_rshift_mp, ct_lshift_mp};
-use super::limb::{ct_sub_l_l_b, ct_is_nonzero_l, LIMB_BITS, LimbType};
+use super::limb::{ct_sub_l_l_b, ct_is_nonzero_l, LIMB_BITS};
 use super::mul_impl::{ct_mul_trunc_mp_mp, ct_square_trunc_mp};
 use super::euclid::{ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
 
@@ -80,6 +80,8 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
 #[cfg(test)]
 fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(op0_len: usize) {
     use super::cmp_impl::ct_is_one_mp;
+    use super::limb::LimbType;
+
     for i in 0..8 {
         const MERSENNE_PRIME_17: LimbType = 131071 as LimbType;
         let op0_high = MERSENNE_PRIME_17.wrapping_mul((8191 as LimbType).wrapping_mul(i));

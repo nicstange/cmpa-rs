@@ -1,7 +1,5 @@
-use core::ops::Deref as _;
-
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb, LimbChoice,
-                  ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_mul_sub_b, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l, LIMB_BITS};
+                  ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_sub_l_l, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_mul_sub_b, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l, LIMB_BITS};
 use super::limbs_buffer::{CompositeLimbsBuffer, ct_mp_nlimbs,
                           find_last_set_byte_mp, MpIntMutByteSlice, MpIntByteSliceCommon};
 use super::shift_impl::ct_lshift_mp;

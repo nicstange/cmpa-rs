@@ -1,12 +1,9 @@
 use core::array;
 
-use crate::cmp_impl::ct_gt_mp_mp;
-use crate::limb::{ct_sub_l_l, ct_add_l_l_c, ct_is_nonzero_l, ct_arithmetic_rshift_l};
-use crate::ct_is_zero_mp;
-use super::limb::{LimbType, LimbChoice, LIMB_BITS, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_add_l_l};
+use super::limb::{LimbType, LimbChoice, LIMB_BITS, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_add_l_l, ct_sub_l_l, ct_add_l_l_c, ct_is_nonzero_l, ct_arithmetic_rshift_l};
 use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpNativeEndianMutByteSlice};
 use super::montgomery::{CtMontgomeryRedcKernel, ct_montgomery_neg_n0_inv_mod_l_mp};
-use super::cmp_impl::{ct_lt_mp_mp, ct_is_one_mp, CtGeqMpMpKernel};
+use super::cmp_impl::{ct_gt_mp_mp, ct_lt_mp_mp, ct_is_one_mp, ct_is_zero_mp, CtGeqMpMpKernel};
 
 // Implementation of Euclid's algorithm after
 // [BERN_YANG19] "Fast constant-time gcd computation and modular inversion", Daniel J. Bernstein and

@@ -1,9 +1,9 @@
 //! Implementation of multiprecision integer comparison primitives.
 
-use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b, LimbType, ct_lt_or_eq_l_l, ct_leq_l_l};
+use super::limb::{LimbChoice, ct_is_zero_l, LimbType, ct_lt_or_eq_l_l, ct_leq_l_l};
 use super::limbs_buffer::MpIntByteSliceCommon;
 #[cfg(test)]
-use super::limbs_buffer::{MpIntMutByteSlice, MpIntMutByteSlicePriv as _};
+use super::limbs_buffer::MpIntMutByteSlice;
 
 /// Compare two multiprecision integers of specified endianess for `==`.
 ///
@@ -42,7 +42,7 @@ pub fn ct_eq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0,
 #[cfg(test)]
 fn test_ct_eq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntMutByteSlice as _;
+    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -178,7 +178,7 @@ pub fn ct_leq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0
 #[cfg(test)]
 fn test_ct_leq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntMutByteSlice as _;
+    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
