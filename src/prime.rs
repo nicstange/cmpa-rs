@@ -449,7 +449,8 @@ fn test_ct_prime_test_miller_rabin_ne_ne_ne() {
 // offsets proportional to, say 2^64. Choose a two-level approach instead. At
 // level 0, there will be a generator using a very small primorial,
 // 2 * 3 * 5 == 30, whose sole purpose is to generate offset candidates for the
-// "real", next level1 primorial, which will be chosen such that it still fits a limb.
+// "real", next level1 primorial, which will be chosen such that it still fits a
+// limb.
 
 const FIRST_PRIMES: [u8; 15] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47];
 
