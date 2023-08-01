@@ -2,12 +2,12 @@ use core::ops::Deref as _;
 
 use super::limb::{LimbType, LIMB_BYTES, DoubleLimb, LimbChoice,
                   ct_eq_l_l, ct_gt_l_l, ct_add_l_l, ct_add_l_l_c, ct_sub_l_l, ct_sub_l_l_b, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_mul_sub_b, ct_div_dl_l, CtDivDlLNormalizedDivisor, ct_find_last_set_byte_l, LIMB_BITS};
-use super::limbs_buffer::{CompositeLimbsBuffer, mp_ct_nlimbs,
-                          mp_find_last_set_byte_mp, MPIntMutByteSlice, MPIntByteSliceCommon};
-use super::shift_impl::mp_ct_lshift_mp;
+use super::limbs_buffer::{CompositeLimbsBuffer, ct_mp_nlimbs,
+                          find_last_set_byte_mp, MpIntMutByteSlice, MpIntByteSliceCommon};
+use super::shift_impl::ct_lshift_mp;
 
 #[derive(Debug)]
-pub enum MpCtDivisionError {
+pub enum CtDivMpError {
     DivisionByZero,
     InsufficientQuotientSpace,
     InsufficientRemainderSpace,
@@ -27,16 +27,16 @@ fn v_scaling(v_high: LimbType) -> LimbType {
     q + ct_eq_l_l(rem, v_high).select(0, 1)
 }
 
-fn scaled_v_val<VT: MPIntByteSliceCommon>(
+fn scaled_v_val<VT: MpIntByteSliceCommon>(
     i: usize, scaling: LimbType, v: &VT, scaled_v_carry: LimbType) -> (LimbType, LimbType) {
     ct_mul_add_l_l_l_c(0, scaling, v.load_l(i), scaled_v_carry)
 }
 
-fn add_scaled_v_val<VT: MPIntByteSliceCommon>(op0: LimbType, i: usize, scaling: LimbType, v: &VT, carry: LimbType) -> (LimbType, LimbType) {
+fn add_scaled_v_val<VT: MpIntByteSliceCommon>(op0: LimbType, i: usize, scaling: LimbType, v: &VT, carry: LimbType) -> (LimbType, LimbType) {
     ct_mul_add_l_l_l_c(op0, scaling, v.load_l(i), carry)
 }
 
-fn sub_scaled_qv_val<VT: MPIntByteSliceCommon>(op0: LimbType,
+fn sub_scaled_qv_val<VT: MpIntByteSliceCommon>(op0: LimbType,
                                                i: usize, q: LimbType,
                                                scaling: LimbType, v: &VT, scaled_v_carry: LimbType,
                                                borrow: LimbType) -> (LimbType, LimbType, LimbType) {
@@ -45,7 +45,7 @@ fn sub_scaled_qv_val<VT: MPIntByteSliceCommon>(op0: LimbType,
     (borrow, result, scaled_v_carry)
 }
 
-fn v_head_scaled<VT: MPIntByteSliceCommon>(scaling: LimbType, v: &VT, v_nlimbs: usize)
+fn v_head_scaled<VT: MpIntByteSliceCommon>(scaling: LimbType, v: &VT, v_nlimbs: usize)
                                            -> (LimbType, LimbType) {
     // Read-only v won't get scaled in-place, but on the fly as needed. For now, multiply v by
     // scaling only to calculate the two scaled head limbs of v, as are needed for the q estimates.
@@ -123,19 +123,19 @@ fn q_estimate(
     q - over_estimated.select(0, 1)
 }
 
-pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
+pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u_h: Option<&mut UT>, u_l: &mut UT, v: &VT, mut q_out: Option<&mut QT>
-) -> Result<(), MpCtDivisionError> {
+) -> Result<(), CtDivMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer Programming", vol 2.
     //
     // Find the index of the highest set limb in v. For divisors, constant time evaluation doesn't
     // really matter, probably as far as the number of zero high bytes is concerned. Also, the long
     // division algorithm's runtime depends highly on the divisor's length anyway.
-    let v_len = mp_find_last_set_byte_mp(v);
+    let v_len = find_last_set_byte_mp(v);
     if v_len == 0 {
-        return Err(MpCtDivisionError::DivisionByZero);
+        return Err(CtDivMpError::DivisionByZero);
     }
-    let v_nlimbs = mp_ct_nlimbs(v_len);
+    let v_nlimbs = ct_mp_nlimbs(v_len);
     let v_high = v.load_l(v_nlimbs - 1);
 
     // If u_h is None, set it to an empty slice for code uniformity.
@@ -146,7 +146,7 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
     };
 
     let u_len = u_l.len() + u_h.len();
-    let u_nlimbs = mp_ct_nlimbs(u_len);
+    let u_nlimbs = ct_mp_nlimbs(u_len);
 
     if let Some(q_out) = &mut q_out {
         // Check that q_out has enough space for storing the maximum possible quotient. In general,
@@ -155,7 +155,7 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
         // The code storing the quotient below will verify that the head limb is zero in case
         // it's not been provided storage for.
         if q_out.len() + v_len < u_len {
-            return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            return Err(CtDivMpError::InsufficientQuotientSpace);
         }
     };
 
@@ -167,7 +167,7 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
     }
 
     let q_out_max_len = u_len + 1 - v_len;
-    let q_out_max_nlimbs = mp_ct_nlimbs(q_out_max_len);
+    let q_out_max_nlimbs = ct_mp_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
         q_out.zeroize_bytes_above(q_out_max_len);
     }
@@ -246,7 +246,7 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
                 debug_assert!(j < q_out.nlimbs());
                 q_out.store_l(j, q);
             } else  if q != 0 {
-                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+                return Err(CtDivMpError::InsufficientQuotientSpace);
             }
         }
         let mut carry = 0;
@@ -282,27 +282,27 @@ pub fn mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIn
 }
 
 #[cfg(test)]
-fn test_limbs_from_be_bytes<DT: MPIntMutByteSlice, const N: usize>(bytes: [u8; N]) -> Vec<u8> {
-    use super::limbs_buffer::{MPBigEndianByteSlice, MPIntByteSlice};
+fn test_limbs_from_be_bytes<DT: MpIntMutByteSlice, const N: usize>(bytes: [u8; N]) -> Vec<u8> {
+    use super::limbs_buffer::{MpBigEndianByteSlice, MpIntByteSlice};
     let mut limbs = vec![0u8; DT::limbs_align_len(N)];
     let mut dst = DT::from_bytes(limbs.as_mut_slice()).unwrap();
-    dst.copy_from(&MPBigEndianByteSlice::from_bytes(bytes.as_slice()).unwrap());
+    dst.copy_from(&MpBigEndianByteSlice::from_bytes(bytes.as_slice()).unwrap());
     drop(dst);
     limbs
 }
 
 #[cfg(test)]
-fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>() {
-    use super::limbs_buffer::MPIntMutByteSlicePriv as _;
-    use super::cmp_impl::mp_ct_eq_mp_mp;
+fn test_ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutByteSlice>() {
+    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
+    use super::cmp_impl::ct_eq_mp_mp;
 
-    fn div_and_check<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>(
+    fn div_and_check<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutByteSlice>(
         u: &UT::SelfT<'_>, v: &VT::SelfT<'_>, split_u: bool
     ) {
-        use super::add_impl::mp_ct_add_mp_mp;
-        use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
+        use super::add_impl::ct_add_mp_mp;
+        use super::mul_impl::ct_mul_trunc_cond_mp_mp;
 
-        let v_len = mp_find_last_set_byte_mp(v);
+        let v_len = find_last_set_byte_mp(v);
         let q_len = if u.len() >= v_len {
             u.len() - v_len + 1
         } else {
@@ -324,7 +324,7 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
         } else {
             (None, rem.coerce_lifetime())
         };
-        mp_ct_div_mp_mp(rem_h.as_mut(), &mut rem_l, v, Some(&mut q)).unwrap();
+        ct_div_mp_mp(rem_h.as_mut(), &mut rem_l, v, Some(&mut q)).unwrap();
         drop(rem_h);
         drop(rem_l);
 
@@ -333,10 +333,10 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
         let mut result = vec![0u8; u.len() + LIMB_BYTES];
         let mut result = UT::from_bytes(&mut result).unwrap();
         result.copy_from(&q);
-        mp_ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
-        let carry = mp_ct_add_mp_mp(&mut result, &rem);
+        ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
+        let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
-        assert_eq!(mp_ct_eq_mp_mp(u, &result).unwrap(), 1);
+        assert_eq!(ct_eq_mp_mp(u, &result).unwrap(), 1);
     }
 
     let mut u = test_limbs_from_be_bytes::<UT, 2>([1, 0]);
@@ -401,7 +401,7 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
         let mut u = vec![0u8; UT::limbs_align_len(u_len)];
         let mut u = UT::from_bytes(&mut u).unwrap();
         if i != 0 {
-            let u_nlimbs = mp_ct_nlimbs(u_len);
+            let u_nlimbs = ct_mp_nlimbs(u_len);
             for k in 0..u_nlimbs - 1 {
                 u.store_l(k, !0);
             }
@@ -428,42 +428,42 @@ fn test_mp_ct_div_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntM
 }
 
 #[test]
-fn test_mp_ct_div_be_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_div_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+fn test_ct_div_be_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_div_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_div_le_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_div_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+fn test_ct_div_le_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_div_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_div_ne_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_div_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+fn test_ct_div_ne_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_div_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
-pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
+pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u_pow2_exp: usize, r_out: &mut RT, v: &VT,  mut q_out: Option<&mut QT>
-) -> Result<(), MpCtDivisionError> {
+) -> Result<(), CtDivMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer Programming", vol 2 for the
     // special case of the dividend being a power of two.
     //
     // Find the index of the highest set limb in v. For divisors, constant time evaluation doesn't
     // really matter, probably as far as the number of zero high bytes is concerned. Also, the long
     // division algorithm's runtime depends highly on the divisor's length anyway.
-    let v_len = mp_find_last_set_byte_mp(v);
+    let v_len = find_last_set_byte_mp(v);
     if v_len == 0 {
-        return Err(MpCtDivisionError::DivisionByZero);
+        return Err(CtDivMpError::DivisionByZero);
     }
-    let v_nlimbs = mp_ct_nlimbs(v_len);
+    let v_nlimbs = ct_mp_nlimbs(v_len);
     let v_high = v.load_l(v_nlimbs - 1);
 
     // The virtual length of the base 2 power in bytes.
     let virtual_u_len = ((u_pow2_exp + 1) + 8 - 1) / 8;
-    let virtual_u_nlimbs = mp_ct_nlimbs(virtual_u_len);
+    let virtual_u_nlimbs = ct_mp_nlimbs(virtual_u_len);
 
     if let Some(q_out) = &mut q_out {
         // Check that q_out has enough space for storing the maximum possible quotient.  In general,
@@ -472,12 +472,12 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
         // The code storing the quotient below will verify that the head limb is zero in case it's
         // not been provided storage for.
         if q_out.len() + v_len < virtual_u_len {
-            return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            return Err(CtDivMpError::InsufficientQuotientSpace);
         }
     };
 
     if r_out.len() < v_len.min(virtual_u_len) {
-        return Err(MpCtDivisionError::InsufficientRemainderSpace);
+        return Err(CtDivMpError::InsufficientRemainderSpace);
     }
     r_out.zeroize_bytes_above(0);
 
@@ -493,7 +493,7 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
     }
 
     let q_out_max_len = virtual_u_len + 1 - v_len;
-    let q_out_max_nlimbs = mp_ct_nlimbs(q_out_max_len);
+    let q_out_max_nlimbs = ct_mp_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
         q_out.zeroize_bytes_above(q_out_max_len);
     };
@@ -661,7 +661,7 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
                 debug_assert!(j < q_out.nlimbs());
                 q_out.store_l(j, q);
             } else  if q != 0 {
-                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+                return Err(CtDivMpError::InsufficientQuotientSpace);
             }
         }
         let add_back_scaling = over_estimated.select(0, scaling);
@@ -721,15 +721,15 @@ pub fn mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MP
 }
 
 #[cfg(test)]
-fn test_mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>() {
-    fn div_and_check<RT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>(
+fn test_ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutByteSlice>() {
+    fn div_and_check<RT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutByteSlice>(
         u_pow2_exp: usize, v: &VT::SelfT<'_>
     ) {
-        use super::add_impl::mp_ct_add_mp_mp;
-        use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
+        use super::add_impl::ct_add_mp_mp;
+        use super::mul_impl::ct_mul_trunc_cond_mp_mp;
 
         let u_len = (u_pow2_exp + 1 + 8 - 1) / 8;
-        let v_len = mp_find_last_set_byte_mp(v);
+        let v_len = find_last_set_byte_mp(v);
         let q_len = if u_len >= v_len {
             u_len - v_len + 1
         } else {
@@ -740,17 +740,17 @@ fn test_mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIn
         let mut q = QT::from_bytes(&mut q).unwrap();
         let mut rem = vec![0xffu8; RT::limbs_align_len(v_len)];
         let mut rem = RT::from_bytes(&mut rem).unwrap();
-        mp_ct_div_pow2_mp(u_pow2_exp as usize, &mut rem, v, Some(&mut q)).unwrap();
+        ct_div_pow2_mp(u_pow2_exp as usize, &mut rem, v, Some(&mut q)).unwrap();
 
         // Multiply q by v again and add the remainder back, the result should match the initial u.
         // Reserve one extra limb, which is expected to come to zero.
         let mut result = vec![0xffu8; QT::limbs_align_len(u_len + LIMB_BYTES)];
         let mut result = QT::from_bytes(&mut result).unwrap();
         result.copy_from(&q);
-        mp_ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
-        let carry = mp_ct_add_mp_mp(&mut result, &rem);
+        ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
+        let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
-        let u_nlimbs = mp_ct_nlimbs(u_len);
+        let u_nlimbs = ct_mp_nlimbs(u_len);
         for i in 0..u_nlimbs - 1 {
             assert_eq!(result.load_l_full(i), 0);
         }
@@ -792,26 +792,26 @@ fn test_mp_ct_div_pow2_mp<RT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIn
 }
 
 #[test]
-fn test_mp_ct_div_pow2_be_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_div_pow2_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+fn test_ct_div_pow2_be_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_div_pow2_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_div_pow2_le_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_div_pow2_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+fn test_ct_div_pow2_le_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_div_pow2_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_div_pow2_ne_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_div_pow2_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+fn test_ct_div_pow2_ne_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_div_pow2_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
-pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
+pub fn ct_div_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u: &mut UT, u_in_len: usize, u_lshift_len: usize, v: &VT, mut q_out: Option<&mut QT>
-) -> Result<(), MpCtDivisionError> {
+) -> Result<(), CtDivMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer Programming", vol 2 adapted
     // to the case of a dividend extended on the right by u_lshift_len zero bytes.
     //
@@ -827,11 +827,11 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     // Find the index of the highest set limb in v. For divisors, constant time evaluation doesn't
     // really matter, probably as far as the number of zero high bytes is concerned. Also, the long
     // division algorithm's runtime depends highly on the divisor's length anyway.
-    let v_len = mp_find_last_set_byte_mp(v);
+    let v_len = find_last_set_byte_mp(v);
     if v_len == 0 {
-        return Err(MpCtDivisionError::DivisionByZero);
+        return Err(CtDivMpError::DivisionByZero);
     }
-    let v_nlimbs = mp_ct_nlimbs(v_len);
+    let v_nlimbs = ct_mp_nlimbs(v_len);
     let v_high = v.load_l(v_nlimbs - 1);
 
     debug_assert!(u_in_len <= u.len());
@@ -844,16 +844,16 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
         // The code storing the quotient below will verify that the head limb is zero in case it's
         // not been provided storage for.
         if q_out.len() + v_len < virtual_u_in_len {
-            return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            return Err(CtDivMpError::InsufficientQuotientSpace);
         }
     }
 
     if u.len() < v_len.min(virtual_u_in_len) {
-        return Err(MpCtDivisionError::InsufficientRemainderSpace);
+        return Err(CtDivMpError::InsufficientRemainderSpace);
     }
 
     if virtual_u_in_len < v_len {
-        mp_ct_lshift_mp(u, 8 * u_lshift_len);
+        ct_lshift_mp(u, 8 * u_lshift_len);
         if let Some(q_out) = q_out {
             q_out.zeroize_bytes_above(0);
         }
@@ -861,7 +861,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     }
 
     let q_out_max_len = virtual_u_in_len + 1 - v_len;
-    let q_out_max_nlimbs = mp_ct_nlimbs(q_out_max_len);
+    let q_out_max_nlimbs = ct_mp_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
         q_out.zeroize_bytes_above(q_out_max_len);
     }
@@ -878,7 +878,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     // window" step.
     let u_lshift_head_len =
         ((
-            mp_ct_nlimbs(
+            ct_mp_nlimbs(
                 (
                     u.len() - u_in_len +
                         LIMB_BYTES - u_lshift_head_len
@@ -899,12 +899,12 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
     // - The most significant shadow limb in u_head_high_shadow[2] will store the overflow, if any,
     //   the scaling.
     let mut u_head_high_shadow: [LimbType; 3] = [0; 3];
-    u_head_high_shadow[0] = mp_ct_lshift_mp(u, 8 * u_lshift_head_len);
+    u_head_high_shadow[0] = ct_lshift_mp(u, 8 * u_lshift_head_len);
     // The (original) u length might not be aligned to the limb size. Move the high limb into the
     // u_head_high_shadow[0] shadow for the duration of the computation. Make sure the limb shifted
     // out on the left from u just above moves to the left in u_head_high_shadow[] accordingly.
     let u_head_high_partial_len = u.len() % LIMB_BYTES;
-    let u_nlimbs = mp_ct_nlimbs(u.len());
+    let u_nlimbs = ct_mp_nlimbs(u.len());
     if u_head_high_partial_len != 0 {
         u_head_high_shadow[1] = u_head_high_shadow[0] >> 8 * (LIMB_BYTES - (u_head_high_partial_len));
         u_head_high_shadow[0] <<= 8 * u_head_high_partial_len;
@@ -1006,7 +1006,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
                 debug_assert!(u_lshift_tail_nlimbs + j < q_out.nlimbs());
                 q_out.store_l(u_lshift_tail_nlimbs + j, q);
             } else  if q != 0 {
-                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+                return Err(CtDivMpError::InsufficientQuotientSpace);
             }
         }
         let add_back_scaling = over_estimated.select(0, scaling);
@@ -1113,7 +1113,7 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
                 debug_assert!(j < q_out.nlimbs());
                 q_out.store_l(j, q);
             } else  if q != 0 {
-                return Err(MpCtDivisionError::InsufficientQuotientSpace);
+                return Err(CtDivMpError::InsufficientQuotientSpace);
             }
         }
 
@@ -1161,17 +1161,17 @@ pub fn mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntByteSliceCommon,
 }
 
 #[cfg(test)]
-fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>() {
-    fn div_and_check<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, QT: MPIntMutByteSlice>(
+fn test_ct_div_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutByteSlice>() {
+    fn div_and_check<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutByteSlice>(
         u: &UT::SelfT<'_>, u_in_len: usize , u_lshift_len: usize, v: &VT::SelfT<'_>
     ) {
         use super::limb::ct_lsb_mask_l;
-        use super::add_impl::mp_ct_add_mp_mp;
-        use super::cmp_impl::mp_ct_eq_mp_mp;
-        use super::mul_impl::mp_ct_mul_trunc_cond_mp_mp;
-        use super::shift_impl::mp_ct_rshift_mp;
+        use super::add_impl::ct_add_mp_mp;
+        use super::cmp_impl::ct_eq_mp_mp;
+        use super::mul_impl::ct_mul_trunc_cond_mp_mp;
+        use super::shift_impl::ct_rshift_mp;
 
-        let v_len = mp_find_last_set_byte_mp(v);
+        let v_len = find_last_set_byte_mp(v);
         let virtual_u_len = u_in_len + u_lshift_len;
         let q_len = virtual_u_len + 1  - v_len;
         let mut q = vec![0xffu8; QT::limbs_align_len(q_len)];
@@ -1179,26 +1179,26 @@ fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, Q
         let mut rem = vec![0u8; u.len()];
         let mut rem = UT::from_bytes(&mut rem).unwrap();
         rem.copy_from(u);
-        mp_ct_div_lshifted_mp_mp(&mut rem, u_in_len, u_lshift_len, v, Some(&mut q)).unwrap();
+        ct_div_lshifted_mp_mp(&mut rem, u_in_len, u_lshift_len, v, Some(&mut q)).unwrap();
 
         // Multiply q by v again and add the remainder back, the result should match the initial u.
         // Reserve one extra limb, which is expected to come to zero.
         let mut result = vec![0xffu8; UT::limbs_align_len(virtual_u_len + LIMB_BYTES)];
         let mut result = UT::from_bytes(&mut result).unwrap();
         result.copy_from(&q);
-        mp_ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
-        let carry = mp_ct_add_mp_mp(&mut result, &rem);
+        ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
+        let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
-        for i in 0..mp_ct_nlimbs(u_lshift_len + 1) - 1 {
+        for i in 0..ct_mp_nlimbs(u_lshift_len + 1) - 1 {
             assert_eq!(result.load_l(i), 0);
         }
         if u_lshift_len % LIMB_BYTES != 0 {
-            let u_val = result.load_l(mp_ct_nlimbs(u_lshift_len + 1) - 1);
+            let u_val = result.load_l(ct_mp_nlimbs(u_lshift_len + 1) - 1);
             assert_eq!(u_val & ct_lsb_mask_l(8 * (u_lshift_len % LIMB_BYTES) as u32), 0);
         }
-        assert_eq!(result.load_l(mp_ct_nlimbs(virtual_u_len)), 0);
-        mp_ct_rshift_mp(&mut result, 8 * u_lshift_len);
-        assert_eq!(mp_ct_eq_mp_mp(u, &result).unwrap(), 1);
+        assert_eq!(result.load_l(ct_mp_nlimbs(virtual_u_len)), 0);
+        ct_rshift_mp(&mut result, 8 * u_lshift_len);
+        assert_eq!(ct_eq_mp_mp(u, &result).unwrap(), 1);
     }
 
     const N_MAX_LIMBS: u32 = 3;
@@ -1211,7 +1211,7 @@ fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, Q
                     let mut u = vec![0u8; UT::limbs_align_len(u_len.max(v_len))];
                     let mut u = UT::from_bytes(&mut u).unwrap();
                     if i != 0 {
-                        let u_nlimbs = mp_ct_nlimbs(u_len);
+                        let u_nlimbs = ct_mp_nlimbs(u_len);
                         for k in 0..u_nlimbs - 1 {
                             u.store_l(k, !0);
                         }
@@ -1235,33 +1235,33 @@ fn test_mp_ct_div_lshifted_mp_mp<UT: MPIntMutByteSlice, VT: MPIntMutByteSlice, Q
 }
 
 #[test]
-fn test_mp_ct_div_lshifted_be_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_div_lshifted_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+fn test_ct_div_lshifted_be_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_div_lshifted_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_div_lshifted_le_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_div_lshifted_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+fn test_ct_div_lshifted_le_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_div_lshifted_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_div_lshifted_ne_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_div_lshifted_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+fn test_ct_div_lshifted_ne_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_div_lshifted_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
 
 // Compute the modulo of a multiprecision integer modulo a [`LimbType`] divisisor.
-pub fn mp_ct_div_mp_l<UT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
+pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u: &UT, v: LimbType, mut q_out: Option<&mut QT>
-) -> Result<LimbType, MpCtDivisionError> {
+) -> Result<LimbType, CtDivMpError> {
     if v == 0 {
-        return Err(MpCtDivisionError::DivisionByZero);
+        return Err(CtDivMpError::DivisionByZero);
     }
 
-    let u_nlimbs = mp_ct_nlimbs(u.len());
+    let u_nlimbs = ct_mp_nlimbs(u.len());
     if u_nlimbs == 0 {
         return Ok(0);
     }
@@ -1269,7 +1269,7 @@ pub fn mp_ct_div_mp_l<UT: MPIntByteSliceCommon, QT: MPIntMutByteSlice>(
     if let Some(q_out) = &mut q_out {
         let v_len = ct_find_last_set_byte_l(v);
         if q_out.len() + v_len < u.len() + 1 {
-            return Err(MpCtDivisionError::InsufficientQuotientSpace);
+            return Err(CtDivMpError::InsufficientQuotientSpace);
         }
         if u.len() < v_len {
             q_out.zeroize_bytes_above(0);

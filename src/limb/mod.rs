@@ -175,7 +175,7 @@ pub fn ct_lt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     LimbChoice::from(borrow)
 }
 
-pub fn ct_le_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
+pub fn ct_leq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     !ct_lt_l_l(v1, v0)
 }
 
@@ -187,8 +187,8 @@ pub fn ct_gt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     ct_lt_l_l(v1, v0)
 }
 
-pub fn ct_ge_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
-    ct_le_l_l(v1, v0)
+pub fn ct_geq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
+    ct_leq_l_l(v1, v0)
 }
 
 pub const fn ct_lsb_mask_l(nbits: u32) -> LimbType {
@@ -511,8 +511,8 @@ impl GenericCtDivDlLNormalizedDivisor {
     pub fn new(v: LimbType) -> Self {
         debug_assert!(v != 0);
         // If the upper half is zero, shift v by half limb. This is accounted for by shifting u
-        // accordingly in mp_ct_div() and allows for constant-time division computation, independent
-        // of the value of v.
+        // accordingly in generic_ct_div_dl_l() and allows for constant-time division computation,
+        // independent of the value of v.
         let v_h = v >> HALF_LIMB_BITS;
         let shifted_v = ct_eq_l_l(v_h, 0);
         let v = shifted_v.select(v, v << HALF_LIMB_BITS);

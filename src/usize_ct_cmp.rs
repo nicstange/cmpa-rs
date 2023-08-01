@@ -52,7 +52,7 @@ pub fn ct_lt_usize_usize(v0: usize, v1: usize) -> LimbChoice {
     LimbChoice::from(borrow as LimbType)
 }
 
-pub fn ct_le_usize_usize(v0: usize, v1: usize) -> LimbChoice {
+pub fn ct_leq_usize_usize(v0: usize, v1: usize) -> LimbChoice {
     !ct_lt_usize_usize(v1, v0)
 }
 
@@ -60,6 +60,6 @@ pub fn ct_gt_usize_usize(v0: usize, v1: usize) -> LimbChoice {
     ct_lt_usize_usize(v1, v0)
 }
 
-pub fn ct_ge_usize_usize(v0: usize, v1: usize) -> LimbChoice {
-    ct_le_usize_usize(v1, v0)
+pub fn ct_geq_usize_usize(v0: usize, v1: usize) -> LimbChoice {
+    ct_leq_usize_usize(v1, v0)
 }

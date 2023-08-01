@@ -1,12 +1,12 @@
 use core::array;
 
-use crate::cmp_impl::mp_ct_gt_mp_mp;
+use crate::cmp_impl::ct_gt_mp_mp;
 use crate::limb::{ct_sub_l_l, ct_add_l_l_c, ct_is_nonzero_l, ct_arithmetic_rshift_l};
-use crate::mp_ct_is_zero_mp;
+use crate::ct_is_zero_mp;
 use super::limb::{LimbType, LimbChoice, LIMB_BITS, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_add_l_l};
-use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon, MPNativeEndianMutByteSlice};
-use super::montgomery::{MpCtMontgomeryRedcKernel, ct_montgomery_neg_n0_inv_mod_l};
-use super::cmp_impl::{mp_ct_lt_mp_mp, mp_ct_is_one_mp, MpCtGeqKernel};
+use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpNativeEndianMutByteSlice};
+use super::montgomery::{CtMontgomeryRedcKernel, ct_montgomery_neg_n0_inv_mod_l_mp};
+use super::cmp_impl::{ct_lt_mp_mp, ct_is_one_mp, CtGeqMpMpKernel};
 
 // Implementation of Euclid's algorithm after
 // [BERN_YANG19] "Fast constant-time gcd computation and modular inversion", Daniel J. Bernstein and
@@ -86,7 +86,7 @@ impl TransitionMatrix {
     // the intermediate results after plain multiplication. {f,g}_shadow_head[0] shadows the
     // potentially partial high limbs of f and g respectively, {f,g}_shadow_head[1] is used to store
     // temporary excess (before right-shifting) and two's complement sign bits.
-    fn apply_to_f_g<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(
+    fn apply_to_f_g<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
         &self,
         t_is_neg_mask: &[[LimbType; 2]; 2],
         f_shadow_head: &mut [LimbType; 2], f: &mut FT,
@@ -215,7 +215,7 @@ impl TransitionMatrix {
 
     // Multiplicate the matrix times a column vector and reduce the result modulo n.
     // n needs to be odd as a prerequisite of the fused Montgomery reductions.
-    fn apply_to_mod_odd_n<UFT: MPIntMutByteSlice, UGT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+    fn apply_to_mod_odd_n<UFT: MpIntMutByteSlice, UGT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
         &self, t_is_neg_mask: &[[LimbType; 2]; 2],
         u_f: &mut UFT, u_g: &mut UGT, n: &NT, neg_n0_inv_mod_l: LimbType
     ) {
@@ -232,7 +232,7 @@ impl TransitionMatrix {
             t_row: &[LimbType; 2],
             row_shift: u32,
             n0_val: LimbType, neg_n0_inv_mod_l: LimbType
-        ) -> ([LimbType; 2], MpCtMontgomeryRedcKernel) {
+        ) -> ([LimbType; 2], CtMontgomeryRedcKernel) {
             let mut carry: [LimbType; 2] = [0; 2];
             // t_{i, f} * u_f
             let u_i_f = ct_mul_l_l(t_row[0], u_first_orig[0]);
@@ -242,14 +242,14 @@ impl TransitionMatrix {
             (carry[1], carry[0]) = ct_add_l_l(carry_i_f, carry_i_g);
             debug_assert!(carry[1] <= 1);
 
-            let redc_kernel = MpCtMontgomeryRedcKernel::start(row_shift, u_i, n0_val, neg_n0_inv_mod_l);
+            let redc_kernel = CtMontgomeryRedcKernel::start(row_shift, u_i, n0_val, neg_n0_inv_mod_l);
             (carry, redc_kernel)
         }
 
         fn mat_mul_row_scale_mod_odd_n_compute_limb(
             carry: &mut [LimbType; 2],
             borrow: &mut LimbType,
-            redc_kernel: &mut MpCtMontgomeryRedcKernel,
+            redc_kernel: &mut CtMontgomeryRedcKernel,
             n_val: LimbType,
             u_cur_orig_val: &[LimbType; 2],
             u_last_orig_val: &[LimbType; 2],
@@ -287,14 +287,14 @@ impl TransitionMatrix {
         debug_assert!(!n.is_empty());
         let n_nlimbs = n.nlimbs();
         debug_assert!(u_f.nlimbs() == n_nlimbs);
-        debug_assert_eq!(mp_ct_lt_mp_mp(u_f, n).unwrap(), 1);
+        debug_assert_eq!(ct_lt_mp_mp(u_f, n).unwrap(), 1);
         debug_assert!(u_g.nlimbs() == n_nlimbs);
-        debug_assert_eq!(mp_ct_lt_mp_mp(u_g, n).unwrap(), 1);
+        debug_assert_eq!(ct_lt_mp_mp(u_g, n).unwrap(), 1);
 
         let n0_val = n.load_l(0);
         let mut u_last_orig_val: [LimbType; 2] = [u_f.load_l(0), u_g.load_l(0)];
         let mut carry: [[LimbType; 2]; 2] = [[0; 2]; 2];
-        let mut redc_kernel: [MpCtMontgomeryRedcKernel; 2] = array::from_fn(|i: usize| {
+        let mut redc_kernel: [CtMontgomeryRedcKernel; 2] = array::from_fn(|i: usize| {
             let redc_kernel;
             (carry[i], redc_kernel) = mat_mul_row_scale_mod_odd_n_compute_start(
                 &u_last_orig_val,
@@ -309,7 +309,7 @@ impl TransitionMatrix {
         // entries against n[] on the fly each. (For positive values, the Montgomery reduction
         // yiels a value in the range [0, 2*n[] and a n needs to get conditionally subtracted
         // to bring it into range).
-        let mut u_geq_n_kernel: [MpCtGeqKernel; 2] = array::from_fn(|_| MpCtGeqKernel::new());
+        let mut u_geq_n_kernel: [CtGeqMpMpKernel; 2] = array::from_fn(|_| CtGeqMpMpKernel::new());
         let mut last_n_val = n0_val;
 
         let mut borrow: [LimbType; 2] = [0; 2];
@@ -390,7 +390,7 @@ impl TransitionMatrix {
 
         // Either add or subtract one n (or don't do anything at all), depending on u_i_sign and
         // u_i_geq_n.
-        fn u_i_into_range<UT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(u_i: &mut UT,
+        fn u_i_into_range<UT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(u_i: &mut UT,
                                                                            u_i_sign: LimbType,
                                                                            u_i_geq_n: LimbType,
                                                                            n: &NT) {
@@ -413,7 +413,7 @@ impl TransitionMatrix {
                     u_i.store_l(i, new_u_i_val & u_i.partial_high_mask());
                 }
             }
-            debug_assert_eq!(mp_ct_gt_mp_mp(n, u_i).unwrap(), 1);
+            debug_assert_eq!(ct_gt_mp_mp(n, u_i).unwrap(), 1);
         }
 
         u_i_into_range(u_f, u_f_sign, u_f_geq_n, n);
@@ -481,7 +481,7 @@ fn nbatches(len: usize) -> usize {
     (nsteps + STEPS_PER_BATCH - 1) / STEPS_PER_BATCH
 }
 
-fn mp_ct_gcd_ext<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(
+fn ct_gcd_ext_mp_mp<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
     mut update_ext_state: UES, f: &mut FT, g: &mut GT
 ) -> LimbChoice {
     let nlimbs = f.nlimbs();
@@ -524,8 +524,8 @@ fn mp_ct_gcd_ext<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MPIntMu
     f_is_neg
 }
 
-pub fn mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(f: &mut FT, g: &mut GT) {
-    let gcd_is_neg = mp_ct_gcd_ext(|_, _| {}, f, g);
+pub fn ct_gcd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(f: &mut FT, g: &mut GT) {
+    let gcd_is_neg = ct_gcd_ext_mp_mp(|_, _| {}, f, g);
 
     // If the GCD came out as negative, negate before returning.
     let neg_mask = gcd_is_neg.select(0, !0);
@@ -546,12 +546,12 @@ pub fn mp_ct_gcd<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>(f: &mut FT, g: &m
 }
 
 #[cfg(test)]
-fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
+fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MPIntByteSliceCommon as _, MPIntByteSliceCommonPriv as _};
-    use super::mul_impl::mp_ct_mul_trunc_mp_l;
+    use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
+    use super::mul_impl::ct_mul_trunc_mp_l;
 
-    fn assert_mp_is_equal<T: MPIntMutByteSlice>(v: &T, expected: LimbType) {
+    fn assert_mp_is_equal<T: MpIntMutByteSlice>(v: &T, expected: LimbType) {
         assert_eq!(v.load_l(0), expected);
         for i in 1..v.nlimbs() {
             assert_eq!(v.load_l(i), 0);
@@ -569,7 +569,7 @@ fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
         let mut f = FT::from_bytes(f_buf.as_mut_slice()).unwrap();
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 1);
-        mp_ct_gcd(&mut f, &mut g);
+        ct_gcd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 1);
         assert_mp_is_equal(&g, 0);
 
@@ -586,7 +586,7 @@ fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
                 let limb_index = j / (8 * LIMB_BYTES);
                 let j = j % (8 * LIMB_BYTES);
                 g.store_l(limb_index, 1 << j);
-                mp_ct_gcd(&mut f, &mut g);
+                ct_gcd_mp_mp(&mut f, &mut g);
                 assert_mp_is_equal(&f, 1);
                 assert_mp_is_equal(&g, 0);
             }
@@ -598,7 +598,7 @@ fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 3 * 3 * 3 * 7);
         g.store_l(0, 3 * 3 * 5);
-        mp_ct_gcd(&mut f, &mut g);
+        ct_gcd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 3 * 3);
         assert_mp_is_equal(&g, 0);
 
@@ -608,7 +608,7 @@ fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 3 * 3 * 5);
         g.store_l(0, 3 * 3 * 3 * 7);
-        mp_ct_gcd(&mut f, &mut g);
+        ct_gcd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 3 * 3);
         assert_mp_is_equal(&g, 0);
 
@@ -618,16 +618,16 @@ fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 1);
         while f.load_l(f.nlimbs() - 1) >> 8 * (f_g_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut f, f_len, 251);
+            ct_mul_trunc_mp_l(&mut f, f_len, 251);
         }
         g.store_l(0, 1);
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut g, g_len, 241);
+            ct_mul_trunc_mp_l(&mut g, g_len, 241);
         }
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
-            mp_ct_mul_trunc_mp_l(&mut g, g_len, 2);
+            ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        mp_ct_gcd(&mut f, &mut g);
+        ct_gcd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 1);
         assert_mp_is_equal(&g, 0);
 
@@ -637,17 +637,17 @@ fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 1);
         while f.load_l(f.nlimbs() - 1) >> 8 * (f_g_high_min_len - 2) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut f, f_len, 251);
+            ct_mul_trunc_mp_l(&mut f, f_len, 251);
         }
-        mp_ct_mul_trunc_mp_l(&mut f, f_len, 241);
+        ct_mul_trunc_mp_l(&mut f, f_len, 241);
         g.store_l(0, 1);
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut g, g_len, 241);
+            ct_mul_trunc_mp_l(&mut g, g_len, 241);
         }
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
-            mp_ct_mul_trunc_mp_l(&mut g, g_len, 2);
+            ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        mp_ct_gcd(&mut f, &mut g);
+        ct_gcd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 241);
         assert_mp_is_equal(&g, 0);
 
@@ -657,49 +657,49 @@ fn test_mp_ct_gcd_common<FT: MPIntMutByteSlice, GT: MPIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 1);
         while f.load_l(f.nlimbs() - 1) >> 8 * (f_g_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut f, f_len, 251);
+            ct_mul_trunc_mp_l(&mut f, f_len, 251);
         }
         g.store_l(0, 1);
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len - 2) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut g, g_len, 241);
+            ct_mul_trunc_mp_l(&mut g, g_len, 241);
         }
-        mp_ct_mul_trunc_mp_l(&mut g, g_len, 251);
+        ct_mul_trunc_mp_l(&mut g, g_len, 251);
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
-            mp_ct_mul_trunc_mp_l(&mut g, g_len, 2);
+            ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        mp_ct_gcd(&mut f, &mut g);
+        ct_gcd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 251);
         assert_mp_is_equal(&g, 0);
     }
 }
 
 #[test]
-fn test_mp_ct_gcd_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_gcd_common::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+fn test_ct_gcd_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_gcd_mp_mp_common::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_gcd_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_gcd_common::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+fn test_ct_gcd_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_gcd_mp_mp_common::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_gcd_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_gcd_common::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+fn test_ct_gcd_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_gcd_mp_mp_common::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
 
 #[derive(Debug)]
-pub enum MpCtInvModOddError {
+pub enum CtInvModOddMpMpError {
     OperandsNotCoprime,
 }
 
-pub fn mp_ct_inv_mod_odd<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+pub fn ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
     result: &mut RT, op0: &mut T0, n: &NT, scratch: [&mut [u8]; 2]
-) -> Result<(), MpCtInvModOddError> {
+) -> Result<(), CtInvModOddMpMpError> {
     debug_assert_eq!(n.nlimbs(), op0.nlimbs());
     debug_assert_eq!(result.nlimbs(), n.nlimbs());
     debug_assert!(!n.is_empty());
@@ -709,26 +709,26 @@ pub fn mp_ct_inv_mod_odd<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPInt
     // Euclidean algorithm for the modular inversion case will be stored in
     // (result, ext_u1_scratch).
     let [f_work_scratch, ext_u1_scratch] = scratch;
-    let work_scratch_len = MPNativeEndianMutByteSlice::limbs_align_len(n.len());
+    let work_scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
     debug_assert!(f_work_scratch.len() >= work_scratch_len);
     let (mut f_work_scratch, _) = f_work_scratch.split_at_mut(work_scratch_len);
-    let mut f_work_scratch = MPNativeEndianMutByteSlice::from_bytes(&mut f_work_scratch).unwrap();
+    let mut f_work_scratch = MpNativeEndianMutByteSlice::from_bytes(&mut f_work_scratch).unwrap();
     debug_assert!(ext_u1_scratch.len() >= work_scratch_len);
     let (mut ext_u1_scratch, _) = ext_u1_scratch.split_at_mut(work_scratch_len);
-    let mut ext_u1_scratch = MPNativeEndianMutByteSlice::from_bytes(&mut ext_u1_scratch).unwrap();
+    let mut ext_u1_scratch = MpNativeEndianMutByteSlice::from_bytes(&mut ext_u1_scratch).unwrap();
 
     // ext_u0 starts out as 0.
     result.zeroize_bytes_above(0);
     // ext_u1 starts out as 1. If the modulus is == 1, the result is undefined (the multiplicative group
     // does not exist). Force the result to zero in this case.
-    let n_is_one = mp_ct_is_one_mp(n);
+    let n_is_one = ct_is_one_mp(n);
     ext_u1_scratch.zeroize_bytes_above(0);
     ext_u1_scratch.store_l_full(0, 1 ^ n_is_one.unwrap());
 
     f_work_scratch.copy_from(n);
-    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l(n);
+    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n);
 
-    let gcd_is_neg = mp_ct_gcd_ext(
+    let gcd_is_neg = ct_gcd_ext_mp_mp(
         |t, t_is_neg_mask| {
             t.apply_to_mod_odd_n(t_is_neg_mask, result, &mut ext_u1_scratch, n, neg_n0_inv_mod_l);
         },
@@ -741,14 +741,14 @@ pub fn mp_ct_inv_mod_odd<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPInt
     let nlimbs = n.nlimbs();
     for i in 0..nlimbs {
         if f_work_scratch.load_l_full(i) != expected_val {
-            return Err(MpCtInvModOddError::OperandsNotCoprime);
+            return Err(CtInvModOddMpMpError::OperandsNotCoprime);
         }
         expected_val = neg_mask;
     }
 
     // If the computed GCD came out as a negative 1, the inverse needs
     // to get negated mod f. Note that -result mod f == f - result.
-    debug_assert!(mp_ct_is_zero_mp(result).unwrap() == 0 || n_is_one.unwrap() != 0);
+    debug_assert!(ct_is_zero_mp(result).unwrap() == 0 || n_is_one.unwrap() != 0);
     let neg_mask = n_is_one.select(neg_mask, 0);
     let mut neg_carry = (gcd_is_neg & !n_is_one).select(0, 1);
     let mut carry = 0;
@@ -770,16 +770,16 @@ pub fn mp_ct_inv_mod_odd<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPInt
 }
 
 #[cfg(test)]
-fn test_mp_ct_inv_mod_odd_common<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
+fn test_ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::mul_impl::mp_ct_mul_trunc_mp_l;
-    use super::limbs_buffer::{MPIntByteSliceCommon as _, MPIntByteSliceCommonPriv as _};
+    use super::mul_impl::ct_mul_trunc_mp_l;
+    use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
 
-    fn test_one<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+    fn test_one<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
         op0: &T0, n: &NT
     ) {
-        use super::mul_impl::mp_ct_mul_trunc_mp_mp;
-        use super::div_impl::mp_ct_div_mp_mp;
+        use super::mul_impl::ct_mul_trunc_mp_mp;
+        use super::div_impl::ct_div_mp_mp;
 
         let mut op0_work_scratch = vec![0u8; op0.len()];
         let mut op0_work_scratch = T0::from_bytes(&mut op0_work_scratch).unwrap();
@@ -788,24 +788,24 @@ fn test_mp_ct_inv_mod_odd_common<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, N
         let mut op0_inv_mod_n = vec![0u8; RT::limbs_align_len(n.len())];
         let mut op0_inv_mod_n = RT::from_bytes(&mut op0_inv_mod_n).unwrap();
 
-        let mut scratch0 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len())];
-        let mut scratch1 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len())];
+        let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len())];
+        let mut scratch1 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len())];
 
-        mp_ct_inv_mod_odd(&mut op0_inv_mod_n, &mut op0_work_scratch, n, [&mut scratch0, &mut scratch1]).unwrap();
+        ct_inv_mod_odd_mp_mp(&mut op0_inv_mod_n, &mut op0_work_scratch, n, [&mut scratch0, &mut scratch1]).unwrap();
 
         // If n == 1, the multiplicative group does not exist and the result is fixed to zero.
-        if mp_ct_is_one_mp(n).unwrap() != 0 {
-            assert_eq!(mp_ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
+        if ct_is_one_mp(n).unwrap() != 0 {
+            assert_eq!(ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
             return;
         }
 
         // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
-        let mut product_buf = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];
-        let mut product = MPNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
+        let mut product_buf = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];
+        let mut product = MpNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
         product.copy_from(&op0_inv_mod_n);
-        mp_ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
-        mp_ct_div_mp_mp::<_, _, MPNativeEndianMutByteSlice>(None, &mut product, n, None).unwrap();
-        assert_eq!(mp_ct_is_one_mp(&product).unwrap(), 1);
+        ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
+        ct_div_mp_mp::<_, _, MpNativeEndianMutByteSlice>(None, &mut product, n, None).unwrap();
+        assert_eq!(ct_is_one_mp(&product).unwrap(), 1);
     }
 
     for l in [LIMB_BYTES - 1, 2 * LIMB_BYTES - 1, 3 * LIMB_BYTES - 1, 4 * LIMB_BYTES - 1] {
@@ -845,39 +845,39 @@ fn test_mp_ct_inv_mod_odd_common<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice, N
         let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
         n.store_l(0, 1);
         while n.load_l(n.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut n, n_len, 251);
+            ct_mul_trunc_mp_l(&mut n, n_len, 251);
         }
         op0.store_l(0, 1);
         while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut op0, op0_len, 241);
+            ct_mul_trunc_mp_l(&mut op0, op0_len, 241);
         }
         while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len) - 1 == 0 {
-            mp_ct_mul_trunc_mp_l(&mut op0, op0_len, 2);
+            ct_mul_trunc_mp_l(&mut op0, op0_len, 2);
         }
         test_one::<RT, _, _>(&op0, &n);
     }
 }
 
 #[test]
-fn test_mp_ct_inv_mod_odd_be_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_inv_mod_odd_common::<MPBigEndianMutByteSlice,
-                                    MPBigEndianMutByteSlice,
-                                    MPBigEndianMutByteSlice>()
+fn test_ct_inv_mod_odd_be_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_inv_mod_odd_mp_mp::<MpBigEndianMutByteSlice,
+                                MpBigEndianMutByteSlice,
+                                MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_inv_mod_odd_le_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_inv_mod_odd_common::<MPLittleEndianMutByteSlice,
-                                    MPLittleEndianMutByteSlice,
-                                    MPLittleEndianMutByteSlice>()
+fn test_ct_inv_mod_odd_le_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_inv_mod_odd_mp_mp::<MpLittleEndianMutByteSlice,
+                                MpLittleEndianMutByteSlice,
+                                MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_inv_mod_odd_ne_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_inv_mod_odd_common::<MPNativeEndianMutByteSlice,
-                                    MPNativeEndianMutByteSlice,
-                                    MPNativeEndianMutByteSlice>()
+fn test_ct_inv_mod_odd_ne_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_inv_mod_odd_mp_mp::<MpNativeEndianMutByteSlice,
+                                MpNativeEndianMutByteSlice,
+                                MpNativeEndianMutByteSlice>()
 }

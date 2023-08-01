@@ -1,7 +1,7 @@
 //! Implementation of multiprecision integer addition related primitives.
 
 use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_add_l_l_c, ct_find_last_set_byte_l, ct_sub_l_l, ct_sub_l_l_b, LimbChoice};
-use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon};
+use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon};
 
 /// Add two multiprecision integers of specified endianess.
 ///
@@ -17,7 +17,7 @@ use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon};
 ///           length must greater or equal than the length of the second addend.
 /// * `op1` - The second input addend. Its length must not exceed the length of `op0`.
 ///
-pub fn mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(op0: &mut T0, op1: &T1) -> LimbType {
+pub fn ct_add_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(op0: &mut T0, op1: &T1) -> LimbType {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     debug_assert!(op1_nlimbs <= op0_nlimbs);
@@ -55,7 +55,7 @@ pub fn mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(op0: &mu
 }
 
 #[cfg(test)]
-fn test_mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
+fn test_ct_add_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
@@ -64,7 +64,7 @@ fn test_mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op1.store_l(0, !0);
-    let carry = mp_ct_add_mp_mp(&mut op0, &op1);
+    let carry = ct_add_mp_mp(&mut op0, &op1);
     assert_eq!(carry, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
@@ -77,7 +77,7 @@ fn test_mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, !0);
     op1.store_l(0, !0);
     op1.store_l(1, !0);
-    let carry = mp_ct_add_mp_mp(&mut op0, &op1);
+    let carry = ct_add_mp_mp(&mut op0, &op1);
     assert_eq!(carry, 1);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), !0);
@@ -89,7 +89,7 @@ fn test_mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     op1.store_l(0, !0);
-    let carry = mp_ct_add_mp_mp(&mut op0, &op1);
+    let carry = ct_add_mp_mp(&mut op0, &op1);
     assert_eq!(carry, 1);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 0);
@@ -104,7 +104,7 @@ fn test_mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op1.store_l(0, !0);
-    let carry = mp_ct_add_mp_mp(&mut op0, &op1);
+    let carry = ct_add_mp_mp(&mut op0, &op1);
     assert_eq!(carry, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
@@ -117,7 +117,7 @@ fn test_mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, !0 >> 8);
     op1.store_l(0, !0);
     op1.store_l(1, !0 >> 8);
-    let carry = mp_ct_add_mp_mp(&mut op0, &op1);
+    let carry = ct_add_mp_mp(&mut op0, &op1);
     assert_eq!(carry, 1);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), !0 >> 8);
@@ -128,32 +128,31 @@ fn test_mp_ct_add_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0 >> 8);
     op1.store_l(0, !0 >> 8);
-    let carry = mp_ct_add_mp_mp(&mut op0, &op1);
+    let carry = ct_add_mp_mp(&mut op0, &op1);
     assert_eq!(carry, 1);
     assert_eq!(op0.load_l(0), (!0 >> 8) ^ 1);
 }
 
-
 #[test]
-fn test_mp_ct_add_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_add_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+fn test_ct_add_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_add_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_add_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_add_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+fn test_ct_add_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_add_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_add_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_add_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+fn test_ct_add_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_add_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
 // Add a limb to a multiprecision integer.
-pub fn mp_ct_add_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
+pub fn ct_add_mp_l<T0: MpIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
     debug_assert!(ct_find_last_set_byte_l(op1) <= op0.len());
     let op0_nlimbs = op0.nlimbs();
     if op0_nlimbs == 0 {
@@ -195,7 +194,7 @@ pub fn mp_ct_add_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> Lim
 /// * `op1` - The subtrahend. Its length must not exceed the length of `op0`.
 /// * `cond` - Whether or not to replace `ob0` by the difference.
 ///
-pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
+pub fn ct_sub_cond_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
     op0: &mut T0, op1: &T1, cond: LimbChoice
 ) -> LimbType {
     let op0_nlimbs = op0.nlimbs();
@@ -232,7 +231,7 @@ pub fn mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
+fn test_ct_sub_cond_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
 
     let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
@@ -241,11 +240,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), 0);
     assert_eq!(op0.load_l(1), 0);
@@ -257,11 +256,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, !1);
     op0.store_l(1, 1);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
@@ -273,11 +272,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, !1);
     op0.store_l(1, 1);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
@@ -290,11 +289,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, 0);
     op1.store_l(0, !0);
     op1.store_l(1, 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 1);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), !1);
@@ -309,11 +308,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     let mut op1 = T1::from_bytes(&mut op1).unwrap();
     op0.store_l(0, !0);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), 0);
     assert_eq!(op0.load_l(1), 0);
@@ -325,11 +324,11 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(0, !1);
     op0.store_l(1, 1);
     op1.store_l(0, !0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), 0);
@@ -342,42 +341,42 @@ fn test_mp_ct_sub_cond_mp_mp<T0: MPIntMutByteSlice, T1: MPIntMutByteSlice>() {
     op0.store_l(1, 0);
     op1.store_l(0, !0);
     op1.store_l(1, 1);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(0));
     assert_eq!(borrow, 0);
     assert_eq!(op0.load_l(0), !1);
     assert_eq!(op0.load_l(1), 0);
-    let borrow = mp_ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
+    let borrow = ct_sub_cond_mp_mp(&mut op0, &op1, LimbChoice::from(1));
     assert_eq!(borrow, 1);
     assert_eq!(op0.load_l(0), !0);
     assert_eq!(op0.load_l(1), !0 >> 8 & !1);
 }
 
 #[test]
-fn test_mp_ct_sub_cond_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_sub_cond_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>()
+fn test_ct_sub_cond_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_sub_cond_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_sub_cond_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_sub_cond_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>()
+fn test_ct_sub_cond_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_sub_cond_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_sub_cond_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_sub_cond_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>()
+fn test_ct_sub_cond_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_sub_cond_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
-pub fn mp_ct_sub_mp_mp<T0: MPIntMutByteSlice, T1: MPIntByteSliceCommon>(
+pub fn ct_sub_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
     op0: &mut T0, op1: &T1
 ) -> LimbType {
-    mp_ct_sub_cond_mp_mp(op0, op1, LimbChoice::from(1))
+    ct_sub_cond_mp_mp(op0, op1, LimbChoice::from(1))
 }
 
 // Subtract a limb from a multiprecision integer.
-pub fn mp_ct_sub_mp_l<T0: MPIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
+pub fn ct_sub_mp_l<T0: MpIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
     debug_assert!(ct_find_last_set_byte_l(op1) <= op0.len());
     let op0_nlimbs = op0.nlimbs();
     if op0_nlimbs == 0 {

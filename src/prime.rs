@@ -1,8 +1,8 @@
-use super::limb::{LimbType, LIMB_BITS, LimbChoice, ct_is_zero_l, ct_sub_l_l_b, ct_lt_l_l, ct_ge_l_l, ct_eq_l_l};
-use super::limbs_buffer::{MPIntByteSliceCommon, MPBigEndianByteSlice, MPNativeEndianMutByteSlice, MPIntMutByteSlice, MPIntByteSlice as _, mp_ct_find_first_set_bit_mp};
-use super::cmp_impl::{mp_ct_lt_mp_mp, mp_ct_leq_mp_l, mp_ct_is_one_mp};
-use super::euclid::mp_ct_gcd;
-use super::montgomery::{ct_montgomery_neg_n0_inv_mod_l, mp_ct_montgomery_mul_mod, mp_ct_montgomery_mul_mod_cond};
+use super::limb::{LimbType, LIMB_BITS, LimbChoice, ct_is_zero_l, ct_sub_l_l_b, ct_lt_l_l, ct_geq_l_l, ct_eq_l_l};
+use super::limbs_buffer::{MpIntByteSliceCommon, MpBigEndianByteSlice, MpNativeEndianMutByteSlice, MpIntMutByteSlice, MpIntByteSlice as _, ct_find_first_set_bit_mp};
+use super::cmp_impl::{ct_lt_mp_mp, ct_leq_mp_l, ct_is_one_mp};
+use super::euclid::ct_gcd_mp_mp;
+use super::montgomery::{ct_montgomery_neg_n0_inv_mod_l_mp, ct_montgomery_mul_mod_mp_mp, ct_montgomery_mul_mod_cond_mp_mp};
 use super::usize_ct_cmp::{ct_eq_usize_usize, ct_lt_usize_usize};
 use super::hexstr;
 
@@ -98,12 +98,12 @@ const SMALL_ODD_PRIME_PRODUCTS: [&[u8]; 9] = [
     &SMALL_ODD_PRIME_PRODUCT_2048,
 ];
 
-pub fn mp_ct_composite_test_small_prime_gcd<PT: MPIntByteSliceCommon>(p: &PT, scratch: [&mut [u8]; 2]) -> LimbChoice {
+pub fn ct_composite_test_small_prime_gcd_mp<PT: MpIntByteSliceCommon>(p: &PT, scratch: [&mut [u8]; 2]) -> LimbChoice {
     debug_assert!(!p.is_empty());
 
     // The GCD runtime depends on the maximum of both operands' bit length.
     // Select the largest small prime product with length <= p.len().
-    let p_len_aligned = MPNativeEndianMutByteSlice::limbs_align_len(p.len());
+    let p_len_aligned = MpNativeEndianMutByteSlice::limbs_align_len(p.len());
     let mut i = SMALL_ODD_PRIME_PRODUCTS.len();
     while i > 0 {
         i -= 1;
@@ -119,13 +119,13 @@ pub fn mp_ct_composite_test_small_prime_gcd<PT: MPIntByteSliceCommon>(p: &PT, sc
     debug_assert!(scratch1.len() >= p_len_aligned);
     let (scratch1, _) = scratch1.split_at_mut(p_len_aligned);
 
-    let mut gcd = MPNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
-    gcd.copy_from(&MPBigEndianByteSlice::from_bytes(small_prime_product).unwrap());
-    let mut p_work_scratch = MPNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
+    let mut gcd = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
+    gcd.copy_from(&MpBigEndianByteSlice::from_bytes(small_prime_product).unwrap());
+    let mut p_work_scratch = MpNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
     p_work_scratch.copy_from(p);
 
-    mp_ct_gcd(&mut gcd, &mut p_work_scratch);
-    let gcd_is_one = mp_ct_is_one_mp(&gcd);
+    ct_gcd_mp_mp(&mut gcd, &mut p_work_scratch);
+    let gcd_is_one = ct_is_one_mp(&gcd);
 
     // The small prime products don't include a factor of two.
     // Test for it separately.
@@ -135,8 +135,8 @@ pub fn mp_ct_composite_test_small_prime_gcd<PT: MPIntByteSliceCommon>(p: &PT, sc
 }
 
 #[cfg(test)]
-fn test_mp_ct_composite_test_small_prime_gcd_common<PT: MPIntMutByteSlice>() {
-    use super::add_impl::mp_ct_sub_mp_l;
+fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
+    use super::add_impl::ct_sub_mp_l;
 
     for i in 0..8 {
         let l = SMALL_ODD_PRIME_PRODUCTS[i].len();
@@ -149,30 +149,30 @@ fn test_mp_ct_composite_test_small_prime_gcd_common<PT: MPIntMutByteSlice>() {
 
         let mut p = vec![0u8; p_len];
         let mut p = PT::from_bytes(&mut p).unwrap();
-        let scratch_len = MPNativeEndianMutByteSlice::limbs_align_len(p_len);
+        let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(p_len);
         let mut scratch0 = vec![0u8; scratch_len];
         let mut scratch1 = vec![0u8; scratch_len];
 
         p.zeroize_bytes_above(0);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(mp_ct_composite_test_small_prime_gcd(&p, scratch).unwrap() != 0);
+        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
 
         p.store_l(0, 2);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(mp_ct_composite_test_small_prime_gcd(&p, scratch).unwrap() != 0);
+        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
 
         p.store_l(0, 3);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(mp_ct_composite_test_small_prime_gcd(&p, scratch).unwrap() != 0);
+        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
 
         let j = if i > 0 {
             i - 1
         } else {
             0
         };
-        p.copy_from(&MPBigEndianByteSlice::from_bytes(SMALL_ODD_PRIME_PRODUCTS[j]).unwrap());
+        p.copy_from(&MpBigEndianByteSlice::from_bytes(SMALL_ODD_PRIME_PRODUCTS[j]).unwrap());
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(mp_ct_composite_test_small_prime_gcd(&p, scratch).unwrap() != 0);
+        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
     }
 
     // p = 2^255 - 19.
@@ -183,67 +183,67 @@ fn test_mp_ct_composite_test_small_prime_gcd_common<PT: MPIntMutByteSlice>() {
     let bit255_limb_index = (255 / LIMB_BITS) as usize;
     let bit255_pos_in_limb = 255 % LIMB_BITS;
     p.store_l(bit255_limb_index, 1 << bit255_pos_in_limb);
-    mp_ct_sub_mp_l(&mut p, 19);
-    let scratch_len = MPNativeEndianMutByteSlice::limbs_align_len(p_len);
+    ct_sub_mp_l(&mut p, 19);
+    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(p_len);
     let mut scratch0 = vec![0u8; scratch_len];
     let mut scratch1 = vec![0u8; scratch_len];
     let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-    assert_eq!(mp_ct_composite_test_small_prime_gcd(&p, scratch).unwrap(), 0);
+    assert_eq!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap(), 0);
 }
 
 #[test]
-fn test_mp_ct_composite_test_small_prime_gcd_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_composite_test_small_prime_gcd_common::<MPBigEndianMutByteSlice>()
+fn test_ct_composite_test_small_prime_gcd_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_composite_test_small_prime_gcd_mp::<MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_composite_test_small_prime_gcd_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_composite_test_small_prime_gcd_common::<MPLittleEndianMutByteSlice>()
+fn test_ct_composite_test_small_prime_gcd_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_composite_test_small_prime_gcd_mp::<MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_composite_test_small_prime_gcd_ne() {
-    test_mp_ct_composite_test_small_prime_gcd_common::<MPNativeEndianMutByteSlice>()
+fn test_ct_composite_test_small_prime_gcd_ne() {
+    test_ct_composite_test_small_prime_gcd_mp::<MpNativeEndianMutByteSlice>()
 }
 
-pub fn mp_ct_prime_test_miller_rabin<BT: MPIntByteSliceCommon, PT: MPIntByteSliceCommon, RXT: MPIntByteSliceCommon>(
+pub fn ct_prime_test_miller_rabin_mp<BT: MpIntByteSliceCommon, PT: MpIntByteSliceCommon, RXT: MpIntByteSliceCommon>(
     mg_base: &BT, p: &PT, mg_radix_mod_p: &RXT, scratch: [&mut [u8]; 2]
 ) -> LimbChoice {
     debug_assert!(!p.is_empty());
     debug_assert_eq!(p.load_l(0) & 1, 1);
     debug_assert!(mg_base.nlimbs() >= p.nlimbs());
-    debug_assert_ne!(mp_ct_lt_mp_mp(mg_base, p).unwrap(), 0);
-    debug_assert_ne!(mp_ct_lt_mp_mp(mg_radix_mod_p, p).unwrap(), 0);
+    debug_assert_ne!(ct_lt_mp_mp(mg_base, p).unwrap(), 0);
+    debug_assert_ne!(ct_lt_mp_mp(mg_radix_mod_p, p).unwrap(), 0);
 
     let [scratch0, scratch1] = scratch;
-    let scratch_len = MPNativeEndianMutByteSlice::limbs_align_len(p.len());
+    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(p.len());
     debug_assert!(scratch0.len() >= scratch_len);
     let (scratch0, _) = scratch0.split_at_mut(scratch_len);
     debug_assert!(scratch1.len() >= scratch_len);
     let (scratch1, _) = scratch1.split_at_mut(scratch_len);
 
-    let mut p_minus_one = MPNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
+    let mut p_minus_one = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
     p_minus_one.copy_from(p);
     p_minus_one.store_l(0, p_minus_one.load_l(0) ^ 1); // Minus one for odd p.
-    let (p_minus_one_is_nonzero, p_minus_one_first_set_bit_pos) = mp_ct_find_first_set_bit_mp(&p_minus_one);
+    let (p_minus_one_is_nonzero, p_minus_one_first_set_bit_pos) = ct_find_first_set_bit_mp(&p_minus_one);
     debug_assert!(p_minus_one_is_nonzero.unwrap() != 0);
     debug_assert!(p_minus_one_first_set_bit_pos > 0);
 
-    let mut base_pow = MPNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
-    let mut pow_scratch = MPNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
+    let mut base_pow = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
+    let mut pow_scratch = MpNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
     // Initialize with a 1 in Montgomery form.
     base_pow.copy_from(mg_radix_mod_p);
 
-    let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l(p);
+    let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p);
 
     let mut is_probable_prime = 0;
     let mut exp_bit_pos = 8 * p.len();
     while exp_bit_pos > 1 {
         exp_bit_pos -= 1;
 
-        mp_ct_montgomery_mul_mod(&mut pow_scratch, &base_pow, &base_pow, p, neg_p0_inv_mod_l);
+        ct_montgomery_mul_mod_mp_mp(&mut pow_scratch, &base_pow, &base_pow, p, neg_p0_inv_mod_l);
 
         // The exponent is p - 1, p is odd, so the lsb of p - 1 is zero and there's no borrow
         // into the next bit position. exp_bit_pos != 0 by the loop's condition, so
@@ -251,7 +251,7 @@ pub fn mp_ct_prime_test_miller_rabin<BT: MPIntByteSliceCommon, PT: MPIntByteSlic
         let exp_bit_limb_index = exp_bit_pos / LIMB_BITS as usize;
         let exp_bit_pos_in_limb = exp_bit_pos % LIMB_BITS as usize;
         let exp_bit = (p.load_l(exp_bit_limb_index) >> exp_bit_pos_in_limb) & 1;
-        mp_ct_montgomery_mul_mod_cond(
+        ct_montgomery_mul_mod_cond_mp_mp(
             &mut base_pow,
             &pow_scratch, mg_base,
             p, neg_p0_inv_mod_l,
@@ -296,41 +296,41 @@ pub fn mp_ct_prime_test_miller_rabin<BT: MPIntByteSliceCommon, PT: MPIntByteSlic
 }
 
 #[cfg(test)]
-fn test_mp_ct_prime_test_miller_rabin_common<BT: MPIntMutByteSlice, PT: MPIntMutByteSlice, RXT: MPIntMutByteSlice>() {
-    use super::limbs_buffer::mp_ct_nlimbs;
-    use super::add_impl::mp_ct_sub_mp_l;
-    use super::mul_impl::mp_ct_mul_trunc_mp_l;
+fn test_ct_prime_test_miller_rabin_mp<BT: MpIntMutByteSlice, PT: MpIntMutByteSlice, RXT: MpIntMutByteSlice>() {
+    use super::limbs_buffer::ct_mp_nlimbs;
+    use super::add_impl::ct_sub_mp_l;
+    use super::mul_impl::ct_mul_trunc_mp_l;
 
-    fn is_probable_prime<BT: MPIntMutByteSlice, PT: MPIntByteSliceCommon, RXT: MPIntMutByteSlice>(
+    fn is_probable_prime<BT: MpIntMutByteSlice, PT: MpIntByteSliceCommon, RXT: MpIntMutByteSlice>(
         base: &BT, p: &PT
     ) -> bool {
         use super::montgomery::{
-            mp_ct_montgomery_radix2_mod_n,
-            mp_ct_to_montgomery_form,
-            mp_ct_montgomery_redc
+            ct_montgomery_radix2_mod_n_mp,
+            ct_to_montgomery_form_mp,
+            ct_montgomery_redc_mp
         };
-        use super::div_impl::mp_ct_div_mp_mp;
+        use super::div_impl::ct_div_mp_mp;
 
         let mut base_mod_p = vec![0u8; base.len()];
         let mut base_mod_p = BT::from_bytes(&mut base_mod_p).unwrap();
         base_mod_p.copy_from(base);
-        mp_ct_div_mp_mp::<_, _, BT>(None, &mut base_mod_p, p, None).unwrap();
+        ct_div_mp_mp::<_, _, BT>(None, &mut base_mod_p, p, None).unwrap();
 
         let mut mg_radix2_mod_p = vec![0u8; RXT::limbs_align_len(p.len())];
         let mut mg_radix2_mod_p = RXT::from_bytes(&mut mg_radix2_mod_p).unwrap();
-        mp_ct_montgomery_radix2_mod_n(&mut mg_radix2_mod_p, p).unwrap();
+        ct_montgomery_radix2_mod_n_mp(&mut mg_radix2_mod_p, p).unwrap();
 
         let mut mg_base_mod_p = vec![0u8; RXT::limbs_align_len(p.len())];
         let mut mg_base_mod_p = RXT::from_bytes(&mut mg_base_mod_p).unwrap();
-        let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l(p);
-        mp_ct_to_montgomery_form(&mut mg_base_mod_p, &base_mod_p, p, neg_p0_inv_mod_l, &mg_radix2_mod_p);
+        let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p);
+        ct_to_montgomery_form_mp(&mut mg_base_mod_p, &base_mod_p, p, neg_p0_inv_mod_l, &mg_radix2_mod_p);
 
         let mut mg_radix_mod_p = mg_radix2_mod_p;
-        mp_ct_montgomery_redc(&mut mg_radix_mod_p, p, neg_p0_inv_mod_l);
+        ct_montgomery_redc_mp(&mut mg_radix_mod_p, p, neg_p0_inv_mod_l);
 
-        let mut scratch0 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(p.len())];
-        let mut scratch1 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(p.len())];
-        mp_ct_prime_test_miller_rabin(
+        let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(p.len())];
+        let mut scratch1 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(p.len())];
+        ct_prime_test_miller_rabin_mp(
             &mg_base_mod_p, p, &mg_radix_mod_p,
             [scratch0.as_mut_slice(), scratch1.as_mut_slice()]
         ).unwrap() != 0
@@ -343,7 +343,7 @@ fn test_mp_ct_prime_test_miller_rabin_common<BT: MPIntMutByteSlice, PT: MPIntMut
     let bit255_limb_index = (255 / LIMB_BITS) as usize;
     let bit255_pos_in_limb = 255 % LIMB_BITS;
     p.store_l(bit255_limb_index, 1 << bit255_pos_in_limb);
-    mp_ct_sub_mp_l(&mut p, 19);
+    ct_sub_mp_l(&mut p, 19);
     for i in 1..256 {
         let mut base = vec![0u8; BT::limbs_align_len(1)];
         let mut base = BT::from_bytes(&mut base).unwrap();
@@ -353,7 +353,7 @@ fn test_mp_ct_prime_test_miller_rabin_common<BT: MPIntMutByteSlice, PT: MPIntMut
     for i in 1..256 {
         let mut base = vec![0u8; BT::limbs_align_len(p.len())];
         let mut base = BT::from_bytes(&mut base).unwrap();
-        for j in 0..mp_ct_nlimbs(base.len()) {
+        for j in 0..ct_mp_nlimbs(base.len()) {
             base.store_l(j, i);
         }
         base.store_l(0, i);
@@ -364,7 +364,7 @@ fn test_mp_ct_prime_test_miller_rabin_common<BT: MPIntMutByteSlice, PT: MPIntMut
     let mut c = vec![0u8; PT::limbs_align_len((256 + 8) / 8)];
     let mut c = PT::from_bytes(&mut c).unwrap();
     c.copy_from(&p);
-    mp_ct_mul_trunc_mp_l(&mut c, (256 + 8) / 8, 251);
+    ct_mul_trunc_mp_l(&mut c, (256 + 8) / 8, 251);
     for i in 2..256 {
         let mut base = vec![0u8; BT::limbs_align_len(1)];
         let mut base = BT::from_bytes(&mut base).unwrap();
@@ -374,7 +374,7 @@ fn test_mp_ct_prime_test_miller_rabin_common<BT: MPIntMutByteSlice, PT: MPIntMut
     for i in 1..256 {
         let mut base = vec![0u8; BT::limbs_align_len(p.len())];
         let mut base = BT::from_bytes(&mut base).unwrap();
-        for j in 0..mp_ct_nlimbs(base.len()) {
+        for j in 0..ct_mp_nlimbs(base.len()) {
             base.store_l(j, i);
         }
         base.store_l(0, i);
@@ -383,27 +383,27 @@ fn test_mp_ct_prime_test_miller_rabin_common<BT: MPIntMutByteSlice, PT: MPIntMut
 }
 
 #[test]
-fn test_mp_ct_prime_test_miller_rabin_be_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_prime_test_miller_rabin_common::<MPBigEndianMutByteSlice,
-                                                MPBigEndianMutByteSlice,
-                                                MPBigEndianMutByteSlice>()
+fn test_ct_prime_test_miller_rabin_be_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_prime_test_miller_rabin_mp::<MpBigEndianMutByteSlice,
+                                         MpBigEndianMutByteSlice,
+                                         MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_prime_test_miller_rabin_le_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_prime_test_miller_rabin_common::<MPLittleEndianMutByteSlice,
-                                                MPLittleEndianMutByteSlice,
-                                                MPLittleEndianMutByteSlice>()
+fn test_ct_prime_test_miller_rabin_le_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_prime_test_miller_rabin_mp::<MpLittleEndianMutByteSlice,
+                                         MpLittleEndianMutByteSlice,
+                                         MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_mp_ct_prime_test_miller_rabin_ne_ne_ne() {
-    use super::limbs_buffer::MPNativeEndianMutByteSlice;
-    test_mp_ct_prime_test_miller_rabin_common::<MPNativeEndianMutByteSlice,
-                                                MPNativeEndianMutByteSlice,
-                                                MPNativeEndianMutByteSlice>()
+fn test_ct_prime_test_miller_rabin_ne_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_prime_test_miller_rabin_mp::<MpNativeEndianMutByteSlice,
+                                         MpNativeEndianMutByteSlice,
+                                         MpNativeEndianMutByteSlice>()
 }
 
 // Prime candidate generation. The general method follows the "wheel sieve" approach: start out from
@@ -686,13 +686,13 @@ impl PrimeWheelSieveLvl1 {
     const PRIMORIAL_NFACTORS: usize = first_primes_primorial_nfactors_for_max(!(0 as LimbType));
     const PRIMORIAL: LimbType = first_primes_primorial(Self::PRIMORIAL_NFACTORS);
 
-    pub fn start_geq_than<LBT: MPIntByteSliceCommon>(lower_bound: &LBT) -> Self {
+    pub fn start_geq_than<LBT: MpIntByteSliceCommon>(lower_bound: &LBT) -> Self {
         let offset_lower_bound = lower_bound.load_l(0) % Self::PRIMORIAL;
         // If the lower bound is <= 1, skip the 1 generated by the level 0.
         // It only got the potential for causing confusion or subtle corner cases.
         // It's important to account for that internal increment when producing
         // the first offset delta to the outside, so remember it in last_offset_delta.
-        let lower_bound_leq_one = mp_ct_leq_mp_l(lower_bound, 1);
+        let lower_bound_leq_one = ct_leq_mp_l(lower_bound, 1);
         let last_offset_delta = lower_bound_leq_one.select(0, (2 as LimbType).wrapping_sub(offset_lower_bound));
         let offset_lower_bound = offset_lower_bound + last_offset_delta;
         // Remember that increment and adjust for it when emitting the first produced
@@ -714,7 +714,7 @@ impl PrimeWheelSieveLvl1 {
             // been chosen such that there's enough room until LimbType::MAX to accomodate the
             // largest delta value the level 0 wheel could ever produce.
             next_offset += lvl0_delta as LimbType;
-            let wrapped = ct_ge_l_l(next_offset, Self::PRIMORIAL);
+            let wrapped = ct_geq_l_l(next_offset, Self::PRIMORIAL);
             next_offset = wrapped.select(next_offset, next_offset.wrapping_sub(Self::PRIMORIAL));
             last_offset = wrapped.select(last_offset, 0);
             next_offset_delta = wrapped.select(0, Self::PRIMORIAL - self.last_offset);
@@ -741,22 +741,22 @@ impl PrimeWheelSieveLvl1 {
 #[test]
 fn test_prime_wheel_sieve_lvl1() {
     use super::limb::LIMB_BYTES;
-    use super::add_impl::mp_ct_add_mp_l;
-    use super::cmp_impl::mp_ct_is_zero_mp;
-    use super::div_impl::mp_ct_div_mp_l;
+    use super::add_impl::ct_add_mp_l;
+    use super::cmp_impl::ct_is_zero_mp;
+    use super::div_impl::ct_div_mp_l;
 
-    fn advance_candidate(candidate: &mut MPNativeEndianMutByteSlice, wheel: &mut PrimeWheelSieveLvl1) {
-        let candidate_is_zero = mp_ct_is_zero_mp(candidate).unwrap() != 0;
+    fn advance_candidate(candidate: &mut MpNativeEndianMutByteSlice, wheel: &mut PrimeWheelSieveLvl1) {
+        let candidate_is_zero = ct_is_zero_mp(candidate).unwrap() != 0;
         let delta = wheel.produce_next_delta();
         for j in 0..delta {
-            mp_ct_add_mp_l(candidate, 1);
+            ct_add_mp_l(candidate, 1);
             if candidate_is_zero && j == 0 {
                 continue;
             }
             let mut is_not_coprime = false;
             for k in 0..PrimeWheelSieveLvl1::PRIMORIAL_NFACTORS {
                 let factor = FIRST_PRIMES[k] as LimbType;
-                let rem = mp_ct_div_mp_l::<_, MPNativeEndianMutByteSlice>(candidate, factor, None).unwrap();
+                let rem = ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(candidate, factor, None).unwrap();
                 if rem == 0 {
                     is_not_coprime = true;
                     break;
@@ -771,14 +771,14 @@ fn test_prime_wheel_sieve_lvl1() {
     }
 
     let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    let mut candidate = MpNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     for _i in 0..1024 {
         advance_candidate(&mut candidate, &mut wheel);
     }
 
     let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    let mut candidate = MpNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
     candidate.store_l(0, 1);
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     for _i in 0..1024 {
@@ -786,7 +786,7 @@ fn test_prime_wheel_sieve_lvl1() {
     }
 
     let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    let mut candidate = MpNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
     candidate.store_l(0, 2);
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     for _i in 0..1024 {
@@ -794,7 +794,7 @@ fn test_prime_wheel_sieve_lvl1() {
     }
 
     let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    let mut candidate = MpNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
     candidate.store_l(0, PrimeWheelSieveLvl1::PRIMORIAL - 2);
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     advance_candidate(&mut candidate, &mut wheel);

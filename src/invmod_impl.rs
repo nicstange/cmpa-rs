@@ -1,14 +1,14 @@
-use super::cmp_impl::{mp_ct_is_zero_mp, mp_ct_lt_mp_mp};
-use super::limbs_buffer::{MPIntMutByteSlice, MPIntByteSliceCommon, MPNativeEndianMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommonPriv as _, mp_zeroize_bits_above, mp_ct_zeroize_bits_above, mp_ct_find_first_set_bit_mp, mp_ct_nlimbs};
-use super::add_impl::{mp_ct_add_mp_mp,mp_ct_sub_mp_mp};
-use super::shift_impl::{mp_ct_rshift_mp, mp_ct_lshift_mp};
+use super::cmp_impl::{ct_is_zero_mp, ct_lt_mp_mp};
+use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpNativeEndianMutByteSlice, MpIntMutByteSlicePriv as _, MpIntByteSliceCommonPriv as _, zeroize_bits_above_mp, ct_zeroize_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs};
+use super::add_impl::{ct_add_mp_mp,ct_sub_mp_mp};
+use super::shift_impl::{ct_rshift_mp, ct_lshift_mp};
 use super::limb::{ct_sub_l_l_b, ct_is_nonzero_l, LIMB_BITS, LimbType};
-use super::mul_impl::{mp_ct_mul_trunc_mp_mp, mp_ct_square_trunc_mp};
-use super::euclid::{mp_ct_inv_mod_odd, MpCtInvModOddError};
+use super::mul_impl::{ct_mul_trunc_mp_mp, ct_square_trunc_mp};
+use super::euclid::{ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
 
 // max_pow2_exp: non-sensitive upper bound (inclusive) on pow2_exp, for CT.
 // If pow2_exp == 0, the result is all zero.
-fn mp_ct_inv_mod_pow2<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon>(
+fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
     result: &mut RT, op0: &T0, pow2_exp: usize, max_pow2_exp: usize, scratch: &mut [u8]
 ) {
     debug_assert!(!op0.is_empty());
@@ -19,12 +19,12 @@ fn mp_ct_inv_mod_pow2<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon>(
 
     let max_pow2_exp_len = (max_pow2_exp + 7) / 8;
     debug_assert!(result.len() >= RT::limbs_align_len(max_pow2_exp_len));
-    debug_assert!(scratch.len() >= MPNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len));
+    debug_assert!(scratch.len() >= MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len));
 
     result.zeroize_bytes_above(max_pow2_exp_len);
     let (_, mut result) = result.split_at(RT::limbs_align_len(max_pow2_exp_len));
-    let mut scratch = &mut scratch[..MPNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len)];
-    let mut tmp = MPNativeEndianMutByteSlice::from_bytes(&mut scratch).unwrap();
+    let mut scratch = &mut scratch[..MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len)];
+    let mut tmp = MpNativeEndianMutByteSlice::from_bytes(&mut scratch).unwrap();
 
     // Use Hensel's lemma to lift the root x == 1 of op0 * x - 1 mod 2 to a root mod
     // 2^{2^pow2_exp_bits}.  Note that an inverse modulo 2^pow2_exp_bits is also an inverse for any
@@ -44,15 +44,15 @@ fn mp_ct_inv_mod_pow2<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon>(
         // a total of ~1/2 of multiplications is avoided.
         let cur_result_len = (cur_pow2_exp + 7) / 8;
         // tmp = n'_i^2.
-        mp_ct_square_trunc_mp(&mut tmp, cur_result_len);
+        ct_square_trunc_mp(&mut tmp, cur_result_len);
         let cur_result_len = (2 * cur_result_len).min(max_pow2_exp_len);
         // tmp *= n.
-        mp_ct_mul_trunc_mp_mp(&mut tmp, cur_result_len, op0);
+        ct_mul_trunc_mp_mp(&mut tmp, cur_result_len, op0);
 
         // result = 2 * result - tmp
         let mut carry = 0;
         let mut borrow = 0;
-        for j in 0..mp_ct_nlimbs(cur_result_len) {
+        for j in 0..ct_mp_nlimbs(cur_result_len) {
             let result_val = result.load_l(j);
             let tmp_val = tmp.load_l(j);
             let result_msb = result_val >> (LIMB_BITS - 1);
@@ -69,17 +69,17 @@ fn mp_ct_inv_mod_pow2<RT: MPIntMutByteSlice, T0: MPIntByteSliceCommon>(
         // above. Truncate the upper bits again so that they won't be considered in the next
         // iteration.
         cur_pow2_exp *= 2;
-        mp_zeroize_bits_above(&mut result, cur_pow2_exp);
+        zeroize_bits_above_mp(&mut result, cur_pow2_exp);
     }
 
     // Finally, wipe anything beyond the real pow2_exp, that is, take the result mod 2^{pow2_exp}.
-    mp_ct_zeroize_bits_above(&mut result, pow2_exp);
-    debug_assert!(pow2_exp != 0 || mp_ct_is_zero_mp(&result).unwrap() == 1);
+    ct_zeroize_bits_above_mp(&mut result, pow2_exp);
+    debug_assert!(pow2_exp != 0 || ct_is_zero_mp(&result).unwrap() == 1);
 }
 
 #[cfg(test)]
-fn test_mp_ct_inv_mod_pow2_common<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice>(op0_len: usize) {
-    use super::cmp_impl::mp_ct_is_one_mp;
+fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(op0_len: usize) {
+    use super::cmp_impl::ct_is_one_mp;
     for i in 0..8 {
         const MERSENNE_PRIME_17: LimbType = 131071 as LimbType;
         let op0_high = MERSENNE_PRIME_17.wrapping_mul((8191 as LimbType).wrapping_mul(i));
@@ -105,18 +105,18 @@ fn test_mp_ct_inv_mod_pow2_common<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice>(
                     let max_pow2_exp_len = max_pow2_exp + 7 / 8;
                     let mut inv_mod_pow2 = vec![0u8; RT::limbs_align_len(max_pow2_exp_len)];
                     let mut inv_mod_pow2 = RT::from_bytes(&mut inv_mod_pow2).unwrap();
-                    let mut scratch = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len)];
-                    mp_ct_inv_mod_pow2(&mut inv_mod_pow2, &op0, pow2_exp, max_pow2_exp, &mut scratch);
+                    let mut scratch = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len)];
+                    ct_inv_mod_pow2_mp(&mut inv_mod_pow2, &op0, pow2_exp, max_pow2_exp, &mut scratch);
                     if pow2_exp != 0 {
                         // Multiply the inverse by n and verify the result comes out as 1 mod 2^pow2_exp.
                         let inv_mod_pow2_len = inv_mod_pow2.len();
-                        mp_ct_mul_trunc_mp_mp(&mut inv_mod_pow2, inv_mod_pow2_len, &op0);
-                        mp_zeroize_bits_above(&mut inv_mod_pow2, pow2_exp);
-                        assert_eq!(mp_ct_is_one_mp(&inv_mod_pow2).unwrap(), 1);
+                        ct_mul_trunc_mp_mp(&mut inv_mod_pow2, inv_mod_pow2_len, &op0);
+                        zeroize_bits_above_mp(&mut inv_mod_pow2, pow2_exp);
+                        assert_eq!(ct_is_one_mp(&inv_mod_pow2).unwrap(), 1);
                     } else {
                         // For pow2_exp == 0, the inverse is undefined, the result
                         // shall be set to zero.
-                        assert_eq!(mp_ct_is_zero_mp(&inv_mod_pow2).unwrap(), 1);
+                        assert_eq!(ct_is_zero_mp(&inv_mod_pow2).unwrap(), 1);
                     }
                 }
             }
@@ -125,76 +125,76 @@ fn test_mp_ct_inv_mod_pow2_common<RT: MPIntMutByteSlice, T0: MPIntMutByteSlice>(
 }
 
 #[cfg(test)]
-fn test_mp_ct_inv_mod_pow2_with_aligned_lengths<RT: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
+fn test_ct_inv_mod_pow2_mp_with_aligned_lengths<RT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
 
     for n_len in [LIMB_BYTES, 2 * LIMB_BYTES] {
-        test_mp_ct_inv_mod_pow2_common::<RT, NT>(n_len);
+        test_ct_inv_mod_pow2_mp_common::<RT, NT>(n_len);
     }
 }
 
 #[cfg(test)]
-fn test_mp_ct_inv_mod_pow2_with_unaligned_lengths<RT: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
+fn test_ct_inv_mod_pow2_mp_with_unaligned_lengths<RT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
 
     for n_len in [LIMB_BYTES - 1, LIMB_BYTES + 1, 2 * LIMB_BYTES - 1] {
-        test_mp_ct_inv_mod_pow2_common::<RT, NT>(n_len);
+        test_ct_inv_mod_pow2_mp_common::<RT, NT>(n_len);
     }
 }
 
 #[test]
-fn test_mp_ct_inv_mod_pow2_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
+fn test_ct_inv_mod_pow2_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
 
-    test_mp_ct_inv_mod_pow2_with_aligned_lengths::<MPBigEndianMutByteSlice,
-                                                     MPBigEndianMutByteSlice>();
-    test_mp_ct_inv_mod_pow2_with_unaligned_lengths::<MPBigEndianMutByteSlice,
-                                                       MPBigEndianMutByteSlice>();
+    test_ct_inv_mod_pow2_mp_with_aligned_lengths::<MpBigEndianMutByteSlice,
+                                                     MpBigEndianMutByteSlice>();
+    test_ct_inv_mod_pow2_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice,
+                                                       MpBigEndianMutByteSlice>();
 }
 
 #[test]
-fn test_mp_ct_inv_mod_pow2_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
+fn test_ct_inv_mod_pow2_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
 
-    test_mp_ct_inv_mod_pow2_with_aligned_lengths::<MPLittleEndianMutByteSlice,
-                                                     MPLittleEndianMutByteSlice>();
-    test_mp_ct_inv_mod_pow2_with_unaligned_lengths::<MPLittleEndianMutByteSlice,
-                                                       MPLittleEndianMutByteSlice>();
+    test_ct_inv_mod_pow2_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice,
+                                                     MpLittleEndianMutByteSlice>();
+    test_ct_inv_mod_pow2_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice,
+                                                       MpLittleEndianMutByteSlice>();
 }
 
 #[test]
-fn test_mp_ct_inv_mod_pow2_ne_ne() {
-    test_mp_ct_inv_mod_pow2_with_aligned_lengths::<MPNativeEndianMutByteSlice,
-                                                     MPNativeEndianMutByteSlice>();
+fn test_ct_inv_mod_pow2_ne_ne() {
+    test_ct_inv_mod_pow2_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice,
+                                                     MpNativeEndianMutByteSlice>();
 }
 
 #[derive(Debug)]
-pub enum MpCtInvModError {
+pub enum CtInvModMpMpError {
     OperandsNotCoprime,
 }
 
 // If n == 1, the multiplicative group does not exist and the
 // result is set to zero.
-pub fn mp_ct_inv_mod<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>(
+pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     op0: &mut T0, n: &mut NT, scratch: [&mut [u8]; 4]
-) -> Result<(), MpCtInvModError> {
+) -> Result<(), CtInvModMpMpError> {
     assert!(!n.is_empty());
     assert_eq!(op0.nlimbs(), n.nlimbs());
 
     // Verify if both, op0 and n, have factors of two in common and
     // return an error if so.
     if ct_is_nonzero_l(!op0.load_l(0) & !n.load_l(0) & 1) != 0 {
-        return Err(MpCtInvModError::OperandsNotCoprime);
+        return Err(CtInvModMpMpError::OperandsNotCoprime);
     }
 
     let [scratch0, scratch1, scratch2, scratch3] = scratch;
-    let scratch_len = MPNativeEndianMutByteSlice::limbs_align_len(n.len());
+    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
     assert!(scratch0.len() >= scratch_len);
     let (scratch0, _) = &mut scratch0.split_at_mut(scratch_len);
-    let mut scratch0 = MPNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
+    let mut scratch0 = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
     assert!(scratch1.len() >= scratch_len);
     let (scratch1, _) = &mut scratch1.split_at_mut(scratch_len);
-    let mut scratch1 = MPNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
+    let mut scratch1 = MpNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
     assert!(scratch2.len() >= scratch_len);
     let (scratch2, _) = &mut scratch2.split_at_mut(scratch_len);
     assert!(scratch3.len() >= scratch_len);
@@ -211,22 +211,22 @@ pub fn mp_ct_inv_mod<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>(
     //      * n_{*}
     // Note that the inverse modulo the power 2^e of two can be computed efficiently,
     // in time logarithmic in (the upper bound on) e, via Hensel lifting.
-    let (n_is_nonzero, n_pow2_exp) = mp_ct_find_first_set_bit_mp(n);
+    let (n_is_nonzero, n_pow2_exp) = ct_find_first_set_bit_mp(n);
     assert!(n_is_nonzero.unwrap() != 0);
-    mp_ct_rshift_mp(n, n_pow2_exp);
+    ct_rshift_mp(n, n_pow2_exp);
     let max_n_pow2_exp = 8 * n.len() - 1;
 
     // Compute scratch0 = op0^{-1} mod 2^e first, the subsequently executed Extended Euclidean Algorithm
     // will destroy the value of op0.
-    mp_ct_inv_mod_pow2(&mut scratch0, op0, n_pow2_exp, max_n_pow2_exp, scratch2);
+    ct_inv_mod_pow2_mp(&mut scratch0, op0, n_pow2_exp, max_n_pow2_exp, scratch2);
 
     // Compute scratch1 = op0^{-1} mod n_{*}. Will destroy the value in op0.
-    match mp_ct_inv_mod_odd(&mut scratch1, op0, n, [scratch2, scratch3]) {
+    match ct_inv_mod_odd_mp_mp(&mut scratch1, op0, n, [scratch2, scratch3]) {
         Ok(_) => (),
-        Err(MpCtInvModOddError::OperandsNotCoprime) => {
+        Err(CtInvModOddMpMpError::OperandsNotCoprime) => {
             // Undo the rshift on n for good measure.
-            mp_ct_lshift_mp(n, n_pow2_exp);
-            return Err(MpCtInvModError::OperandsNotCoprime);
+            ct_lshift_mp(n, n_pow2_exp);
+            return Err(CtInvModMpMpError::OperandsNotCoprime);
         }
     };
 
@@ -235,44 +235,44 @@ pub fn mp_ct_inv_mod<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>(
 
     // Compute scratch0 = (op0^{-1} mod 2^e) - (op0^{-1} mod n_{*}). Dismiss the borrow,
     // the result will eventually be taken modulo 2^e anyway.
-    mp_ct_sub_mp_mp(&mut scratch0, &scratch1);
+    ct_sub_mp_mp(&mut scratch0, &scratch1);
 
     // Compute scratch1 = n_{*}^{-1} mod 2^e.
-    mp_ct_inv_mod_pow2(&mut scratch1, n, n_pow2_exp, max_n_pow2_exp, scratch2);
+    ct_inv_mod_pow2_mp(&mut scratch1, n, n_pow2_exp, max_n_pow2_exp, scratch2);
 
     // Compute scratch0 = (op0^{-1} mod 2^e) - (op0^{-1} mod n_{*}) * (n_{*}^{-1} mod 2^e).
-    mp_ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, &scratch1);
+    ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, &scratch1);
     // And take the product modulo 2^e
-    mp_ct_zeroize_bits_above(&mut scratch0, n_pow2_exp);
+    ct_zeroize_bits_above_mp(&mut scratch0, n_pow2_exp);
 
     // Multiply by n_{*} and add to op0 to obtain the final result.
-    mp_ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, n);
-    let carry = mp_ct_add_mp_mp(op0, &scratch0);
+    ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, n);
+    let carry = ct_add_mp_mp(op0, &scratch0);
     assert_eq!(carry, 0);
 
     // Undo the rshift on n for the debug_assert!() comparison.
-    mp_ct_lshift_mp(n, n_pow2_exp);
-    assert!(mp_ct_lt_mp_mp(op0, n).unwrap() != 0);
+    ct_lshift_mp(n, n_pow2_exp);
+    assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
 
     Ok(())
 }
 
 #[cfg(test)]
-fn test_mp_ct_inv_mod_mp_mp<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
+fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::mul_impl::mp_ct_mul_trunc_mp_l;
+    use super::mul_impl::ct_mul_trunc_mp_l;
 
-    fn test_one<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>(
+    fn test_one<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
         op0: &T0, n: &mut NT
     ) {
-        use super::div_impl::mp_ct_div_mp_mp;
-        use super::cmp_impl::mp_ct_is_one_mp;
+        use super::div_impl::ct_div_mp_mp;
+        use super::cmp_impl::ct_is_one_mp;
 
         // Reserve an extra byte for the NotCoprime checks below.
-        let mut scratch0 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
-        let mut scratch1 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
-        let mut scratch2 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
-        let mut scratch3 = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
+        let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
+        let mut scratch1 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
+        let mut scratch2 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
+        let mut scratch3 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
 
         let mut op0_inv_mod_n = vec![0u8; T0::limbs_align_len(n.len())];
         let mut op0_inv_mod_n = T0::from_bytes(&mut op0_inv_mod_n).unwrap();
@@ -282,57 +282,57 @@ fn test_mp_ct_inv_mod_mp_mp<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
             scratch0.as_mut_slice(), scratch1.as_mut_slice(),
             scratch2.as_mut_slice(), scratch3.as_mut_slice()
         ];
-        mp_ct_inv_mod(&mut op0_inv_mod_n, n, scratch).unwrap();
+        ct_inv_mod_mp_mp(&mut op0_inv_mod_n, n, scratch).unwrap();
 
         // If n == 1, the multiplicative group does not exist and the result is fixed to zero.
-        if mp_ct_is_one_mp(n).unwrap() != 0 {
-            assert_eq!(mp_ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
+        if ct_is_one_mp(n).unwrap() != 0 {
+            assert_eq!(ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
             return;
         }
 
         // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
-        let mut product_buf = vec![0u8; MPNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];
-        let mut product = MPNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
+        let mut product_buf = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];
+        let mut product = MpNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
         product.copy_from(&op0_inv_mod_n);
-        mp_ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
-        mp_ct_div_mp_mp::<_, _, MPNativeEndianMutByteSlice>(None, &mut product, n, None).unwrap();
-        assert_eq!(mp_ct_is_one_mp(&product).unwrap(), 1);
+        ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
+        ct_div_mp_mp::<_, _, MpNativeEndianMutByteSlice>(None, &mut product, n, None).unwrap();
+        assert_eq!(ct_is_one_mp(&product).unwrap(), 1);
 
-        // Verify that mp_ct_inv_mod() correctly detects common factors and would error out.
+        // Verify that ct_inv_mod_mp_mp() correctly detects common factors and would error out.
         // Scaled by 2.
         let mut scaled_n = vec![0u8; NT::limbs_align_len(n.len() + 1)];
         let mut scaled_n = NT::from_bytes(&mut scaled_n).unwrap();
         scaled_n.copy_from(n);
-        mp_ct_lshift_mp(&mut scaled_n, 1);
+        ct_lshift_mp(&mut scaled_n, 1);
         let mut scaled_op0 = vec![0u8; T0::limbs_align_len(n.len() + 1)];
         let mut scaled_op0 = NT::from_bytes(&mut scaled_op0).unwrap();
         scaled_op0.copy_from(n);
-        mp_ct_lshift_mp(&mut scaled_op0, 1);
+        ct_lshift_mp(&mut scaled_op0, 1);
         let scratch = [
             scratch0.as_mut_slice(), scratch1.as_mut_slice(),
             scratch2.as_mut_slice(), scratch3.as_mut_slice()
         ];
         assert!(matches!(
-            mp_ct_inv_mod(&mut scaled_op0, &mut scaled_n, scratch),
-            Err(MpCtInvModError::OperandsNotCoprime)
+            ct_inv_mod_mp_mp(&mut scaled_op0, &mut scaled_n, scratch),
+            Err(CtInvModMpMpError::OperandsNotCoprime)
         ));
         // Scaled by 3.
         let mut scaled_n = vec![0u8; NT::limbs_align_len(n.len() + 1)];
         let mut scaled_n = NT::from_bytes(&mut scaled_n).unwrap();
         scaled_n.copy_from(n);
-        mp_ct_mul_trunc_mp_l(&mut scaled_n, n.len(), 3);
-        mp_ct_lshift_mp(&mut scaled_n, 1);
+        ct_mul_trunc_mp_l(&mut scaled_n, n.len(), 3);
+        ct_lshift_mp(&mut scaled_n, 1);
         let mut scaled_op0 = vec![0u8; T0::limbs_align_len(n.len() + 1)];
         let mut scaled_op0 = NT::from_bytes(&mut scaled_op0).unwrap();
         scaled_op0.copy_from(n);
-        mp_ct_mul_trunc_mp_l(&mut scaled_op0, op0.len(), 3);
+        ct_mul_trunc_mp_l(&mut scaled_op0, op0.len(), 3);
         let scratch = [
             scratch0.as_mut_slice(), scratch1.as_mut_slice(),
             scratch2.as_mut_slice(), scratch3.as_mut_slice()
         ];
         assert!(matches!(
-            mp_ct_inv_mod(&mut scaled_op0, &mut scaled_n, scratch),
-            Err(MpCtInvModError::OperandsNotCoprime)
+            ct_inv_mod_mp_mp(&mut scaled_op0, &mut scaled_n, scratch),
+            Err(CtInvModMpMpError::OperandsNotCoprime)
         ));
     }
 
@@ -376,7 +376,7 @@ fn test_mp_ct_inv_mod_mp_mp<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
                 let limb_index = i / (8 * LIMB_BYTES);
                 let i = i % (8 * LIMB_BYTES);
                 n.store_l(limb_index, 1 << i);
-                mp_ct_lshift_mp(&mut n, 8 * n_len);
+                ct_lshift_mp(&mut n, 8 * n_len);
                 let limb_index = j / (8 * LIMB_BYTES);
                 let j = j % (8 * LIMB_BYTES);
                 op0.store_l(limb_index, 1 << j);
@@ -391,14 +391,14 @@ fn test_mp_ct_inv_mod_mp_mp<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
         let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
         n.store_l(0, 1);
         while n.load_l(n.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut n, n_len, 251);
+            ct_mul_trunc_mp_l(&mut n, n_len, 251);
         }
         op0.store_l(0, 1);
         while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut op0, op0_len, 241);
+            ct_mul_trunc_mp_l(&mut op0, op0_len, 241);
         }
         while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len) - 1 == 0 {
-            mp_ct_mul_trunc_mp_l(&mut op0, op0_len, 2);
+            ct_mul_trunc_mp_l(&mut op0, op0_len, 2);
         }
         test_one(&op0, &mut n);
 
@@ -407,32 +407,32 @@ fn test_mp_ct_inv_mod_mp_mp<T0: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
         let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
         let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
         n.store_l(0, 1);
-        while n.load_l(mp_ct_nlimbs(n_len) - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut n, n_len, 251);
+        while n.load_l(ct_mp_nlimbs(n_len) - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
+            ct_mul_trunc_mp_l(&mut n, n_len, 251);
         }
-        mp_ct_lshift_mp(&mut n, 8 * n_len);
+        ct_lshift_mp(&mut n, 8 * n_len);
         op0.store_l(0, 1);
         let n_op0_high_min_len = (2 * n_op0_min_len - 1) % LIMB_BYTES + 1;
         while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            mp_ct_mul_trunc_mp_l(&mut op0, 2 * op0_len, 241);
+            ct_mul_trunc_mp_l(&mut op0, 2 * op0_len, 241);
         }
         test_one(&op0, &mut n);
     }
 }
 
 #[test]
-fn test_mp_ct_inv_mod_be_be() {
-    use super::limbs_buffer::MPBigEndianMutByteSlice;
-    test_mp_ct_inv_mod_mp_mp::<MPBigEndianMutByteSlice, MPBigEndianMutByteSlice>();
+fn test_ct_inv_mod_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_inv_mod_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>();
 }
 
 #[test]
-fn test_mp_ct_inv_mod_le_le() {
-    use super::limbs_buffer::MPLittleEndianMutByteSlice;
-    test_mp_ct_inv_mod_mp_mp::<MPLittleEndianMutByteSlice, MPLittleEndianMutByteSlice>();
+fn test_ct_inv_mod_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_inv_mod_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>();
 }
 
 #[test]
-fn test_mp_ct_inv_mod_ne_ne() {
-    test_mp_ct_inv_mod_mp_mp::<MPNativeEndianMutByteSlice, MPNativeEndianMutByteSlice>();
+fn test_ct_inv_mod_ne_ne() {
+    test_ct_inv_mod_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>();
 }
