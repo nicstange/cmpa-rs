@@ -11,7 +11,7 @@ mod limb;
 mod limbs_buffer;
 mod montgomery_impl;
 mod mul_impl;
-mod prime;
+mod prime_impl;
 mod shift_impl;
 mod usize_ct_cmp;
 
@@ -50,6 +50,6 @@ pub use montgomery_impl::{
 
 pub use mul_impl::{ct_mul_trunc_mp_l, ct_mul_trunc_mp_mp, ct_square_trunc_mp};
 
-pub use prime::{ct_composite_test_small_prime_gcd_mp, ct_prime_test_miller_rabin_mp};
+pub use prime_impl::{ct_composite_test_small_prime_gcd_mp, ct_prime_test_miller_rabin_mp};
 
 pub use shift_impl::{ct_lshift_mp, ct_rshift_mp};
