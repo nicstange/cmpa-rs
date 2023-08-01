@@ -8,7 +8,7 @@ use super::limbs_buffer::{
     ct_find_first_set_bit_mp, MpBigEndianByteSlice, MpIntByteSlice as _, MpIntByteSliceCommon,
     MpIntMutByteSlice, MpNativeEndianMutByteSlice,
 };
-use super::montgomery::{
+use super::montgomery_impl::{
     ct_montgomery_mul_mod_cond_mp_mp, ct_montgomery_mul_mod_mp_mp,
     ct_montgomery_neg_n0_inv_mod_l_mp,
 };
@@ -323,7 +323,7 @@ fn test_ct_prime_test_miller_rabin_mp<
         p: &PT,
     ) -> bool {
         use super::div_impl::ct_div_mp_mp;
-        use super::montgomery::{
+        use super::montgomery_impl::{
             ct_montgomery_radix2_mod_n_mp, ct_montgomery_redc_mp, ct_to_montgomery_form_mp,
         };
 

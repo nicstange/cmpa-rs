@@ -9,7 +9,7 @@ use super::limbs_buffer::{
     ct_find_first_set_bit_mp, ct_swap_cond_mp, MpIntByteSliceCommon, MpIntMutByteSlice,
     MpNativeEndianMutByteSlice,
 };
-use super::montgomery::{ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryRedcKernel};
+use super::montgomery_impl::{ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryRedcKernel};
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
 use super::usize_ct_cmp::ct_lt_usize_usize;
 
