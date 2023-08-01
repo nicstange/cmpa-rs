@@ -5,8 +5,13 @@ use super::limb::{
     ct_add_l_l, ct_add_l_l_c, ct_arithmetic_rshift_l, ct_is_nonzero_l, ct_mul_add_l_l_l_c,
     ct_mul_l_l, ct_sub_l_l, LimbChoice, LimbType, LIMB_BITS,
 };
-use super::limbs_buffer::{MpIntByteSliceCommon, MpIntMutByteSlice, MpNativeEndianMutByteSlice};
+use super::limbs_buffer::{
+    ct_find_first_set_bit_mp, ct_swap_cond_mp, MpIntByteSliceCommon, MpIntMutByteSlice,
+    MpNativeEndianMutByteSlice,
+};
 use super::montgomery::{ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryRedcKernel};
+use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
+use super::usize_ct_cmp::ct_lt_usize_usize;
 
 // Implementation of Euclid's algorithm after
 // [BERN_YANG19] "Fast constant-time gcd computation and modular inversion",
@@ -757,6 +762,181 @@ fn test_ct_gcd_odd_le_le() {
 fn test_ct_gcd_odd_ne_ne() {
     use super::limbs_buffer::MpNativeEndianMutByteSlice;
     test_ct_gcd_odd_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
+}
+
+pub fn ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(op0: &mut T0, op1: &mut T1) {
+    debug_assert_eq!(op0.len(), op1.len());
+    // The GCD implementation requires the first operand to be odd. Factor out
+    // common powers of two.
+    let (op0_is_nonzero, op0_powers_of_two) = ct_find_first_set_bit_mp(op0);
+    let (op1_is_nonzero, op1_powers_of_two) = ct_find_first_set_bit_mp(op1);
+    debug_assert!(op0_is_nonzero.unwrap() != 0 || op0_powers_of_two == 0);
+    let op1_has_fewer_powers_of_two = !op0_is_nonzero // If op0 == 0, consider op1 only.
+        | op1_is_nonzero & ct_lt_usize_usize(op1_powers_of_two, op0_powers_of_two);
+    let min_powers_of_two =
+        op1_has_fewer_powers_of_two.select_usize(op0_powers_of_two, op1_powers_of_two);
+    ct_rshift_mp(op0, min_powers_of_two);
+    ct_rshift_mp(op1, min_powers_of_two);
+    ct_swap_cond_mp(op0, op1, op1_has_fewer_powers_of_two);
+    let op0_and_op1_zero = !op0_is_nonzero & !op1_is_nonzero;
+    debug_assert!(op0_and_op1_zero.unwrap() != 0 || op0.load_l(0) & 1 == 1);
+    // If both inputs are zero, force op0 to 1, the GCD needs that.
+    op0.store_l(0, op0_and_op1_zero.select(op0.load_l(0), 1));
+    ct_gcd_odd_mp_mp(op0, op1);
+    // Now the GCD (odd factors only) is in op0.
+    debug_assert_eq!(ct_is_zero_mp(op0).unwrap(), 0);
+    debug_assert!(op0_and_op1_zero.unwrap() == 0 || ct_is_one_mp(op0).unwrap() != 0);
+    debug_assert!(op0_and_op1_zero.unwrap() == 0 || min_powers_of_two == 0);
+    // Scale the GCD by the common powers of two to obtain the final result.
+    ct_lshift_mp(op0, min_powers_of_two);
+}
+
+#[cfg(test)]
+fn test_ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
+    use super::limb::LIMB_BYTES;
+    use super::limbs_buffer::MpIntByteSliceCommon as _;
+    use super::mul_impl::ct_mul_trunc_mp_l;
+
+    fn test_one<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
+        op0: &T0,
+        op1: &T1,
+        gcd: &GT,
+    ) {
+        use super::cmp_impl::ct_eq_mp_mp;
+        use super::mul_impl::ct_mul_trunc_mp_mp;
+
+        let gcd_len = gcd.len();
+        let op0_len = op0.len() + gcd_len;
+        let op1_len = op1.len() + gcd_len;
+
+        let op_max_len = op0_len.max(op1_len);
+        let op_max_aligned_len = T0::limbs_align_len(op_max_len);
+        let op_max_aligned_len = T1::limbs_align_len(op_max_aligned_len);
+        let mut op0_gcd_work = vec![0u8; op_max_aligned_len];
+        let mut op0_gcd_work = T0::from_bytes(&mut op0_gcd_work).unwrap();
+        op0_gcd_work.copy_from(op0);
+        ct_mul_trunc_mp_mp(&mut op0_gcd_work, op0.len(), gcd);
+        let mut op1_gcd_work = vec![0u8; op_max_aligned_len];
+        let mut op1_gcd_work = T1::from_bytes(&mut op1_gcd_work).unwrap();
+        op1_gcd_work.copy_from(op1);
+        ct_mul_trunc_mp_mp(&mut op1_gcd_work, op1.len(), gcd);
+
+        ct_gcd_mp_mp(&mut op0_gcd_work, &mut op1_gcd_work);
+
+        let op0_is_zero = ct_is_zero_mp(op0).unwrap() != 0;
+        let op1_is_zero = ct_is_zero_mp(op1).unwrap() != 0;
+        if ct_is_zero_mp(gcd).unwrap() != 0 || (op0_is_zero && op1_is_zero) {
+            // If both operands are zero, the result is fixed to 1 for definiteness.
+            assert_ne!(ct_is_one_mp(&op0_gcd_work).unwrap(), 0);
+        } else if op0_is_zero {
+            // If op0 == 0, but op1 is not, the result is expected to equal the latter.
+            let mut expected = vec![0u8; T1::limbs_align_len(op1.len() + gcd.len())];
+            let mut expected = T1::from_bytes(&mut expected).unwrap();
+            expected.copy_from(op1);
+            ct_mul_trunc_mp_mp(&mut expected, op1.len(), gcd);
+            assert_ne!(ct_eq_mp_mp(&mut op0_gcd_work, &expected).unwrap(), 0);
+        } else if op1_is_zero {
+            // If op1 == 0, but op0 is not, the result is expected to equal the latter.
+            let mut expected = vec![0u8; T1::limbs_align_len(op0.len() + gcd.len())];
+            let mut expected = T1::from_bytes(&mut expected).unwrap();
+            expected.copy_from(op0);
+            ct_mul_trunc_mp_mp(&mut expected, op0.len(), gcd);
+            assert_ne!(ct_eq_mp_mp(&mut op0_gcd_work, &expected).unwrap(), 0);
+        } else {
+            assert_ne!(ct_eq_mp_mp(&mut op0_gcd_work, gcd).unwrap(), 0);
+        }
+    }
+
+    for i in [
+        0,
+        LIMB_BYTES - 1,
+        LIMB_BYTES,
+        2 * LIMB_BYTES,
+        2 * LIMB_BYTES + 1,
+    ] {
+        for j in [
+            0,
+            LIMB_BYTES - 1,
+            LIMB_BYTES,
+            2 * LIMB_BYTES,
+            2 * LIMB_BYTES + 1,
+        ] {
+            for k in [
+                0,
+                LIMB_BYTES - 1,
+                LIMB_BYTES,
+                2 * LIMB_BYTES,
+                2 * LIMB_BYTES + 1,
+            ] {
+                for total_shift in [
+                    0,
+                    LIMB_BITS - 1,
+                    LIMB_BITS,
+                    2 * LIMB_BITS,
+                    2 * LIMB_BITS + 1,
+                ] {
+                    for l in 0..total_shift as usize {
+                        let gcd_shift = l.min(total_shift as usize - l);
+                        let op0_shift = l - gcd_shift;
+                        let op1_shift = total_shift as usize - l - gcd_shift;
+
+                        let op0_len = i + (op0_shift + 7) / 8;
+                        let mut op0 = vec![0u8; T0::limbs_align_len(op0_len)];
+                        let mut op0 = T0::from_bytes(&mut op0).unwrap();
+                        if !op0.is_empty() {
+                            op0.store_l(0, 1);
+                        }
+                        for _ in 0..i {
+                            ct_mul_trunc_mp_l(&mut op0, op0_len, 251);
+                        }
+                        ct_lshift_mp(&mut op0, op0_shift);
+
+                        let op1_len = j + (op1_shift + 7) / 8;
+                        let mut op1 = vec![0u8; T1::limbs_align_len(op1_len)];
+                        let mut op1 = T1::from_bytes(&mut op1).unwrap();
+                        if !op1.is_empty() {
+                            op1.store_l(0, 1);
+                        }
+                        for _ in 0..j {
+                            ct_mul_trunc_mp_l(&mut op1, op1_len, 241);
+                        }
+                        ct_lshift_mp(&mut op1, op1_shift);
+
+                        let gcd_len = k + (gcd_shift + 7) / 8;
+                        let mut gcd = vec![0u8; T0::limbs_align_len(gcd_len)];
+                        let mut gcd = T0::from_bytes(&mut gcd).unwrap();
+                        if !gcd.is_empty() {
+                            gcd.store_l(0, 1);
+                        }
+                        for _ in 0..k {
+                            ct_mul_trunc_mp_l(&mut gcd, gcd_len, 239);
+                        }
+                        ct_lshift_mp(&mut gcd, gcd_shift);
+
+                        test_one(&op0, &op1, &gcd);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_ct_gcd_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_gcd_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
+}
+
+#[test]
+fn test_ct_gcd_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_gcd_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
+}
+
+#[test]
+fn test_ct_gcd_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_gcd_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
 #[derive(Debug)]

@@ -1,14 +1,13 @@
 use super::cmp_impl::ct_is_zero_mp;
 use super::div_impl::ct_div_mp_mp;
-use super::euclid::ct_gcd_odd_mp_mp;
+use super::euclid::ct_gcd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
-    ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_mp_limbs_align_len, ct_mp_nlimbs,
-    ct_swap_cond_mp, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _, MpIntMutByteSlice,
+    ct_find_last_set_bit_mp, ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon,
+    MpIntByteSliceCommonPriv as _, MpIntMutByteSlice,
 };
 use super::mul_impl::ct_mul_trunc_mp_mp;
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
-use super::usize_ct_cmp::ct_lt_usize_usize;
 
 pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
     result: &mut RT,
@@ -52,43 +51,24 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
         ct_mul_trunc_mp_mp(&mut prod_scratch, op0_len, op1);
     };
 
-    // The GCD implementation requires the first operand to be odd. Factor out
-    // common powers of two.
-    let (op0_is_nonzero, op0_powers_of_two) = ct_find_first_set_bit_mp(op0);
-    let (op1_is_nonzero, op1_powers_of_two) = ct_find_first_set_bit_mp(op1);
-    debug_assert!(op0_is_nonzero.unwrap() != 0 || op0_powers_of_two == 0);
-    let op1_has_fewer_powers_of_two = !op0_is_nonzero // If op0 == 0, consider op1 only.
-        | op1_is_nonzero & ct_lt_usize_usize(op1_powers_of_two, op0_powers_of_two);
-    let min_powers_of_two =
-        op1_has_fewer_powers_of_two.select_usize(op0_powers_of_two, op1_powers_of_two);
-    ct_rshift_mp(op0, min_powers_of_two);
-    ct_rshift_mp(op1, min_powers_of_two);
-    ct_swap_cond_mp(op0, op1, op1_has_fewer_powers_of_two);
-    let op0_and_op1_zero = !op0_is_nonzero & !op1_is_nonzero;
-    debug_assert!(op0_and_op1_zero.unwrap() != 0 || op0.load_l(0) & 1 == 1);
-    // If both inputs are zero, force op0 to 1, the GCD needs that.
-    op0.store_l(0, op0_and_op1_zero.select(op0.load_l(0), 1));
-    ct_gcd_odd_mp_mp(op0, op1);
-    // Now the GCD (odd factors only) is in op0.
-    let gcd_odd: &mut T0 = op0;
-    debug_assert_eq!(ct_is_zero_mp(gcd_odd).unwrap(), 0);
-
-    // Reduce the product by the actual GCD's powers of two.
-    ct_rshift_mp(&mut prod_scratch, min_powers_of_two);
+    // Compute the GCD, result will be in op0.
+    ct_gcd_mp_mp(op0, op1);
+    let gcd: &mut T0 = op0;
+    debug_assert_eq!(ct_is_zero_mp(gcd).unwrap(), 0);
 
     // And divide the product by the remaining, odd factors of the GCD to
     // arrive at the LCM. As initially said, be careful to scale the GCD
     // to the maximum possible value so that the division's runtime is
     // independent of its actual value's width.
-    let (_, gcd_odd_width) = ct_find_last_set_bit_mp(gcd_odd);
+    let (_, gcd_width) = ct_find_last_set_bit_mp(gcd);
     // Maximum GCD length is the larger of the two operands' lengths: in the most
     // common case of non-zero operands, it's <= the smaller one actually, but
     // if either of the operands' values equals zero, then it would come out as
     // the other one.
     let gcd_max_len = op0_len.max(op1_len);
     let gcd_max_nlimbs = ct_mp_nlimbs(gcd_max_len);
-    let scaling_shift = 8 * gcd_max_len - gcd_odd_width;
-    ct_lshift_mp(gcd_odd, scaling_shift);
+    let scaling_shift = 8 * gcd_max_len - gcd_width;
+    ct_lshift_mp(gcd, scaling_shift);
     // Scale, the dividend, i.e. the product of op0 and op1 as well. This scaling
     // will overflow the prod_scratch[], so reuse the currently unused op1[]
     // buffer to receive the high parts shifted out on the left. For
@@ -128,7 +108,7 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     ct_div_mp_mp(
         Some(&mut scaled_prod_high),
         &mut scaled_prod_low,
-        gcd_odd,
+        gcd,
         Some(result),
     )
     .unwrap();
