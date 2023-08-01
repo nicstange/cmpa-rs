@@ -1,41 +1,49 @@
 use core::array;
 
-use super::limb::{LimbType, LimbChoice, LIMB_BITS, ct_mul_l_l, ct_mul_add_l_l_l_c, ct_add_l_l, ct_sub_l_l, ct_add_l_l_c, ct_is_nonzero_l, ct_arithmetic_rshift_l};
-use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpNativeEndianMutByteSlice};
-use super::montgomery::{CtMontgomeryRedcKernel, ct_montgomery_neg_n0_inv_mod_l_mp};
-use super::cmp_impl::{ct_gt_mp_mp, ct_lt_mp_mp, ct_is_one_mp, ct_is_zero_mp, CtGeqMpMpKernel};
+use super::cmp_impl::{ct_gt_mp_mp, ct_is_one_mp, ct_is_zero_mp, ct_lt_mp_mp, CtGeqMpMpKernel};
+use super::limb::{
+    ct_add_l_l, ct_add_l_l_c, ct_arithmetic_rshift_l, ct_is_nonzero_l, ct_mul_add_l_l_l_c,
+    ct_mul_l_l, ct_sub_l_l, LimbChoice, LimbType, LIMB_BITS,
+};
+use super::limbs_buffer::{MpIntByteSliceCommon, MpIntMutByteSlice, MpNativeEndianMutByteSlice};
+use super::montgomery::{ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryRedcKernel};
 
 // Implementation of Euclid's algorithm after
-// [BERN_YANG19] "Fast constant-time gcd computation and modular inversion", Daniel J. Bernstein and
-//               Bo-Yin Yang, IACR Transactions on Cryptographic Hardware and Embedded Systems ISSN
-//               2569-2925, Vol. 2019, No. 3, pp. 340-398
+// [BERN_YANG19] "Fast constant-time gcd computation and modular inversion",
+//                Daniel J. Bernstein and Bo-Yin Yang, IACR Transactions on
+//                Cryptographic Hardware and Embedded Systems ISSN 2569-2925,
+//                Vol. 2019, No. 3, pp. 340-398
 //
-// The main advantages over other common binary gcd algorithms for the purposes here are
+// The main advantages over other common binary gcd algorithms for the purposes
+// here are
 // - only the least significant bit determines the operations to be carried out
 //   in each step,
 // - steps can be batched into transition matrices
-// - and, last but not least, it's particularly constant-time implementation friendly overall.
+// - and, last but not least, it's particularly constant-time implementation
+//   friendly overall.
 //
-// [BERN_YANG19] define transition matrices describing their divstep(\delta, f, g) step:
-// /  \                     / \
+// [BERN_YANG19] define transition matrices describing their divstep(\delta, f,
+// g) step: /  \                     / \
 // |f'|                     |f|
 // |  | = T(\delta, f, g) * | |
 // |g'|                     |g|
 // \  /                     \ /
 // with
-//                                        /
-//                                        | [[0, 1], [-1, 1]]     if \delta > 0 and g odd
-// T(\delta, f, g) = [[1, 0], [0, 1/2]] * |
-//                                        | [[1, 0], [g % 2, 1]]  otherwise.
-//                                        \
+//                   /        \   /
+//                   | 1    0 |   | [[0, 1], [-1, 1]]    if \delta > 0 and g odd
+// T(\delta, f, g) = |        | * |
+//                   | 0  1/2 |   | [[1, 0], [g % 2, 1]] otherwise.
+//                   \        /   \
 // c.f. p. 361.
 //
-// The matrices in the second operand of the product on the right hand side above both have
-// inf-norm == 2, so multiplying any against some other matrix (like a product of these) at most
-// doubles the maximum of the entries' values. Representing negative values in two's complement as
-// stored in in (unsigned) LimbTypes and tracking the shifting factor from the first operand on the
-// RHS separately allows for batching up to LIMB_BITS - 2 divstep() invocations and accumulate them
-// in such a matrix (without overflow into the sign bit) before applying them to MP integers.
+// The matrices in the second operand of the product on the right hand side
+// above both have inf-norm == 2, so multiplying any against some other matrix
+// (like a product of these) at most doubles the maximum of the entries' values.
+// Representing negative values in two's complement as stored in in (unsigned)
+// LimbTypes and tracking the shifting factor from the first operand on the
+// RHS separately allows for batching up to LIMB_BITS - 2 divstep() invocations
+// and accumulate them in such a matrix (without overflow into the sign bit)
+// before applying them to MP integers.
 
 struct TransitionMatrix {
     t: [[LimbType; 2]; 2],
@@ -44,7 +52,10 @@ struct TransitionMatrix {
 
 impl TransitionMatrix {
     fn identity() -> Self {
-        Self { t: [[1, 0], [0, 1]], row_shift: [0, 0] }
+        Self {
+            t: [[1, 0], [0, 1]],
+            row_shift: [0, 0],
+        }
     }
 
     // Multiply a single step transition matrix from the left against self.
@@ -63,31 +74,37 @@ impl TransitionMatrix {
 
         // Compute the new second row.
         let case0_mask = case0.select(0, !0);
-        // If not case0, then the original first row is multiplied by g & 1 (== g0) before
-        // getting added to the second one.
+        // If not case0, then the original first row is multiplied by g & 1 (== g0)
+        // before getting added to the second one.
         let t0_mask = case0.select(g0.select(0, !0), !0);
         for j in [0, 1] {
             let mut t0j = t0[j];
-            // If case0 == true, then negate the original first row to be added to the second row.
+            // If case0 == true, then negate the original first row to be added to the
+            // second row.
             t0j ^= case0_mask; // Conditional bitwise negation.
             t0j = t0j.wrapping_add(case0.unwrap()); // And add one to finally obtain -t0j.
+
             // If case0 == false, clear out the original first row in case g & 1 == 0.
             t0j &= t0_mask;
+
             self.t[1][j] = self.t[1][j].wrapping_add(t0j << row_shift_diff);
         }
         self.row_shift[1] += 1;
     }
 
-    // Apply the transition matrix to the column vector (f, g), for which its is guarranteed by
-    // construction that the matrix' row shifts (or rather the powers of two thereof) evenly divide
-    // the intermediate results after plain multiplication. {f,g}_shadow_head[0] shadows the
-    // potentially partial high limbs of f and g respectively, {f,g}_shadow_head[1] is used to store
+    // Apply the transition matrix to the column vector (f, g), for which its is
+    // guaranteed by construction that the matrix' row shifts (or rather the
+    // powers of two thereof) evenly divide the intermediate results after plain
+    // multiplication. {f,g}_shadow_head[0] shadows the potentially partial high
+    // limbs of f and g respectively, {f,g}_shadow_head[1] is used to store
     // temporary excess (before right-shifting) and two's complement sign bits.
     fn apply_to_f_g<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
         &self,
         t_is_neg_mask: &[[LimbType; 2]; 2],
-        f_shadow_head: &mut [LimbType; 2], f: &mut FT,
-        g_shadow_head: &mut [LimbType; 2], g: &mut GT
+        f_shadow_head: &mut [LimbType; 2],
+        f: &mut FT,
+        g_shadow_head: &mut [LimbType; 2],
+        g: &mut GT,
     ) {
         let nlimbs = f.nlimbs();
         assert_eq!(nlimbs, g.nlimbs());
@@ -109,12 +126,14 @@ impl TransitionMatrix {
         // cur_orig[] contains the original limbs of both, f and g, at
         // the current position, last_orig[] the ones from the previous,
         // less significant position.
-        fn mat_mul_row_compute_limb(carry: &mut [LimbType; 2],
-                                    borrow: &mut LimbType,
-                                    cur_orig_val: &[LimbType; 2],
-                                    last_orig_val: &[LimbType; 2],
-                                    t_row: &[LimbType; 2],
-                                    t_row_is_neg_mask: &[LimbType; 2]) -> LimbType {
+        fn mat_mul_row_compute_limb(
+            carry: &mut [LimbType; 2],
+            borrow: &mut LimbType,
+            cur_orig_val: &[LimbType; 2],
+            last_orig_val: &[LimbType; 2],
+            t_row: &[LimbType; 2],
+            t_row_is_neg_mask: &[LimbType; 2],
+        ) -> LimbType {
             // t_{i, f} * f
             let t_if_f = ct_mul_l_l(t_row[0], cur_orig_val[0]);
             let (f_carry, result) = (t_if_f.high(), t_if_f.low());
@@ -145,9 +164,12 @@ impl TransitionMatrix {
             let mut new_val: [LimbType; 2] = [0; 2];
             for i in 0..2 {
                 new_val[i] = mat_mul_row_compute_limb(
-                    &mut carry[i], &mut borrow[i],
-                    &cur_orig_val, &last_orig_val,
-                    &self.t[i], &t_is_neg_mask[i]
+                    &mut carry[i],
+                    &mut borrow[i],
+                    &cur_orig_val,
+                    &last_orig_val,
+                    &self.t[i],
+                    &t_is_neg_mask[i],
                 );
             }
 
@@ -174,9 +196,12 @@ impl TransitionMatrix {
             let mut new_val: [LimbType; 2] = [0; 2];
             for i in 0..2 {
                 new_val[i] = mat_mul_row_compute_limb(
-                    &mut carry[i], &mut borrow[i],
-                    &cur_orig_val, &last_orig_val,
-                    &self.t[i], &t_is_neg_mask[i]
+                    &mut carry[i],
+                    &mut borrow[i],
+                    &cur_orig_val,
+                    &last_orig_val,
+                    &self.t[i],
+                    &t_is_neg_mask[i],
                 );
             }
 
@@ -200,7 +225,8 @@ impl TransitionMatrix {
             last_orig_val = cur_orig_val;
         }
 
-        // Apply shift and store the high result limbs back to to {f,g}_shadow_head[1] respectively.
+        // Apply shift and store the high result limbs back to to {f,g}_shadow_head[1]
+        // respectively.
         for (i, last_new_val) in last_new_val.iter_mut().enumerate() {
             let s = self.row_shift[i];
             *last_new_val = ct_arithmetic_rshift_l(*last_new_val, s);
@@ -212,23 +238,34 @@ impl TransitionMatrix {
 
     // Multiplicate the matrix times a column vector and reduce the result modulo n.
     // n needs to be odd as a prerequisite of the fused Montgomery reductions.
-    fn apply_to_mod_odd_n<UFT: MpIntMutByteSlice, UGT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
-        &self, t_is_neg_mask: &[[LimbType; 2]; 2],
-        u_f: &mut UFT, u_g: &mut UGT, n: &NT, neg_n0_inv_mod_l: LimbType
+    fn apply_to_mod_odd_n<
+        UFT: MpIntMutByteSlice,
+        UGT: MpIntMutByteSlice,
+        NT: MpIntByteSliceCommon,
+    >(
+        &self,
+        t_is_neg_mask: &[[LimbType; 2]; 2],
+        u_f: &mut UFT,
+        u_g: &mut UGT,
+        n: &NT,
+        neg_n0_inv_mod_l: LimbType,
     ) {
-        // The matrix' rows are to be scaled by their associated 1/2^row_shift[i] each. Unlike the
-        // primary f and g, which are getting reduced iteratively to their final GCD, the new column
-        // vector's entry are not evenly divisible by this power of two in general. Apply a
-        // Montgomery reduction to divide by 2^row_shift[i] mod n. In fact, there's one individual
-        // Montgomery reduction running for each of the two rows respectively, of course. In order
-        // to take advantage of cache locality, the Montgomery reductions are fused with the row *
-        // column multiplication loop over the result entries' limbs.
+        // The matrix' rows are to be scaled by their associated 1/2^row_shift[i] each.
+        // Unlike the primary f and g, which are getting reduced iteratively to
+        // their final GCD, the new column vector's entry are not evenly
+        // divisible by this power of two in general. Apply a Montgomery
+        // reduction to divide by 2^row_shift[i] mod n. In fact, there's one individual
+        // Montgomery reduction running for each of the two rows respectively, of
+        // course. In order to take advantage of cache locality, the Montgomery
+        // reductions are fused with the row * column multiplication loop over
+        // the result entries' limbs.
 
         fn mat_mul_row_scale_mod_odd_n_compute_start(
             u_first_orig: &[LimbType; 2],
             t_row: &[LimbType; 2],
             row_shift: u32,
-            n0_val: LimbType, neg_n0_inv_mod_l: LimbType
+            n0_val: LimbType,
+            neg_n0_inv_mod_l: LimbType,
         ) -> ([LimbType; 2], CtMontgomeryRedcKernel) {
             let mut carry: [LimbType; 2] = [0; 2];
             // t_{i, f} * u_f
@@ -239,7 +276,8 @@ impl TransitionMatrix {
             (carry[1], carry[0]) = ct_add_l_l(carry_i_f, carry_i_g);
             debug_assert!(carry[1] <= 1);
 
-            let redc_kernel = CtMontgomeryRedcKernel::start(row_shift, u_i, n0_val, neg_n0_inv_mod_l);
+            let redc_kernel =
+                CtMontgomeryRedcKernel::start(row_shift, u_i, n0_val, neg_n0_inv_mod_l);
             (carry, redc_kernel)
         }
 
@@ -252,7 +290,7 @@ impl TransitionMatrix {
             u_cur_orig_val: &[LimbType; 2],
             u_last_orig_val: &[LimbType; 2],
             t_row: &[LimbType; 2],
-            t_row_is_neg_mask: &[LimbType; 2]
+            t_row_is_neg_mask: &[LimbType; 2],
         ) -> LimbType {
             // t_{i, f} * u_f
             let u_i_f = ct_mul_l_l(t_row[0], u_cur_orig_val[0]);
@@ -298,15 +336,16 @@ impl TransitionMatrix {
                 &u_last_orig_val,
                 &self.t[i],
                 self.row_shift[i] as u32,
-               n0_val, neg_n0_inv_mod_l
+                n0_val,
+                neg_n0_inv_mod_l,
             );
             redc_kernel
         });
 
-        // In order to improve cache locality, compare the resulting (redced) column vector
-        // entries against n[] on the fly each. (For positive values, the Montgomery reduction
-        // yiels a value in the range [0, 2*n[] and a n needs to get conditionally subtracted
-        // to bring it into range).
+        // In order to improve cache locality, compare the resulting (redced) column
+        // vector entries against n[] on the fly each. (For positive values, the
+        // Montgomery reduction yiels a value in the range [0, 2*n[] and a n
+        // needs to get conditionally subtracted to bring it into range).
         let mut u_geq_n_kernel: [CtGeqMpMpKernel; 2] = array::from_fn(|_| CtGeqMpMpKernel::new());
         let mut last_n_val = n0_val;
 
@@ -321,7 +360,11 @@ impl TransitionMatrix {
                     &mut carry[i],
                     &mut borrow[i],
                     &mut redc_kernel[i],
-                    n_val, &u_cur_orig_val, &u_last_orig_val, &self.t[i], &t_is_neg_mask[i]
+                    n_val,
+                    &u_cur_orig_val,
+                    &u_last_orig_val,
+                    &self.t[i],
+                    &t_is_neg_mask[i],
                 );
                 u_new_val[i] = u_i_new_val;
                 u_geq_n_kernel[i].update(u_i_new_val, last_n_val);
@@ -337,12 +380,15 @@ impl TransitionMatrix {
         let mut u_head_new_val: [LimbType; 2] = [0; 2];
         for i in 0..2 {
             let u_i = carry[i][0];
-            // If t_i_f/t_i_g is negative, subtract the corresponding high limb of the original
-            // u_f/u_g from the value, c.f. the comment in mat_mul_row_scale_mod_n_compute_limb().
-            let (borrow_i_f, u_i_new_val) = ct_sub_l_l(u_i, u_last_orig_val[0] & t_is_neg_mask[i][0]);
+            // If t_i_f/t_i_g is negative, subtract the corresponding high limb of the
+            // original u_f/u_g from the value, c.f. the comment in
+            // mat_mul_row_scale_mod_n_compute_limb().
+            let (borrow_i_f, u_i_new_val) =
+                ct_sub_l_l(u_i, u_last_orig_val[0] & t_is_neg_mask[i][0]);
             debug_assert!(borrow_i_f == 0 || u_i_new_val >= 1);
             // Analoguous for negative t_{i, g}.
-            let (borrow_i_g, u_i_new_val) = ct_sub_l_l(u_i_new_val, u_last_orig_val[1] & t_is_neg_mask[i][1]);
+            let (borrow_i_g, u_i_new_val) =
+                ct_sub_l_l(u_i_new_val, u_last_orig_val[1] & t_is_neg_mask[i][1]);
             debug_assert!(borrow_i_f + borrow_i_g < 2 || u_i_new_val >= 2);
 
             // Apply the borrow from last iteration and update it for the next round
@@ -351,10 +397,11 @@ impl TransitionMatrix {
             borrow[i] = borrow0 + borrow_i_f + borrow_i_g;
             debug_assert!(borrow[i] <= 2); // Loop invariant still true.
 
-            // The scaled transition matrices always have (induced and sub-multiplicative) maximum
-            // norm <= 1, meaning that their application to a row vector, like (u_f, u_g) does not
-            // increase the maximum over the absolute values of the two resulting entries. Upon
-            // entry to this function, the invariant 0 <= u_f, u_g < n had been true by assumption.
+            // The scaled transition matrices always have (induced and sub-multiplicative)
+            // maximum norm <= 1, meaning that their application to a row
+            // vector, like (u_f, u_g) does not increase the maximum over the
+            // absolute values of the two resulting entries. Upon entry to this
+            // function, the invariant 0 <= u_f, u_g < n had been true by assumption.
             // From that, it follows that the unscaled resulting column vectors have
             // absolute values < 2^row_shift[i] * |n|,
             // with row_shift[i] <= STEPS_PER_BATCH == LIMB_BITS - 2.
@@ -366,10 +413,11 @@ impl TransitionMatrix {
             debug_assert!(carry[i][1] == 0 || borrow[i] != 0);
             debug_assert!(borrow[i] - carry[i][1] <= 1);
             debug_assert_eq!(borrow[i] - carry[i][1], u_i_new_val >> (LIMB_BITS - 1));
-            u_head_new_val[i] = u_i_new_val ;
+            u_head_new_val[i] = u_i_new_val;
         }
-        // Final reduction outside of the loop over i in [0, 1] above, because the operation
-        // consumes the kernels and this requires destructuring of the redc_kernel[] array.
+        // Final reduction outside of the loop over i in [0, 1] above, because the
+        // operation consumes the kernels and this requires destructuring of the
+        // redc_kernel[] array.
         let [redc_kernel_u_f, redc_kernel_u_g] = redc_kernel;
         let [mut u_f_geq_n_kernel, mut u_g_geq_n_kernel] = u_geq_n_kernel;
         let (u_f_sign, u_f_new_val) = redc_kernel_u_f.finish_in_twos_complement(u_head_new_val[0]);
@@ -379,22 +427,24 @@ impl TransitionMatrix {
         u_g_geq_n_kernel.update(u_g_new_val, last_n_val);
         u_g.store_l(j, u_g_new_val & u_g.partial_high_mask());
 
-        // The resulting, redced entries are int the range (-n[], 2 * n): the not yet reduced values
-        // are in the range 2^row_shift[i] * (-n[], n) and the Montgomery reduction adds a
-        // (positive) value in the range (0, 2^row_shift[i] * n[]) to that before dividing by
-        // 2^row_shift[i].
+        // The resulting, redced entries are int the range (-n[], 2 * n): the not yet
+        // reduced values are in the range 2^row_shift[i] * (-n[], n) and the
+        // Montgomery reduction adds a (positive) value in the range
+        // (0, 2^row_shift[i] * n[]) to that before dividing by 2^row_shift[i].
         let u_f_geq_n = u_f_geq_n_kernel.finish().select(0, u_f_sign ^ 1);
         let u_g_geq_n = u_g_geq_n_kernel.finish().select(0, u_g_sign ^ 1);
 
-        // Either add or subtract one n (or don't do anything at all), depending on u_i_sign and
-        // u_i_geq_n.
-        fn u_i_into_range<UT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(u_i: &mut UT,
-                                                                           u_i_sign: LimbType,
-                                                                           u_i_geq_n: LimbType,
-                                                                           n: &NT) {
+        // Either add or subtract one n (or don't do anything at all), depending on
+        // u_i_sign and u_i_geq_n.
+        fn u_i_into_range<UT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
+            u_i: &mut UT,
+            u_i_sign: LimbType,
+            u_i_geq_n: LimbType,
+            n: &NT,
+        ) {
             // If u_i_sign, n[] needs to get added to u_i[].
-            // If u_i_geq_n, n[] needs to get subtracted from u_i[]. Negate it by standard two's
-            // complement negation, !n[] + 1, before adding it to u_i[].
+            // If u_i_geq_n, n[] needs to get subtracted from u_i[]. Negate it by standard
+            // two's complement negation, !n[] + 1, before adding it to u_i[].
             let neg_n = LimbChoice::from(u_i_geq_n);
             let neg_n_mask = neg_n.select(0, !0);
             let mut neg_n_carry = neg_n.select(0, 1);
@@ -432,15 +482,19 @@ impl TransitionMatrix {
 
 const STEPS_PER_BATCH: usize = LIMB_BITS as usize - 2;
 
-// Given the previous delta, and the least significant limbs of f and g respectively, determine
-// STEPS_PER_BATCH steps and accumulate them in a single transition matrix.
+// Given the previous delta, and the least significant limbs of f and g
+// respectively, determine STEPS_PER_BATCH steps and accumulate them in a single
+// transition matrix.
 fn batch_divsteps(
-    mut delta: usize, mut f_low: LimbType, mut g_low: LimbType
+    mut delta: usize,
+    mut f_low: LimbType,
+    mut g_low: LimbType,
 ) -> (usize, TransitionMatrix) {
     debug_assert_eq!(f_low & 1, 1);
     let mut m = TransitionMatrix::identity();
     for _ in 0..STEPS_PER_BATCH {
-        let delta_is_pos = LimbChoice::from((delta.wrapping_neg() >> (usize::BITS - 1)) as LimbType);
+        let delta_is_pos =
+            LimbChoice::from((delta.wrapping_neg() >> (usize::BITS - 1)) as LimbType);
         debug_assert!(delta == 0 || delta > isize::MAX as usize || delta_is_pos.unwrap() == 1);
         debug_assert!(!(delta == 0 || delta > isize::MAX as usize) || delta_is_pos.unwrap() == 0);
         let g0 = LimbChoice::from(g_low & 1);
@@ -455,8 +509,10 @@ fn batch_divsteps(
         // If case0 == true, then negate the original f_low to be added to g_val..
         f_low ^= case0_mask; // Conditional bitwise negation.
         f_low = f_low.wrapping_add(case0.unwrap()); // And add one to finally obtain -f_low.
+
         // If case0 == false, clear out the original f_low in case g_low & 1 == 0.
         f_low &= f_low_mask;
+
         let new_g_low = ct_arithmetic_rshift_l(g_low.wrapping_add(f_low), 1);
         f_low = new_f_low;
         g_low = new_g_low;
@@ -467,8 +523,9 @@ fn batch_divsteps(
 
 fn nbatches(len: usize) -> usize {
     // For the minimum number of steps, c.f. [BERN_YANG19], Theorem 11.2.
-    // Assuming len = f.len().min()(g.len()), then bits == len * 8, but the second operand, g, is
-    // assumed to be even initially and to have been halved before getting input to the GCD, hence the +1 below.
+    // Assuming len = f.len().min()(g.len()), then bits == len * 8, but the second
+    // operand, g, is assumed to be even initially and to have been halved
+    // before getting input to the GCD, hence the +1 below.
     let nbits = len * 8 + 1;
     let d = nbits + 1; // The +1 to account for taking the log2 of the Euclidean norm of (f, g).
     let nsteps = if d < 46 {
@@ -479,8 +536,14 @@ fn nbatches(len: usize) -> usize {
     (nsteps + STEPS_PER_BATCH - 1) / STEPS_PER_BATCH
 }
 
-fn ct_gcd_ext_mp_mp<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
-    mut update_ext_state: UES, f: &mut FT, g: &mut GT
+fn ct_gcd_ext_mp_mp<
+    UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]),
+    FT: MpIntMutByteSlice,
+    GT: MpIntMutByteSlice,
+>(
+    mut update_ext_state: UES,
+    f: &mut FT,
+    g: &mut GT,
 ) -> LimbChoice {
     let nlimbs = f.nlimbs();
     debug_assert_eq!(nlimbs, g.nlimbs());
@@ -488,9 +551,10 @@ fn ct_gcd_ext_mp_mp<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MpIn
     debug_assert_eq!(f.load_l(0) & 1, 1);
     let nbatches = nbatches(f.len().max(g.len()));
 
-    // One shadow limb is for shadowing potentially partial high limbs of f or g respectively and
-    // another one for excess precision needed for temporary intermediate values due to the batching
-    // and also, for two's complement sign bits.
+    // One shadow limb is for shadowing potentially partial high limbs of f or g
+    // respectively and another one for excess precision needed for temporary
+    // intermediate values due to the batching and also, for two's complement
+    // sign bits.
     let mut f_shadow_head: [LimbType; 2] = [f.load_l(nlimbs - 1), 0];
     let mut g_shadow_head: [LimbType; 2] = [g.load_l(nlimbs - 1), 0];
     let mut delta: usize = 1;
@@ -504,7 +568,13 @@ fn ct_gcd_ext_mp_mp<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MpIn
         let transition_matrix;
         (delta, transition_matrix) = batch_divsteps(delta, f_low, g_low);
         let t_is_neg_mask = transition_matrix.t_is_neg_mask();
-        transition_matrix.apply_to_f_g(&t_is_neg_mask, &mut f_shadow_head, f, &mut g_shadow_head, g);
+        transition_matrix.apply_to_f_g(
+            &t_is_neg_mask,
+            &mut f_shadow_head,
+            f,
+            &mut g_shadow_head,
+            g,
+        );
         update_ext_state(&transition_matrix, &t_is_neg_mask);
     }
 
@@ -689,14 +759,20 @@ fn test_ct_gcd_ne_ne() {
     test_ct_gcd_mp_mp_common::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
-
 #[derive(Debug)]
 pub enum CtInvModOddMpMpError {
     OperandsNotCoprime,
 }
 
-pub fn ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
-    result: &mut RT, op0: &mut T0, n: &NT, scratch: [&mut [u8]; 2]
+pub fn ct_inv_mod_odd_mp_mp<
+    RT: MpIntMutByteSlice,
+    T0: MpIntMutByteSlice,
+    NT: MpIntByteSliceCommon,
+>(
+    result: &mut RT,
+    op0: &mut T0,
+    n: &NT,
+    scratch: [&mut [u8]; 2],
 ) -> Result<(), CtInvModOddMpMpError> {
     debug_assert_eq!(n.nlimbs(), op0.nlimbs());
     debug_assert_eq!(result.nlimbs(), n.nlimbs());
@@ -717,8 +793,9 @@ pub fn ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: Mp
 
     // ext_u0 starts out as 0.
     result.zeroize_bytes_above(0);
-    // ext_u1 starts out as 1. If the modulus is == 1, the result is undefined (the multiplicative group
-    // does not exist). Force the result to zero in this case.
+    // ext_u1 starts out as 1. If the modulus is == 1, the result is undefined (the
+    // multiplicative group does not exist). Force the result to zero in this
+    // case.
     let n_is_one = ct_is_one_mp(n);
     ext_u1_scratch.zeroize_bytes_above(0);
     ext_u1_scratch.store_l_full(0, 1 ^ n_is_one.unwrap());
@@ -728,9 +805,16 @@ pub fn ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: Mp
 
     let gcd_is_neg = ct_gcd_ext_mp_mp(
         |t, t_is_neg_mask| {
-            t.apply_to_mod_odd_n(t_is_neg_mask, result, &mut ext_u1_scratch, n, neg_n0_inv_mod_l);
+            t.apply_to_mod_odd_n(
+                t_is_neg_mask,
+                result,
+                &mut ext_u1_scratch,
+                n,
+                neg_n0_inv_mod_l,
+            );
         },
-        &mut f_work_scratch, op0
+        &mut f_work_scratch,
+        op0,
     );
 
     // Check whether the GCD is one (or -1) and return an error otherwise.
@@ -768,16 +852,21 @@ pub fn ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: Mp
 }
 
 #[cfg(test)]
-fn test_ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
+fn test_ct_inv_mod_odd_mp_mp<
+    RT: MpIntMutByteSlice,
+    T0: MpIntMutByteSlice,
+    NT: MpIntMutByteSlice,
+>() {
     use super::limb::LIMB_BYTES;
-    use super::mul_impl::ct_mul_trunc_mp_l;
     use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
+    use super::mul_impl::ct_mul_trunc_mp_l;
 
     fn test_one<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
-        op0: &T0, n: &NT
+        op0: &T0,
+        n: &NT,
     ) {
-        use super::mul_impl::ct_mul_trunc_mp_mp;
         use super::div_impl::ct_div_mp_mp;
+        use super::mul_impl::ct_mul_trunc_mp_mp;
 
         let mut op0_work_scratch = vec![0u8; op0.len()];
         let mut op0_work_scratch = T0::from_bytes(&mut op0_work_scratch).unwrap();
@@ -789,9 +878,16 @@ fn test_ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: M
         let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len())];
         let mut scratch1 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len())];
 
-        ct_inv_mod_odd_mp_mp(&mut op0_inv_mod_n, &mut op0_work_scratch, n, [&mut scratch0, &mut scratch1]).unwrap();
+        ct_inv_mod_odd_mp_mp(
+            &mut op0_inv_mod_n,
+            &mut op0_work_scratch,
+            n,
+            [&mut scratch0, &mut scratch1],
+        )
+        .unwrap();
 
-        // If n == 1, the multiplicative group does not exist and the result is fixed to zero.
+        // If n == 1, the multiplicative group does not exist and the result is fixed to
+        // zero.
         if ct_is_one_mp(n).unwrap() != 0 {
             assert_eq!(ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
             return;
@@ -806,7 +902,12 @@ fn test_ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: M
         assert_eq!(ct_is_one_mp(&product).unwrap(), 1);
     }
 
-    for l in [LIMB_BYTES - 1, 2 * LIMB_BYTES - 1, 3 * LIMB_BYTES - 1, 4 * LIMB_BYTES - 1] {
+    for l in [
+        LIMB_BYTES - 1,
+        2 * LIMB_BYTES - 1,
+        3 * LIMB_BYTES - 1,
+        4 * LIMB_BYTES - 1,
+    ] {
         let n_len = NT::limbs_align_len(l);
         let op0_len = T0::limbs_align_len(l);
         let n_op0_min_len = n_len.min(op0_len);
@@ -859,23 +960,29 @@ fn test_ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: M
 #[test]
 fn test_ct_inv_mod_odd_be_be_be() {
     use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_inv_mod_odd_mp_mp::<MpBigEndianMutByteSlice,
-                                MpBigEndianMutByteSlice,
-                                MpBigEndianMutByteSlice>()
+    test_ct_inv_mod_odd_mp_mp::<
+        MpBigEndianMutByteSlice,
+        MpBigEndianMutByteSlice,
+        MpBigEndianMutByteSlice,
+    >()
 }
 
 #[test]
 fn test_ct_inv_mod_odd_le_le_le() {
     use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_inv_mod_odd_mp_mp::<MpLittleEndianMutByteSlice,
-                                MpLittleEndianMutByteSlice,
-                                MpLittleEndianMutByteSlice>()
+    test_ct_inv_mod_odd_mp_mp::<
+        MpLittleEndianMutByteSlice,
+        MpLittleEndianMutByteSlice,
+        MpLittleEndianMutByteSlice,
+    >()
 }
 
 #[test]
 fn test_ct_inv_mod_odd_ne_ne_ne() {
     use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_inv_mod_odd_mp_mp::<MpNativeEndianMutByteSlice,
-                                MpNativeEndianMutByteSlice,
-                                MpNativeEndianMutByteSlice>()
+    test_ct_inv_mod_odd_mp_mp::<
+        MpNativeEndianMutByteSlice,
+        MpNativeEndianMutByteSlice,
+        MpNativeEndianMutByteSlice,
+    >()
 }

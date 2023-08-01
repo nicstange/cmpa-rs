@@ -1,40 +1,46 @@
 //! Implementation of multiprecision integer multiplication primitives.
 
-use super::limb::{LIMB_BITS, LimbType, LimbChoice, ct_mul_l_l, ct_add_l_l, ct_mul_add_l_l_l_c, black_box_l};
-use super::limbs_buffer::{ct_mp_nlimbs, MpIntMutByteSlice, MpIntByteSliceCommon};
+use super::limb::{
+    black_box_l, ct_add_l_l, ct_mul_add_l_l_l_c, ct_mul_l_l, LimbChoice, LimbType, LIMB_BITS,
+};
+use super::limbs_buffer::{ct_mp_nlimbs, MpIntByteSliceCommon, MpIntMutByteSlice};
 
 /// Conditionally multiply two multiprecision integers of specified endianess.
 ///
-/// If the `cond` argument is unset, this function is effectively a nop, but execution time is
-/// independent of the value of`cond`.
+/// If the `cond` argument is unset, this function is effectively a nop, but
+/// execution time is independent of the value of`cond`.
 ///
-/// Otherwise, if `cond` is set, the first operand's contents will be replaced by the computed
-/// product. If the product width exceeds the available space, its most significant head part will
-/// get truncated to make the result fit. That is, at most `op0.len()` of the product's least
-/// significant bytes will be placed in `op0`. If truncation is to be avoided, `op0.len() >=
-/// op0_in_len + op1.len()` should hold.
+/// Otherwise, if `cond` is set, the first operand's contents will be replaced
+/// by the computed product. If the product width exceeds the available space,
+/// its most significant head part will get truncated to make the result fit.
+/// That is, at most `op0.len()` of the product's least significant bytes will
+/// be placed in `op0`. If truncation is to be avoided, `op0.len() >= op0_in_len
+/// + op1.len()` should hold.
 ///
-/// Runs in constant time for a given configuration of input operand widths, i.e. execution time
-/// depends only on the integers' widths, but not their values and neither on `cond`.
+/// Runs in constant time for a given configuration of input operand widths,
+/// i.e. execution time depends only on the integers' widths, but not their
+/// values and neither on `cond`.
 ///
 /// # Arguments
 ///
 /// * `op0` - The first input factor. Only the `op0_in_len` least significant
-///           tail bytes are considered non-zero.
-///           `op0` will get overwritten with the resulting, possibly
-///           truncated product if `cond` is set.
-/// * `op0_in_len` - Number of bytes in the first input factor. Must be `<= op0.len()`.
-///                  As `op0` also receives the resulting product, it must usually be allocated
-///                  much larger than what would be required to only accomodate for the first input
-///                  factor. Thus, the first operand's is not implicit from `op0.len()` and it must
-///                  get specified separately as `op0_in_len`.
+///   tail bytes are considered non-zero. `op0` will get overwritten with the
+///   resulting, possibly truncated product if `cond` is set.
+/// * `op0_in_len` - Number of bytes in the first input factor. Must be `<=
+///   op0.len()`. As `op0` also receives the resulting product, it must usually
+///   be allocated much larger than what would be required to only accomodate
+///   for the first input factor. Thus, the first operand's is not implicit from
+///   `op0.len()` and it must get specified separately as `op0_in_len`.
 /// * `op1` - The second input factor.
-/// * `cond` - Whether or not to replace `op0` by the product. Intended to facilitate constant time
-///            implementations of algorithms relying on conditional executiopns of multiprecision
-///            integer multiplication, like e.g. binary exponentation.
-///
+/// * `cond` - Whether or not to replace `op0` by the product. Intended to
+///   facilitate constant time implementations of algorithms relying on
+///   conditional executiopns of multiprecision integer multiplication, like
+///   e.g. binary exponentation.
 pub fn ct_mul_trunc_cond_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
-    op0: &mut T0, op0_in_len: usize, op1: &T1, cond: LimbChoice
+    op0: &mut T0,
+    op0_in_len: usize,
+    op1: &T1,
+    cond: LimbChoice,
 ) {
     debug_assert!(op0_in_len <= op0.len());
     // If op1's length is zero, interpret that as a zero.
@@ -79,7 +85,7 @@ pub fn ct_mul_trunc_cond_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
         for k in op1_nlimbs..result_nlimbs {
             let mut result_val = op0.load_l(j + k);
             (carry, result_val) = ct_add_l_l(result_val, carry);
-            if k != result_nlimbs - 1 || !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS{
+            if k != result_nlimbs - 1 || !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
                 op0.store_l_full(j + k, result_val);
             } else {
                 op0.store_l(j + k, result_val & result_high_mask);
@@ -112,7 +118,6 @@ fn test_ct_mul_trunc_cond_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() 
     assert_eq!(op0.load_l(2), !1);
     assert_eq!(op0.load_l(3), !0);
     assert_eq!(op0.load_l(4), 0);
-
 
     let mut op0: [u8; 3 * LIMB_BYTES] = [0; 3 * LIMB_BYTES];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -221,7 +226,9 @@ fn test_ct_mul_trunc_cond_ne_ne() {
 }
 
 pub fn ct_mul_trunc_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
-    op0: &mut T0, op0_in_len: usize, op1: &T1
+    op0: &mut T0,
+    op0_in_len: usize,
+    op1: &T1,
 ) {
     ct_mul_trunc_cond_mp_mp(op0, op0_in_len, op1, LimbChoice::from(1))
 }
@@ -229,26 +236,24 @@ pub fn ct_mul_trunc_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
 /// Square a multiprecision integer of specified endianess.
 ///
 /// The operand's contents will be replaced by the computed square.
-/// If the square's width exceeds the available space, its most significant head part will
-/// get truncated to make the result fit. That is, at most `op0.len()` of the square's least
-/// significant bytes will be placed in `op0`. If truncation is to be avoided, `op0.len() >=
-/// 2 * op0_in_len` should hold.
+/// If the square's width exceeds the available space, its most significant head
+/// part will get truncated to make the result fit. That is, at most `op0.len()`
+/// of the square's least significant bytes will be placed in `op0`. If
+/// truncation is to be avoided, `op0.len() >= 2 * op0_in_len` should hold.
 ///
-/// Runs in constant time for a given input operand width, i.e. execution time depends only on the
-/// integer's width, but not its value.
+/// Runs in constant time for a given input operand width, i.e. execution time
+/// depends only on the integer's width, but not its value.
 ///
 /// # Arguments
 ///
-/// * `op0` - The input operand to square. Only the `op0_in_len` least significant
-///           tail bytes are considered non-zero.
-///           `op0` will get overwritten with the resulting, possibly
-///           truncated square.
-/// * `op0_in_len` - Number of bytes in the input operand. Must be `<= op0.len()`.
-///                  As `op0` also receives the resulting square, it must usually be allocated
-///                  much larger than what would be required to only accomodate for the input
-///                  operand. Thus, the operand's is not implicit from `op0.len()` and it must
-///                  get specified separately as `op0_in_len`.
-///
+/// * `op0` - The input operand to square. Only the `op0_in_len` least
+///   significant tail bytes are considered non-zero. `op0` will get overwritten
+///   with the resulting, possibly truncated square.
+/// * `op0_in_len` - Number of bytes in the input operand. Must be `<=
+///   op0.len()`. As `op0` also receives the resulting square, it must usually
+///   be allocated much larger than what would be required to only accomodate
+///   for the input operand. Thus, the operand's is not implicit from
+///   `op0.len()` and it must get specified separately as `op0_in_len`.
 pub fn ct_square_trunc_mp<T0: MpIntMutByteSlice>(op0: &mut T0, op0_in_len: usize) {
     debug_assert!(op0_in_len <= op0.len());
     let result_high_mask = op0.partial_high_mask();
@@ -278,8 +283,8 @@ pub fn ct_square_trunc_mp<T0: MpIntMutByteSlice>(op0: &mut T0, op0_in_len: usize
             let prod = ct_mul_l_l(op0_val, op1_val);
             let mut result_val = op0.load_l(j + k);
 
-            // Multiply last_prod_high, the upper half of the last iteration's multiplication, by
-            // two.
+            // Multiply last_prod_high, the upper half of the last iteration's
+            // multiplication, by two.
             let carry0 = black_box_l(last_prod_high >> (LIMB_BITS - 1));
             last_prod_high = last_prod_high.wrapping_mul(2);
             // From the loop invariant, it follows that
@@ -351,12 +356,12 @@ pub fn ct_square_trunc_mp<T0: MpIntMutByteSlice>(op0: &mut T0, op0_in_len: usize
             continue;
         }
         let prod = ct_mul_l_l(op0_val, op0_val);
-         let mut result_val = op0.load_l(2 * j);
+        let mut result_val = op0.load_l(2 * j);
         // Multiply last_prod_high from the previous loop's last iteration by two.
         let carry0 = black_box_l(last_prod_high >> (LIMB_BITS - 1));
         last_prod_high = last_prod_high.wrapping_mul(2);
-        // From the previous loop's invariant, it again follows that the addition of carry to
-        // last_prod_high does not overflow the sum.
+        // From the previous loop's invariant, it again follows that the addition of
+        // carry to last_prod_high does not overflow the sum.
         debug_assert!(last_prod_high <= !3);
         debug_assert!(carry <= 2 || last_prod_high <= !5);
         last_prod_high += carry;
@@ -372,8 +377,8 @@ pub fn ct_square_trunc_mp<T0: MpIntMutByteSlice>(op0: &mut T0, op0_in_len: usize
             op0.store_l(2 * j, result_val & result_high_mask);
         }
 
-        // Propagate the carry all the way up. The first iteration will also account for the
-        // previous multiplications upper limb.
+        // Propagate the carry all the way up. The first iteration will also account for
+        // the previous multiplications upper limb.
         for k in j + 1..result_nlimbs {
             let mut result_val = op0.load_l(j + k);
             let carry0;
@@ -396,7 +401,10 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpIntMutByteSlicePriv as _;
 
-    fn square_by_mul<T0: MpIntMutByteSlice, const N: usize>(op0: &[u8; N], op0_in_len: usize) -> [u8; N] {
+    fn square_by_mul<T0: MpIntMutByteSlice, const N: usize>(
+        op0: &[u8; N],
+        op0_in_len: usize,
+    ) -> [u8; N] {
         let mut _result = op0.clone();
         let mut result = T0::from_bytes(&mut _result).unwrap();
         let mut op0 = op0.clone();
@@ -412,7 +420,7 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<T0, {5 * LIMB_BYTES}>(&_op0, 2 * LIMB_BYTES);
+    let expected = square_by_mul::<T0, { 5 * LIMB_BYTES }>(&_op0, 2 * LIMB_BYTES);
     let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
@@ -423,7 +431,7 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<T0, {3 * LIMB_BYTES}>(&_op0, 2 * LIMB_BYTES);
+    let expected = square_by_mul::<T0, { 3 * LIMB_BYTES }>(&_op0, 2 * LIMB_BYTES);
     let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
@@ -434,7 +442,7 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<T0, {2 * LIMB_BYTES}>(&_op0, 2 * LIMB_BYTES);
+    let expected = square_by_mul::<T0, { 2 * LIMB_BYTES }>(&_op0, 2 * LIMB_BYTES);
     let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
@@ -449,7 +457,7 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<T0, {4 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
+    let expected = square_by_mul::<T0, { 4 * LIMB_BYTES - 1 }>(&_op0, 2 * LIMB_BYTES);
     let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
@@ -460,7 +468,7 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
     op0.store_l(0, !0);
     op0.store_l(1, !0);
     drop(op0);
-    let expected = square_by_mul::<T0, {3 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES);
+    let expected = square_by_mul::<T0, { 3 * LIMB_BYTES - 1 }>(&_op0, 2 * LIMB_BYTES);
     let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES);
     drop(op0);
@@ -471,7 +479,7 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
     op0.store_l(0, !0);
     op0.store_l(1, !0 >> 2 * 8);
     drop(op0);
-    let expected = square_by_mul::<T0, {2 * LIMB_BYTES - 1}>(&_op0, 2 * LIMB_BYTES - 1);
+    let expected = square_by_mul::<T0, { 2 * LIMB_BYTES - 1 }>(&_op0, 2 * LIMB_BYTES - 1);
     let mut op0 = T0::from_bytes(&mut _op0).unwrap();
     ct_square_trunc_mp(&mut op0, 2 * LIMB_BYTES - 1);
     drop(op0);

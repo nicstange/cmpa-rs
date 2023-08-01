@@ -1,25 +1,32 @@
 use super::cmp_impl::ct_is_zero_mp;
 use super::div_impl::ct_div_mp_mp;
 use super::euclid::ct_gcd_mp_mp;
-use super::limb::{LIMB_BITS, LIMB_BYTES, ct_lsb_mask_l};
-use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _, ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_mp_nlimbs,  ct_mp_limbs_align_len, ct_swap_cond_mp};
+use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
+use super::limbs_buffer::{
+    ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_mp_limbs_align_len, ct_mp_nlimbs,
+    ct_swap_cond_mp, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _, MpIntMutByteSlice,
+};
 use super::mul_impl::ct_mul_trunc_mp_mp;
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
 use super::usize_ct_cmp::ct_lt_usize_usize;
 
 pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
     result: &mut RT,
-    op0: &mut T0, op0_len: usize,
-    op1: &mut T1, op1_len: usize,
-    scratch: &mut [u8]
+    op0: &mut T0,
+    op0_len: usize,
+    op1: &mut T1,
+    op1_len: usize,
+    scratch: &mut [u8],
 ) {
-    // The Least Common Multiple (LCM) is the product divided by the GCD of the operands. Be careful
-    // to maintain constant-time: the division's runtime depends on the divisor's length. Always left shift
-    // the the dividend and the divisor so that the latter attains its maximum possible width before
+    // The Least Common Multiple (LCM) is the product divided by the GCD of the
+    // operands. Be careful to maintain constant-time: the division's runtime
+    // depends on the divisor's length. Always left shift the the dividend and
+    // the divisor so that the latter attains its maximum possible width before
     // doing the division.
 
-    // op0 and op1 must be equal in length, i.e. callers are required to allocate the larger of the
-    // two operand's length for both. This way, they can be reused as scratch buffers later on.
+    // op0 and op1 must be equal in length, i.e. callers are required to allocate
+    // the larger of the two operand's length for both. This way, they can be
+    // reused as scratch buffers later on.
     debug_assert!(op0_len <= op0.len());
     debug_assert!(op1_len <= op1.len());
     debug_assert_eq!(op0.len(), op1.len());
@@ -50,16 +57,15 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     let (op0_is_nonzero, op0_powers_of_two) = ct_find_first_set_bit_mp(op0);
     let (op1_is_nonzero, op1_powers_of_two) = ct_find_first_set_bit_mp(op1);
     debug_assert!(op0_is_nonzero.unwrap() != 0 || op0_powers_of_two == 0);
-    let op1_has_fewer_powers_of_two =
-        !op0_is_nonzero // If op0 == 0, consider op1 only.
+    let op1_has_fewer_powers_of_two = !op0_is_nonzero // If op0 == 0, consider op1 only.
         | op1_is_nonzero & ct_lt_usize_usize(op1_powers_of_two, op0_powers_of_two);
-    let min_powers_of_two = op1_has_fewer_powers_of_two.select_usize(op0_powers_of_two, op1_powers_of_two);
+    let min_powers_of_two =
+        op1_has_fewer_powers_of_two.select_usize(op0_powers_of_two, op1_powers_of_two);
     ct_rshift_mp(op0, min_powers_of_two);
     ct_rshift_mp(op1, min_powers_of_two);
     ct_swap_cond_mp(op0, op1, op1_has_fewer_powers_of_two);
     let op0_and_op1_zero = !op0_is_nonzero & !op1_is_nonzero;
-    debug_assert!(op0_and_op1_zero.unwrap() != 0 ||
-                  op0.load_l(0) & 1 == 1);
+    debug_assert!(op0_and_op1_zero.unwrap() != 0 || op0.load_l(0) & 1 == 1);
     // If both inputs are zero, force op0 to 1, the GCD needs that.
     op0.store_l(0, op0_and_op1_zero.select(op0.load_l(0), 1));
     ct_gcd_mp_mp(op0, op1);
@@ -75,16 +81,18 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     // to the maximum possible value so that the division's runtime is
     // independent of its actual value's width.
     let (_, gcd_odd_width) = ct_find_last_set_bit_mp(gcd_odd);
-    // Maximum GCD length is the larger of the two operands' lengths: in the most common case of
-    // non-zero operands, it's <= the smaller one actually, but if either of the operands' values
-    // equals zero, then it would come out as the other one.
+    // Maximum GCD length is the larger of the two operands' lengths: in the most
+    // common case of non-zero operands, it's <= the smaller one actually, but
+    // if either of the operands' values equals zero, then it would come out as
+    // the other one.
     let gcd_max_len = op0_len.max(op1_len);
     let gcd_max_nlimbs = ct_mp_nlimbs(gcd_max_len);
     let scaling_shift = 8 * gcd_max_len - gcd_odd_width;
     ct_lshift_mp(gcd_odd, scaling_shift);
-    // Scale, the dividend, i.e. the product of op0 and op1 as well. This scaling will overflow the
-    // prod_scratch[], so reuse the currently unused op1[] buffer to receive the high parts shifted
-    // out on the left. For constant-time, copy the maximum possible high part over to op1[] and
+    // Scale, the dividend, i.e. the product of op0 and op1 as well. This scaling
+    // will overflow the prod_scratch[], so reuse the currently unused op1[]
+    // buffer to receive the high parts shifted out on the left. For
+    // constant-time, copy the maximum possible high part over to op1[] and
     // shift that to the right as appropriate.
     let scaled_prod_high: &mut T1 = op1;
     debug_assert!(scaled_prod_high.nlimbs() >= gcd_max_nlimbs);
@@ -98,7 +106,7 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     let mut i = 0;
     while i < gcd_max_nlimbs {
         let src_limb_index = src_begin_limb_index + i + 1;
-        let next_src_val  = if src_limb_index < prod_scratch.nlimbs() {
+        let next_src_val = if src_limb_index < prod_scratch.nlimbs() {
             prod_scratch.load_l(src_limb_index)
         } else {
             0
@@ -117,7 +125,13 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     ct_lshift_mp(&mut scaled_prod_low, scaling_shift);
 
     // Finally, do the division and be done.
-    ct_div_mp_mp(Some(&mut scaled_prod_high), &mut scaled_prod_low, gcd_odd, Some(result)).unwrap();
+    ct_div_mp_mp(
+        Some(&mut scaled_prod_high),
+        &mut scaled_prod_low,
+        gcd_odd,
+        Some(result),
+    )
+    .unwrap();
     // The remainder should be zero.
     debug_assert_ne!(ct_is_zero_mp(&scaled_prod_low).unwrap(), 0);
     debug_assert_ne!(ct_is_zero_mp(&scaled_prod_high).unwrap(), 0);
@@ -127,10 +141,16 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
 fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
     use super::mul_impl::ct_mul_trunc_mp_l;
 
-    fn test_one<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice,
-                T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon,
-                GT: MpIntByteSliceCommon>(
-        op0: &T0, op1: &T1, gcd: &GT
+    fn test_one<
+        RT: MpIntMutByteSlice,
+        OT: MpIntMutByteSlice,
+        T0: MpIntByteSliceCommon,
+        T1: MpIntByteSliceCommon,
+        GT: MpIntByteSliceCommon,
+    >(
+        op0: &T0,
+        op1: &T1,
+        gcd: &GT,
     ) {
         use super::cmp_impl::ct_eq_mp_mp;
 
@@ -153,7 +173,14 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
         let mut lcm = vec![0u8; RT::limbs_align_len(lcm_len)];
         let mut lcm = RT::from_bytes(&mut lcm).unwrap();
         let mut scratch = vec![0u8; OT::limbs_align_len(lcm_len)];
-        ct_lcm_mp_mp(&mut lcm, &mut op0_lcm_work, op0_len, &mut op1_lcm_work, op1_len, &mut scratch);
+        ct_lcm_mp_mp(
+            &mut lcm,
+            &mut op0_lcm_work,
+            op0_len,
+            &mut op1_lcm_work,
+            op1_len,
+            &mut scratch,
+        );
 
         let expected_len = op0.len() + op1.len() + gcd_len;
         let mut expected = vec![0u8; RT::limbs_align_len(expected_len)];
@@ -164,14 +191,38 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
         assert_ne!(ct_eq_mp_mp(&lcm, &expected).unwrap(), 0);
     }
 
-    for i in [0, LIMB_BYTES - 1, LIMB_BYTES, 2 * LIMB_BYTES, 2 * LIMB_BYTES + 1] {
-        for j in [0, LIMB_BYTES - 1, LIMB_BYTES, 2 * LIMB_BYTES, 2 * LIMB_BYTES + 1] {
-            for k in [0, LIMB_BYTES - 1, LIMB_BYTES, 2 * LIMB_BYTES, 2 * LIMB_BYTES + 1] {
-                for total_shift in [0, LIMB_BITS - 1, LIMB_BITS, 2 * LIMB_BITS, 2 * LIMB_BITS + 1] {
+    for i in [
+        0,
+        LIMB_BYTES - 1,
+        LIMB_BYTES,
+        2 * LIMB_BYTES,
+        2 * LIMB_BYTES + 1,
+    ] {
+        for j in [
+            0,
+            LIMB_BYTES - 1,
+            LIMB_BYTES,
+            2 * LIMB_BYTES,
+            2 * LIMB_BYTES + 1,
+        ] {
+            for k in [
+                0,
+                LIMB_BYTES - 1,
+                LIMB_BYTES,
+                2 * LIMB_BYTES,
+                2 * LIMB_BYTES + 1,
+            ] {
+                for total_shift in [
+                    0,
+                    LIMB_BITS - 1,
+                    LIMB_BITS,
+                    2 * LIMB_BITS,
+                    2 * LIMB_BITS + 1,
+                ] {
                     for l in 0..total_shift as usize {
                         let gcd_shift = l.min(total_shift as usize - l);
                         let op0_shift = l - gcd_shift;
-                        let op1_shift = total_shift as usize- l - gcd_shift;
+                        let op1_shift = total_shift as usize - l - gcd_shift;
 
                         let op0_len = i + (op0_shift + 7) / 8;
                         let mut op0 = vec![0u8; OT::limbs_align_len(op0_len)];

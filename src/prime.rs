@@ -1,46 +1,45 @@
-use super::limb::{LimbType, LIMB_BITS, LimbChoice, ct_is_zero_l, ct_sub_l_l_b, ct_lt_l_l, ct_geq_l_l, ct_eq_l_l};
-use super::limbs_buffer::{MpIntByteSliceCommon, MpBigEndianByteSlice, MpNativeEndianMutByteSlice, MpIntMutByteSlice, MpIntByteSlice as _, ct_find_first_set_bit_mp};
-use super::cmp_impl::{ct_lt_mp_mp, ct_leq_mp_l, ct_is_one_mp};
+use super::cmp_impl::{ct_is_one_mp, ct_leq_mp_l, ct_lt_mp_mp};
 use super::euclid::ct_gcd_mp_mp;
-use super::montgomery::{ct_montgomery_neg_n0_inv_mod_l_mp, ct_montgomery_mul_mod_mp_mp, ct_montgomery_mul_mod_cond_mp_mp};
-use super::usize_ct_cmp::{ct_eq_usize_usize, ct_lt_usize_usize};
 use super::hexstr;
+use super::limb::{
+    ct_eq_l_l, ct_geq_l_l, ct_is_zero_l, ct_lt_l_l, ct_sub_l_l_b, LimbChoice, LimbType, LIMB_BITS,
+};
+use super::limbs_buffer::{
+    ct_find_first_set_bit_mp, MpBigEndianByteSlice, MpIntByteSlice as _, MpIntByteSliceCommon,
+    MpIntMutByteSlice, MpNativeEndianMutByteSlice,
+};
+use super::montgomery::{
+    ct_montgomery_mul_mod_cond_mp_mp, ct_montgomery_mul_mod_mp_mp,
+    ct_montgomery_neg_n0_inv_mod_l_mp,
+};
+use super::usize_ct_cmp::{ct_eq_usize_usize, ct_lt_usize_usize};
 
 // Product of first 3 primes > 2, i.e. from 3 to 7 (inclusive).
 // Filters ~54% of odd prime candidates.
-const SMALL_ODD_PRIME_PRODUCT_8: [u8; 1] = hexstr::bytes_from_hexstr_cnst::<1>(
-    "69"
-);
+const SMALL_ODD_PRIME_PRODUCT_8: [u8; 1] = hexstr::bytes_from_hexstr_cnst::<1>("69");
 
 // Product of first 5 primes > 2, i.e. from 3 to 13 (inclusive).
 // Filters ~62% of odd prime candidates.
-const SMALL_ODD_PRIME_PRODUCT_16: [u8; 2] = hexstr::bytes_from_hexstr_cnst::<2>(
-    "3aa7"
-);
+const SMALL_ODD_PRIME_PRODUCT_16: [u8; 2] = hexstr::bytes_from_hexstr_cnst::<2>("3aa7");
 
 // Product of first 9 primes > 2, i.e. from 3 to 29 (inclusive).
 // Filters ~68% of odd prime candidates.
-const SMALL_ODD_PRIME_PRODUCT_32: [u8; 4] = hexstr::bytes_from_hexstr_cnst::<4>(
-    "c0cfd797"
-);
+const SMALL_ODD_PRIME_PRODUCT_32: [u8; 4] = hexstr::bytes_from_hexstr_cnst::<4>("c0cfd797");
 
 // Product of first 15 primes > 2, i.e. from 3 to 53 (inclusive).
 // Filters ~73% of odd prime candidates.
-const SMALL_ODD_PRIME_PRODUCT_64: [u8; 8] = hexstr::bytes_from_hexstr_cnst::<8>(
-    "e221f97c30e94e1d"
-);
+const SMALL_ODD_PRIME_PRODUCT_64: [u8; 8] = hexstr::bytes_from_hexstr_cnst::<8>("e221f97c30e94e1d");
 
 // Product of first 25 primes > 2, i.e. from 3 to 101 (inclusive).
 // Filters ~76% of odd prime candidates.
-const SMALL_ODD_PRIME_PRODUCT_128: [u8; 16] = hexstr::bytes_from_hexstr_cnst::<16>(
-    "5797d47c51681549d734e4fc4c3eaf7f"
-);
+const SMALL_ODD_PRIME_PRODUCT_128: [u8; 16] =
+    hexstr::bytes_from_hexstr_cnst::<16>("5797d47c51681549d734e4fc4c3eaf7f");
 
 // Product of first 43 primes > 2, i.e. from 3 to 193 (inclusive).
 // Filters ~79% of odd prime candidates.
 const SMALL_ODD_PRIME_PRODUCT_256: [u8; 32] = hexstr::bytes_from_hexstr_cnst::<32>(
     "dbf05b6f5654b3c0f524355143958688\
-     9f155887819aed2ac05b93352be98677"
+     9f155887819aed2ac05b93352be98677",
 );
 
 // Product of first 74 primes > 2, i.e. from 3 to 379 (inclusive).
@@ -49,7 +48,7 @@ const SMALL_ODD_PRIME_PRODUCT_512: [u8; 64] = hexstr::bytes_from_hexstr_cnst::<6
     "106aa9fb7646fa6eb0813c28c5d5f09f\
      077ec3ba238bfb99c1b631a203e81187\
      233db117cbc384056ef04659a4a11de4\
-     9f7ecb29bada8f980decece92e30c48f"
+     9f7ecb29bada8f980decece92e30c48f",
 );
 
 // Product of first 130 primes > 2, i.e. from 3 to 739 (inclusive).
@@ -62,7 +61,7 @@ const SMALL_ODD_PRIME_PRODUCT_1024: [u8; 128] = hexstr::bytes_from_hexstr_cnst::
      aef6e0ad15e91b071ac9b24d98b233ad\
      86ee055518e58e56638ef18bac5c74cb\
      35bbb6e5dae2783dd1c0ce7dec4fc70e\
-     5186d411df36368f061aa36011f30179"
+     5186d411df36368f061aa36011f30179",
 );
 
 // Product of first 232 primes > 2 i.e. from 3 to 1471 (inclusive).
@@ -83,7 +82,7 @@ const SMALL_ODD_PRIME_PRODUCT_2048: [u8; 256] = hexstr::bytes_from_hexstr_cnst::
      56f1df5eebe7bee447658b917bf696d6\
      927f2e2428fbeb340e515cb9835d6387\
      1be8bbe09cf13445799f2e6778815157\
-     1a93b4c1eee55d1b9072e0b2f5c4607f"
+     1a93b4c1eee55d1b9072e0b2f5c4607f",
 );
 
 const SMALL_ODD_PRIME_PRODUCTS: [&[u8]; 9] = [
@@ -98,7 +97,10 @@ const SMALL_ODD_PRIME_PRODUCTS: [&[u8]; 9] = [
     &SMALL_ODD_PRIME_PRODUCT_2048,
 ];
 
-pub fn ct_composite_test_small_prime_gcd_mp<PT: MpIntByteSliceCommon>(p: &PT, scratch: [&mut [u8]; 2]) -> LimbChoice {
+pub fn ct_composite_test_small_prime_gcd_mp<PT: MpIntByteSliceCommon>(
+    p: &PT,
+    scratch: [&mut [u8]; 2],
+) -> LimbChoice {
     debug_assert!(!p.is_empty());
 
     // The GCD runtime depends on the maximum of both operands' bit length.
@@ -140,11 +142,7 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
 
     for i in 0..8 {
         let l = SMALL_ODD_PRIME_PRODUCTS[i].len();
-        let p_len = if l != 1 {
-            l + 1
-        } else {
-            l
-        };
+        let p_len = if l != 1 { l + 1 } else { l };
         let p_len = PT::limbs_align_len(p_len);
 
         let mut p = vec![0u8; p_len];
@@ -165,11 +163,7 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
         assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
 
-        let j = if i > 0 {
-            i - 1
-        } else {
-            0
-        };
+        let j = if i > 0 { i - 1 } else { 0 };
         p.copy_from(&MpBigEndianByteSlice::from_bytes(SMALL_ODD_PRIME_PRODUCTS[j]).unwrap());
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
         assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
@@ -188,7 +182,10 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
     let mut scratch0 = vec![0u8; scratch_len];
     let mut scratch1 = vec![0u8; scratch_len];
     let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-    assert_eq!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap(), 0);
+    assert_eq!(
+        ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -208,8 +205,15 @@ fn test_ct_composite_test_small_prime_gcd_ne() {
     test_ct_composite_test_small_prime_gcd_mp::<MpNativeEndianMutByteSlice>()
 }
 
-pub fn ct_prime_test_miller_rabin_mp<BT: MpIntByteSliceCommon, PT: MpIntByteSliceCommon, RXT: MpIntByteSliceCommon>(
-    mg_base: &BT, p: &PT, mg_radix_mod_p: &RXT, scratch: [&mut [u8]; 2]
+pub fn ct_prime_test_miller_rabin_mp<
+    BT: MpIntByteSliceCommon,
+    PT: MpIntByteSliceCommon,
+    RXT: MpIntByteSliceCommon,
+>(
+    mg_base: &BT,
+    p: &PT,
+    mg_radix_mod_p: &RXT,
+    scratch: [&mut [u8]; 2],
 ) -> LimbChoice {
     debug_assert!(!p.is_empty());
     debug_assert_eq!(p.load_l(0) & 1, 1);
@@ -227,7 +231,8 @@ pub fn ct_prime_test_miller_rabin_mp<BT: MpIntByteSliceCommon, PT: MpIntByteSlic
     let mut p_minus_one = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
     p_minus_one.copy_from(p);
     p_minus_one.store_l(0, p_minus_one.load_l(0) ^ 1); // Minus one for odd p.
-    let (p_minus_one_is_nonzero, p_minus_one_first_set_bit_pos) = ct_find_first_set_bit_mp(&p_minus_one);
+    let (p_minus_one_is_nonzero, p_minus_one_first_set_bit_pos) =
+        ct_find_first_set_bit_mp(&p_minus_one);
     debug_assert!(p_minus_one_is_nonzero.unwrap() != 0);
     debug_assert!(p_minus_one_first_set_bit_pos > 0);
 
@@ -245,17 +250,19 @@ pub fn ct_prime_test_miller_rabin_mp<BT: MpIntByteSliceCommon, PT: MpIntByteSlic
 
         ct_montgomery_mul_mod_mp_mp(&mut pow_scratch, &base_pow, &base_pow, p, neg_p0_inv_mod_l);
 
-        // The exponent is p - 1, p is odd, so the lsb of p - 1 is zero and there's no borrow
-        // into the next bit position. exp_bit_pos != 0 by the loop's condition, so
-        // simply load from the oiginal p itself.
+        // The exponent is p - 1, p is odd, so the lsb of p - 1 is zero and there's no
+        // borrow into the next bit position. exp_bit_pos != 0 by the loop's
+        // condition, so simply load from the oiginal p itself.
         let exp_bit_limb_index = exp_bit_pos / LIMB_BITS as usize;
         let exp_bit_pos_in_limb = exp_bit_pos % LIMB_BITS as usize;
         let exp_bit = (p.load_l(exp_bit_limb_index) >> exp_bit_pos_in_limb) & 1;
         ct_montgomery_mul_mod_cond_mp_mp(
             &mut base_pow,
-            &pow_scratch, mg_base,
-            p, neg_p0_inv_mod_l,
-            LimbChoice::from(exp_bit)
+            &pow_scratch,
+            mg_base,
+            p,
+            neg_p0_inv_mod_l,
+            LimbChoice::from(exp_bit),
         );
 
         // Compare the current power of the base against 1 and -1 (in Montgomery form).
@@ -280,14 +287,16 @@ pub fn ct_prime_test_miller_rabin_mp<BT: MpIntByteSliceCommon, PT: MpIntByteSlic
         // Evaluate the Miller-Rabin conditions for the case that
         // 0 < exp_bit_pos < p_minus_one_first_set_bit_pos.
         //
-        // Implementations found in literature often break out early with a result of "composite" if
-        // the intermediate power of the base, which is a square by the range of exp_bit_pos, equals
-        // one at this point. This is an optimization though, because once the value is one,
-        // squaring cannot ever yield -1 (in fact, nothing but 1) again. This is a basic property of
-        // (pretty much by definition) a unit in a ring, independent of whether p is a prime or
-        // not. This optimization is effective only if p - 1 has a significant number of trailing
-        // zeroes, which, for random prime candidates is highly unlikely. So don't bother and keep
-        // the algorithm constant-time even for non-primes.
+        // Implementations found in literature often break out early with a result of
+        // "composite" if the intermediate power of the base, which is a square
+        // by the range of exp_bit_pos, equals one at this point. This is an
+        // optimization though, because once the value is one, squaring cannot
+        // ever yield -1 (in fact, nothing but 1) again. This is a basic property of
+        // (pretty much by definition) a unit in a ring, independent of whether p is a
+        // prime or not. This optimization is effective only if p - 1 has a
+        // significant number of trailing zeroes, which, for random prime
+        // candidates is highly unlikely. So don't bother and keep the algorithm
+        // constant-time even for non-primes.
         let bit_pos_below_first_set = ct_lt_usize_usize(exp_bit_pos, p_minus_one_first_set_bit_pos);
         is_probable_prime |= bit_pos_below_first_set.select(0, is_minus_one);
     }
@@ -296,20 +305,27 @@ pub fn ct_prime_test_miller_rabin_mp<BT: MpIntByteSliceCommon, PT: MpIntByteSlic
 }
 
 #[cfg(test)]
-fn test_ct_prime_test_miller_rabin_mp<BT: MpIntMutByteSlice, PT: MpIntMutByteSlice, RXT: MpIntMutByteSlice>() {
-    use super::limbs_buffer::ct_mp_nlimbs;
+fn test_ct_prime_test_miller_rabin_mp<
+    BT: MpIntMutByteSlice,
+    PT: MpIntMutByteSlice,
+    RXT: MpIntMutByteSlice,
+>() {
     use super::add_impl::ct_sub_mp_l;
+    use super::limbs_buffer::ct_mp_nlimbs;
     use super::mul_impl::ct_mul_trunc_mp_l;
 
-    fn is_probable_prime<BT: MpIntMutByteSlice, PT: MpIntByteSliceCommon, RXT: MpIntMutByteSlice>(
-        base: &BT, p: &PT
+    fn is_probable_prime<
+        BT: MpIntMutByteSlice,
+        PT: MpIntByteSliceCommon,
+        RXT: MpIntMutByteSlice,
+    >(
+        base: &BT,
+        p: &PT,
     ) -> bool {
-        use super::montgomery::{
-            ct_montgomery_radix2_mod_n_mp,
-            ct_to_montgomery_form_mp,
-            ct_montgomery_redc_mp
-        };
         use super::div_impl::ct_div_mp_mp;
+        use super::montgomery::{
+            ct_montgomery_radix2_mod_n_mp, ct_montgomery_redc_mp, ct_to_montgomery_form_mp,
+        };
 
         let mut base_mod_p = vec![0u8; base.len()];
         let mut base_mod_p = BT::from_bytes(&mut base_mod_p).unwrap();
@@ -323,7 +339,13 @@ fn test_ct_prime_test_miller_rabin_mp<BT: MpIntMutByteSlice, PT: MpIntMutByteSli
         let mut mg_base_mod_p = vec![0u8; RXT::limbs_align_len(p.len())];
         let mut mg_base_mod_p = RXT::from_bytes(&mut mg_base_mod_p).unwrap();
         let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p);
-        ct_to_montgomery_form_mp(&mut mg_base_mod_p, &base_mod_p, p, neg_p0_inv_mod_l, &mg_radix2_mod_p);
+        ct_to_montgomery_form_mp(
+            &mut mg_base_mod_p,
+            &base_mod_p,
+            p,
+            neg_p0_inv_mod_l,
+            &mg_radix2_mod_p,
+        );
 
         let mut mg_radix_mod_p = mg_radix2_mod_p;
         ct_montgomery_redc_mp(&mut mg_radix_mod_p, p, neg_p0_inv_mod_l);
@@ -331,9 +353,13 @@ fn test_ct_prime_test_miller_rabin_mp<BT: MpIntMutByteSlice, PT: MpIntMutByteSli
         let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(p.len())];
         let mut scratch1 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(p.len())];
         ct_prime_test_miller_rabin_mp(
-            &mg_base_mod_p, p, &mg_radix_mod_p,
-            [scratch0.as_mut_slice(), scratch1.as_mut_slice()]
-        ).unwrap() != 0
+            &mg_base_mod_p,
+            p,
+            &mg_radix_mod_p,
+            [scratch0.as_mut_slice(), scratch1.as_mut_slice()],
+        )
+        .unwrap()
+            != 0
     }
 
     // p = 2^255 - 19.
@@ -385,37 +411,45 @@ fn test_ct_prime_test_miller_rabin_mp<BT: MpIntMutByteSlice, PT: MpIntMutByteSli
 #[test]
 fn test_ct_prime_test_miller_rabin_be_be_be() {
     use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_prime_test_miller_rabin_mp::<MpBigEndianMutByteSlice,
-                                         MpBigEndianMutByteSlice,
-                                         MpBigEndianMutByteSlice>()
+    test_ct_prime_test_miller_rabin_mp::<
+        MpBigEndianMutByteSlice,
+        MpBigEndianMutByteSlice,
+        MpBigEndianMutByteSlice,
+    >()
 }
 
 #[test]
 fn test_ct_prime_test_miller_rabin_le_le_le() {
     use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_prime_test_miller_rabin_mp::<MpLittleEndianMutByteSlice,
-                                         MpLittleEndianMutByteSlice,
-                                         MpLittleEndianMutByteSlice>()
+    test_ct_prime_test_miller_rabin_mp::<
+        MpLittleEndianMutByteSlice,
+        MpLittleEndianMutByteSlice,
+        MpLittleEndianMutByteSlice,
+    >()
 }
 
 #[test]
 fn test_ct_prime_test_miller_rabin_ne_ne_ne() {
     use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_prime_test_miller_rabin_mp::<MpNativeEndianMutByteSlice,
-                                         MpNativeEndianMutByteSlice,
-                                         MpNativeEndianMutByteSlice>()
+    test_ct_prime_test_miller_rabin_mp::<
+        MpNativeEndianMutByteSlice,
+        MpNativeEndianMutByteSlice,
+        MpNativeEndianMutByteSlice,
+    >()
 }
 
-// Prime candidate generation. The general method follows the "wheel sieve" approach: start out from
-// a multiple of a primorial (a product of the first few N primes) as a base and add offsets not
-// divisible by any of the factors to it. The larger the primorial, the better in terms of
-// preselection effectiveness, because all potential candidates divisible by any of its factors are
-// filtered. On the other hand, the list of offsets (not divisible by any of the primorial's
-// factors) grows ~linearly with the primorial's magnitude and for practical reasons, we cannot
-// store a number of precomputed offsets proportional to, say 2^64. Choose a two-level approach
-// instead. At level 0, there will be a generator using a very small primorial, 2 * 3 * 5 == 30,
-// whose sole purpose is to generate offset candidates for the "real", next level1 primorial, which
-// will be chosen such that it still fits a limb.
+// Prime candidate generation. The general method follows the "wheel sieve"
+// approach: start out from a multiple of a primorial (a product of the first
+// few N primes) as a base and add offsets not divisible by any of the factors
+// to it. The larger the primorial, the better in terms of preselection
+// effectiveness, because all potential candidates divisible by any of its
+// factors are filtered. On the other hand, the list of offsets (not divisible
+// by any of the primorial's factors) grows ~linearly with the primorial's
+// magnitude and for practical reasons, we cannot store a number of precomputed
+// offsets proportional to, say 2^64. Choose a two-level approach instead. At
+// level 0, there will be a generator using a very small primorial,
+// 2 * 3 * 5 == 30, whose sole purpose is to generate offset candidates for the
+// "real", next level1 primorial, which will be chosen such that it still fits a limb.
 
 const FIRST_PRIMES: [u8; 15] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47];
 
@@ -437,7 +471,7 @@ fn ct_find_first_ge_than(v: &[u8], val: u8) -> usize {
         // element, even though it's not needed for the correctness of
         // the search.
         let r_odd = r & 1;
-        debug_assert_eq!(ub - m + r_odd , m - lb);
+        debug_assert_eq!(ub - m + r_odd, m - lb);
         lb = pivot_is_lt.select_usize(lb, m - r_odd);
         ub = pivot_is_lt.select_usize(m, ub);
         r = ub - lb;
@@ -460,7 +494,8 @@ fn test_ct_find_first_ge_than() {
     }
 }
 
-// Non-constant-time but constant-context variant of the ct_find_first_ge_than() binary search.
+// Non-constant-time but constant-context variant of the ct_find_first_ge_than()
+// binary search.
 const fn cnst_find_first_ge_than(v: &[u8], val: u8) -> usize {
     debug_assert!(!v.is_empty());
     debug_assert!(v[v.len() - 1] >= val);
@@ -532,30 +567,31 @@ struct PrimeWheelSieveLvl0 {
 }
 
 impl PrimeWheelSieveLvl0 {
-    // The primorial of the first 4 primes would still fit an u8. However, by sticking to the first
-    // three factors only, the list of wheel offsets is _much_ smaller.
+    // The primorial of the first 4 primes would still fit an u8. However, by
+    // sticking to the first three factors only, the list of wheel offsets is
+    // _much_ smaller.
     const PRIMORIAL_NFACTORS: usize = 3;
     const PRIMORIAL: u8 = first_primes_primorial(Self::PRIMORIAL_NFACTORS) as u8;
 
     const fn assert_all_offsets_are_first_primes() {
-        // The next prime not a factor of the level 0 primorial squared is >= the primorial. It
-        // follows that all numbers less than the primorial have a square root < that next prime. It
-        // follows in turn that any composite number < the primorial has factors only < that next
-        // prime, i.e. exactly the factors of the primorial. For the wheel sieve in general, the set
-        // of offsets is defined to be the set of numbers < the primorial, that have no factor in
-        // common with it. By the preceeding, these cannot be composite, i.e. must be prime.
+        // The next prime not a factor of the level 0 primorial squared is >= the
+        // primorial. It follows that all numbers less than the primorial have a
+        // square root < that next prime. It follows in turn that any composite
+        // number < the primorial has factors only < that next prime, i.e.
+        // exactly the factors of the primorial. For the wheel sieve in general, the set
+        // of offsets is defined to be the set of numbers < the primorial, that have no
+        // factor in common with it. By the preceeding, these cannot be
+        // composite, i.e. must be prime.
         assert!(
-            (
-                FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64
-                    * FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64
-            ) > Self::PRIMORIAL as u64
+            (FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64
+                * FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64)
+                > Self::PRIMORIAL as u64
         );
     }
 
     const NOFFSETS: usize = {
         Self::assert_all_offsets_are_first_primes();
-        cnst_find_first_ge_than(&FIRST_PRIMES, Self::PRIMORIAL)
-            - Self::PRIMORIAL_NFACTORS + 1
+        cnst_find_first_ge_than(&FIRST_PRIMES, Self::PRIMORIAL) - Self::PRIMORIAL_NFACTORS + 1
     };
 
     const OFFSETS: [u8; Self::NOFFSETS] = [1, 7, 11, 13, 17, 19, 23, 29];
@@ -573,14 +609,15 @@ impl PrimeWheelSieveLvl0 {
         // Lookup the first wheel offset >= the lower bound.
         // The wheel's last offset is always equal to the primorial minus 1,
         // so the search is well-defined.
-        debug_assert_eq!(
-            Self::OFFSETS[Self::NOFFSETS - 1],
-            Self::PRIMORIAL - 1
-        );
+        debug_assert_eq!(Self::OFFSETS[Self::NOFFSETS - 1], Self::PRIMORIAL - 1);
         let offset_index = ct_find_first_ge_than(&Self::OFFSETS, offset_lower_bound);
         // By initializing last_offset to offset_lower_bound, the first produced
         // delta will advance the input lower_bound to the first offset.
-        Self { next_index: offset_index, last_offset: offset_lower_bound, next_offset_delta: 0 }
+        Self {
+            next_index: offset_index,
+            last_offset: offset_lower_bound,
+            next_offset_delta: 0,
+        }
     }
 
     fn produce_next_delta(&mut self) -> u8 {
@@ -635,7 +672,7 @@ fn test_prime_wheel_sieve_lvl0() {
         advance_candidate(&mut candidate, &mut wheel);
     }
 
-    let mut candidate= 1;
+    let mut candidate = 1;
     let mut wheel = PrimeWheelSieveLvl0::start_geq_than(candidate);
     advance_candidate(&mut candidate, &mut wheel);
     assert_eq!(candidate, 1);
@@ -693,14 +730,15 @@ impl PrimeWheelSieveLvl1 {
         // It's important to account for that internal increment when producing
         // the first offset delta to the outside, so remember it in last_offset_delta.
         let lower_bound_leq_one = ct_leq_mp_l(lower_bound, 1);
-        let last_offset_delta = lower_bound_leq_one.select(0, (2 as LimbType).wrapping_sub(offset_lower_bound));
+        let last_offset_delta =
+            lower_bound_leq_one.select(0, (2 as LimbType).wrapping_sub(offset_lower_bound));
         let offset_lower_bound = offset_lower_bound + last_offset_delta;
         // Remember that increment and adjust for it when emitting the first produced
         // offset delta.
         Self {
             lvl0_wheel: PrimeWheelSieveLvl0::start_geq_than(offset_lower_bound),
             last_offset: offset_lower_bound,
-            last_offset_delta: last_offset_delta as u8
+            last_offset_delta: last_offset_delta as u8,
         }
     }
 
@@ -710,9 +748,10 @@ impl PrimeWheelSieveLvl1 {
         let mut last_offset = self.last_offset;
         loop {
             let lvl0_delta = self.lvl0_wheel.produce_next_delta();
-            // The addition does not wrap: next_offset < Self::PRIMORIAL and Self::PRIMORIAL has
-            // been chosen such that there's enough room until LimbType::MAX to accomodate the
-            // largest delta value the level 0 wheel could ever produce.
+            // The addition does not wrap: next_offset < Self::PRIMORIAL and Self::PRIMORIAL
+            // has been chosen such that there's enough room until LimbType::MAX
+            // to accomodate the largest delta value the level 0 wheel could
+            // ever produce.
             next_offset += lvl0_delta as LimbType;
             let wrapped = ct_geq_l_l(next_offset, Self::PRIMORIAL);
             next_offset = wrapped.select(next_offset, next_offset.wrapping_sub(Self::PRIMORIAL));
@@ -720,7 +759,11 @@ impl PrimeWheelSieveLvl1 {
             next_offset_delta = wrapped.select(0, Self::PRIMORIAL - self.last_offset);
 
             let mut is_not_coprime = LimbChoice::from(0);
-            for factor in FIRST_PRIMES.iter().take(Self::PRIMORIAL_NFACTORS).skip(PrimeWheelSieveLvl0::PRIMORIAL_NFACTORS) {
+            for factor in FIRST_PRIMES
+                .iter()
+                .take(Self::PRIMORIAL_NFACTORS)
+                .skip(PrimeWheelSieveLvl0::PRIMORIAL_NFACTORS)
+            {
                 let rem = next_offset % *factor as LimbType;
                 is_not_coprime |= ct_eq_l_l(rem, 0);
             }
@@ -728,7 +771,7 @@ impl PrimeWheelSieveLvl1 {
                 continue;
             }
             break;
-        };
+        }
 
         let last_offset_delta = self.last_offset_delta;
         self.last_offset_delta = 0;
@@ -739,12 +782,15 @@ impl PrimeWheelSieveLvl1 {
 
 #[test]
 fn test_prime_wheel_sieve_lvl1() {
-    use super::limb::LIMB_BYTES;
     use super::add_impl::ct_add_mp_l;
     use super::cmp_impl::ct_is_zero_mp;
     use super::div_impl::ct_div_mp_l;
+    use super::limb::LIMB_BYTES;
 
-    fn advance_candidate(candidate: &mut MpNativeEndianMutByteSlice, wheel: &mut PrimeWheelSieveLvl1) {
+    fn advance_candidate(
+        candidate: &mut MpNativeEndianMutByteSlice,
+        wheel: &mut PrimeWheelSieveLvl1,
+    ) {
         let candidate_is_zero = ct_is_zero_mp(candidate).unwrap() != 0;
         let delta = wheel.produce_next_delta();
         for j in 0..delta {
@@ -755,7 +801,8 @@ fn test_prime_wheel_sieve_lvl1() {
             let mut is_not_coprime = false;
             for k in 0..PrimeWheelSieveLvl1::PRIMORIAL_NFACTORS {
                 let factor = FIRST_PRIMES[k] as LimbType;
-                let rem = ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(candidate, factor, None).unwrap();
+                let rem =
+                    ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(candidate, factor, None).unwrap();
                 if rem == 0 {
                     is_not_coprime = true;
                     break;

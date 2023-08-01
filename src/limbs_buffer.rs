@@ -1,22 +1,27 @@
-//! Accessors for multiprecision integers as stored in byte buffers of certain endian layouts.
+//! Accessors for multiprecision integers as stored in byte buffers of certain
+//! endian layouts.
 //!
-//! Multiprecision integers are stored in bytes buffers in big-, little- or internal,
-//! "native"-endian order. The arithmetic primitives all operate on those in units of [`LimbType`]
-//! for efficiency reasons.  This helper module provides a couple of utilities for accessing these
-//! byte buffers in units of [`LimbType`].
+//! Multiprecision integers are stored in bytes buffers in big-, little- or
+//! internal, "native"-endian order. The arithmetic primitives all operate on
+//! those in units of [`LimbType`] for efficiency reasons.  This helper module
+//! provides a couple of utilities for accessing these byte buffers in units of
+//! [`LimbType`].
 
 use core::{self, convert, fmt, marker};
 
-use super::limb::{LimbType, LIMB_BYTES, LIMB_BITS, ct_find_last_set_byte_l, ct_lsb_mask_l, LimbChoice, ct_find_first_set_bit_l, ct_find_last_set_bit_l, ct_is_zero_l};
+use super::limb::{
+    ct_find_first_set_bit_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_is_zero_l,
+    ct_lsb_mask_l, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
+};
 use super::usize_ct_cmp::ct_eq_usize_usize;
 
-/// Determine the number of [`LimbType`] limbs stored in a multiprecision integer big-endian byte
-/// buffer.
+/// Determine the number of [`LimbType`] limbs stored in a multiprecision
+/// integer big-endian byte buffer.
 ///
 /// # Arguments
 ///
-/// * `len` - The multiprecision integer's underlying big-endian byte buffer's length in bytes.
-///
+/// * `len` - The multiprecision integer's underlying big-endian byte buffer's
+///   length in bytes.
 pub const fn ct_mp_nlimbs(len: usize) -> usize {
     (len + LIMB_BYTES - 1) / LIMB_BYTES
 }
@@ -35,25 +40,25 @@ fn test_ct_mp_nlimbs() {
     assert_eq!(ct_mp_nlimbs(2 * LIMB_BYTES - 1), 2);
 }
 
-
-/// Internal helper to load some fully contained limb from a multiprecision integer big-endian byte
-/// buffer.
+/// Internal helper to load some fully contained limb from a multiprecision
+/// integer big-endian byte buffer.
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is not such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is not such a partially
+/// covered high limb.
 ///
 /// Runs in constant time as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `src_end` - The position past the end of the limb to be loaded from `limbs`.
-///               Must be `>= core::mem::size_of::<LimbType>()`.
-///
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `src_end` - The position past the end of the limb to be loaded from
+///   `limbs`. Must be `>= core::mem::size_of::<LimbType>()`.
 fn _be_mp_load_l_full(limbs: &[u8], src_end: usize) -> LimbType {
     let src_begin = src_end - LIMB_BYTES;
     let src = &limbs[src_begin..src_end];
@@ -61,49 +66,54 @@ fn _be_mp_load_l_full(limbs: &[u8], src_end: usize) -> LimbType {
     LimbType::from_be_bytes(src)
 }
 
-/// Internal helper to load some partially contained limb from a multiprecision integer big-endian
-/// byte buffer.
+/// Internal helper to load some partially contained limb from a multiprecision
+/// integer big-endian byte buffer.
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is such a partially
+/// covered high limb.
 ///
-/// Execution time depends only on the `src_end` argument and is otherwise constant as far as
-/// branching is concerned.
+/// Execution time depends only on the `src_end` argument and is otherwise
+/// constant as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `src_end` - The position past the end of the limb to be loaded from `limbs`.
-///               Must be `< core::mem::size_of::<LimbType>()`.
-///
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `src_end` - The position past the end of the limb to be loaded from
+///   `limbs`. Must be `< core::mem::size_of::<LimbType>()`.
 fn _be_mp_load_l_high_partial(limbs: &[u8], src_end: usize) -> LimbType {
     let mut src: [u8; LIMB_BYTES] = [0; LIMB_BYTES];
     src[LIMB_BYTES - src_end..LIMB_BYTES].copy_from_slice(&limbs[0..src_end]);
     LimbType::from_be_bytes(src)
 }
 
-/// Load some fully contained limb from a multiprecision integer big-endian byte buffer.
+/// Load some fully contained limb from a multiprecision integer big-endian byte
+/// buffer.
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. The generic [`be_mp_load_l()`] implements some extra logic for
-/// handling this special case of a partially stored high limb, which can be avoided if it is known
-/// that the limb to be accessed is completely covered by the `limbs` buffer. This function here
-/// provides such a less generic, but more performant variant.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. The
+/// generic [`be_mp_load_l()`] implements some extra logic for handling this
+/// special case of a partially stored high limb, which can be avoided if it is
+/// known that the limb to be accessed is completely covered by the `limbs`
+/// buffer. This function here provides such a less generic, but more performant
+/// variant.
 ///
 /// Runs in constant time as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `i` - The index of the limb to load, counted from least to most significant.
-///
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `i` - The index of the limb to load, counted from least to most
+///   significant.
 fn be_mp_load_l_full(limbs: &[u8], i: usize) -> LimbType {
     debug_assert!(i * LIMB_BYTES < limbs.len());
     let src_end = limbs.len() - i * LIMB_BYTES;
@@ -114,20 +124,23 @@ fn be_mp_load_l_full(limbs: &[u8], i: usize) -> LimbType {
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. If it is known that the limb to be accessed at position `i` is
-/// fully covered by the `limbs` buffer, consider using [`be_mp_load_l_full()`] for improved
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. If it
+/// is known that the limb to be accessed at position `i` is fully covered by
+/// the `limbs` buffer, consider using [`be_mp_load_l_full()`] for improved
 /// performance instead.
 ///
-/// Execution time depends only on the multiprecision integer's length and the limb index argument
-/// `i`, and is otherwise constant as far as branching is concerned.
+/// Execution time depends only on the multiprecision integer's length and the
+/// limb index argument `i`, and is otherwise constant as far as branching is
+/// concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `i` - The index of the limb to load, counted from least to most significant.
-///
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `i` - The index of the limb to load, counted from least to most
+///   significant.
 fn be_mp_load_l(limbs: &[u8], i: usize) -> LimbType {
     debug_assert!(i * LIMB_BYTES <= limbs.len());
     let src_end = limbs.len() - i * LIMB_BYTES;
@@ -152,7 +165,6 @@ fn test_be_mp_load_l() {
     assert_eq!(be_mp_load_l(&limbs, 1), 1);
     assert_eq!(be_mp_load_l_full(&limbs, 1), 1);
 
-
     let limbs: [u8; 1] = [0; 1];
     assert_eq!(be_mp_load_l(&limbs, 0), 0);
 
@@ -160,7 +172,6 @@ fn test_be_mp_load_l() {
     assert_eq!(be_mp_load_l(&limbs, 0), 0);
     assert_eq!(be_mp_load_l_full(&limbs, 0), 0);
     assert_eq!(be_mp_load_l(&limbs, 1), 0);
-
 
     let limbs: [u8; 2] = [0, 1];
     assert_eq!(be_mp_load_l(&limbs, 0), 1);
@@ -170,7 +181,6 @@ fn test_be_mp_load_l() {
     assert_eq!(be_mp_load_l(&limbs, 0), 0);
     assert_eq!(be_mp_load_l_full(&limbs, 0), 0);
     assert_eq!(be_mp_load_l(&limbs, 1), 1);
-
 
     let limbs: [u8; 2] = [1, 0];
     assert_eq!(be_mp_load_l(&limbs, 0), 0x0100);
@@ -182,23 +192,24 @@ fn test_be_mp_load_l() {
     assert_eq!(be_mp_load_l(&limbs, 1), 0x0100);
 }
 
-/// Internal helper to update some fully contained limb in a multiprecision integer big-endian
-/// byte buffer.
+/// Internal helper to update some fully contained limb in a multiprecision
+/// integer big-endian byte buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is not such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is not such a partially
+/// covered high limb.
 ///
 /// Runs in constant time as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `dst_end` - The position past the end of the limb to be updated in `limbs`.
-///               Must be `>= core::mem::size_of::<LimbType>()`.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `dst_end` - The position past the end of the limb to be updated in
+///   `limbs`. Must be `>= core::mem::size_of::<LimbType>()`.
 /// * `value` - The value to store in `limbs` at the specified position.
-///
 fn _be_mp_store_l_full(limbs: &mut [u8], dst_end: usize, value: LimbType) {
     let dst_begin = dst_end - LIMB_BYTES;
     let dst = &mut limbs[dst_begin..dst_end];
@@ -206,49 +217,54 @@ fn _be_mp_store_l_full(limbs: &mut [u8], dst_end: usize, value: LimbType) {
     *dst = value.to_be_bytes();
 }
 
-/// Internal helper to update some partially contained limb in a multiprecision integer big-endian
-/// byte buffer.
+/// Internal helper to update some partially contained limb in a multiprecision
+/// integer big-endian byte buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is not such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is not such a partially
+/// covered high limb.
 ///
-/// Execution time depends only on the `dst_end` argument and is otherwise constant as far as
-/// branching is concerned.
+/// Execution time depends only on the `dst_end` argument and is otherwise
+/// constant as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `dst_end` - The position past the end of the limb to be updated in `limbs`.
-///               Must be `< core::mem::size_of::<LimbType>()`.
-/// * `value` - The value to store in `limbs` at the specified position. The high
-///             bits corresponding to any of the excess limb bytes not covered by
-///             `limbs` can have arbitrary values, but are ignored.
-///
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `dst_end` - The position past the end of the limb to be updated in
+///   `limbs`. Must be `< core::mem::size_of::<LimbType>()`.
+/// * `value` - The value to store in `limbs` at the specified position. The
+///   high bits corresponding to any of the excess limb bytes not covered by
+///   `limbs` can have arbitrary values, but are ignored.
 fn _be_mp_store_l_high_partial(limbs: &mut [u8], dst_end: usize, value: LimbType) {
     let dst = &mut limbs[0..dst_end];
     let src: [u8; LIMB_BYTES] = value.to_be_bytes();
     dst.copy_from_slice(&src[LIMB_BYTES - dst_end..LIMB_BYTES]);
 }
 
-/// Update some fully contained limb in a multiprecision integer big-endian byte buffer.
+/// Update some fully contained limb in a multiprecision integer big-endian byte
+/// buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. The generic [`be_mp_store_l()`] implements some extra logic for
-/// handling this special case of a partially stored high limb, which can be avoided if it is known
-/// that the limb to be accessed is completely covered by the `limbs` buffer. This function here
-/// provides such a less generic, but more performant variant.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. The
+/// generic [`be_mp_store_l()`] implements some extra logic for handling this
+/// special case of a partially stored high limb, which can be avoided if it is
+/// known that the limb to be accessed is completely covered by the `limbs`
+/// buffer. This function here provides such a less generic, but more performant
+/// variant.
 ///
 /// Runs in constant time.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `i` - The index of the limb to update, counted from least to most significant.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `i` - The index of the limb to update, counted from least to most
+///   significant.
 /// * `value` - The value to store at limb index `i` in `limbs`.
-///
 fn be_mp_store_l_full(limbs: &mut [u8], i: usize, value: LimbType) {
     debug_assert!(i * LIMB_BYTES < limbs.len());
     let dst_end = limbs.len() - i * LIMB_BYTES;
@@ -257,23 +273,27 @@ fn be_mp_store_l_full(limbs: &mut [u8], i: usize, value: LimbType) {
 
 /// Update some limb in a multiprecision integer big-endian byte buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. If the most significant limb is to be stored, all bytes in `value`
-/// corresponding to these excess bytes must be zero accordingly.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. If the
+/// most significant limb is to be stored, all bytes in `value` corresponding to
+/// these excess bytes must be zero accordingly.
 
-/// If it is known that the limb to be stored at position `i` is fully covered by the `limbs`
-/// buffer, consider using [`be_mp_store_l_full()`] for improved performance instead.
+/// If it is known that the limb to be stored at position `i` is fully covered
+/// by the `limbs` buffer, consider using [`be_mp_store_l_full()`] for improved
+/// performance instead.
 ///
-/// Execution time depends only on the multiprecision integer's length and the limb index argument
-/// `i`, and is otherwise constant as far as branching is concerned.
+/// Execution time depends only on the multiprecision integer's length and the
+/// limb index argument `i`, and is otherwise constant as far as branching is
+/// concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in big-endian order.
-/// * `i` - The index of the limb to update, counted from least to most significant.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   big-endian order.
+/// * `i` - The index of the limb to update, counted from least to most
+///   significant.
 /// * `value` - The value to store at limb index `i` in `limbs`.
-///
 fn be_mp_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
     debug_assert!(i * LIMB_BYTES <= limbs.len());
     let dst_end = limbs.len() - i * LIMB_BYTES;
@@ -392,23 +412,24 @@ fn test_be_mp_zeroize_bytes_below() {
     assert_eq!(be_mp_load_l(&mut limbs, 1), !0);
 }
 
-/// Internal helper to load some fully contained limb from a multiprecision integer little-endian byte
-/// buffer.
+/// Internal helper to load some fully contained limb from a multiprecision
+/// integer little-endian byte buffer.
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is not such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is not such a partially
+/// covered high limb.
 ///
 /// Runs in constant time as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
 /// * `src_begin` - The position of the limb to be loaded from `limbs`.
-///
 fn _le_mp_load_l_full(limbs: &[u8], src_begin: usize) -> LimbType {
     let src_end = src_begin + LIMB_BYTES;
     let src = &limbs[src_begin..src_end];
@@ -416,48 +437,53 @@ fn _le_mp_load_l_full(limbs: &[u8], src_begin: usize) -> LimbType {
     LimbType::from_le_bytes(src)
 }
 
-/// Internal helper to load some partially contained limb from a multiprecision integer little-endian
-/// byte buffer.
+/// Internal helper to load some partially contained limb from a multiprecision
+/// integer little-endian byte buffer.
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is such a partially
+/// covered high limb.
 ///
-/// Execution time depends only on the `src_end` argument and is otherwise constant as far as
-/// branching is concerned.
+/// Execution time depends only on the `src_end` argument and is otherwise
+/// constant as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
 /// * `src_begin` - The position of the limb to be loaded from `limbs`.
-///
 fn _le_mp_load_l_high_partial(limbs: &[u8], src_begin: usize) -> LimbType {
     let mut src: [u8; LIMB_BYTES] = [0; LIMB_BYTES];
     src[..limbs.len() - src_begin].copy_from_slice(&limbs[src_begin..]);
     LimbType::from_le_bytes(src)
 }
 
-/// Load some fully contained limb from a multiprecision integer little-endian byte buffer.
+/// Load some fully contained limb from a multiprecision integer little-endian
+/// byte buffer.
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. The generic [`le_mp_load_l()`] implements some extra logic for
-/// handling this special case of a partially stored high limb, which can be avoided if it is known
-/// that the limb to be accessed is completely covered by the `limbs` buffer. This function here
-/// provides such a less generic, but more performant variant.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. The
+/// generic [`le_mp_load_l()`] implements some extra logic for handling this
+/// special case of a partially stored high limb, which can be avoided if it is
+/// known that the limb to be accessed is completely covered by the `limbs`
+/// buffer. This function here provides such a less generic, but more performant
+/// variant.
 ///
 /// Runs in constant time as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
-/// * `i` - The index of the limb to load, counted from least to most significant.
-///
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
+/// * `i` - The index of the limb to load, counted from least to most
+///   significant.
 fn le_mp_load_l_full(limbs: &[u8], i: usize) -> LimbType {
     let src_begin = i * LIMB_BYTES;
     debug_assert!(src_begin < limbs.len());
@@ -468,20 +494,23 @@ fn le_mp_load_l_full(limbs: &[u8], i: usize) -> LimbType {
 ///
 /// The specified limb is returned in the host's native endianess.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. If it is known that the limb to be accessed at position `i` is
-/// fully covered by the `limbs` buffer, consider using [`le_mp_load_l_full()`] for improved
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. If it
+/// is known that the limb to be accessed at position `i` is fully covered by
+/// the `limbs` buffer, consider using [`le_mp_load_l_full()`] for improved
 /// performance instead.
 ///
-/// Execution time depends only on the multiprecision integer's length and the limb index argument
-/// `i`, and is otherwise constant as far as branching is concerned.
+/// Execution time depends only on the multiprecision integer's length and the
+/// limb index argument `i`, and is otherwise constant as far as branching is
+/// concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
-/// * `i` - The index of the limb to load, counted from least to most significant.
-///
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
+/// * `i` - The index of the limb to load, counted from least to most
+///   significant.
 fn le_mp_load_l(limbs: &[u8], i: usize) -> LimbType {
     let src_begin = i * LIMB_BYTES;
     debug_assert!(src_begin < limbs.len());
@@ -506,7 +535,6 @@ fn test_le_mp_load_l() {
     assert_eq!(le_mp_load_l(&limbs, 1), 1);
     assert_eq!(le_mp_load_l_full(&limbs, 1), 1);
 
-
     let limbs: [u8; 1] = [0; 1];
     assert_eq!(le_mp_load_l(&limbs, 0), 0);
 
@@ -514,7 +542,6 @@ fn test_le_mp_load_l() {
     assert_eq!(le_mp_load_l(&limbs, 0), 0);
     assert_eq!(le_mp_load_l_full(&limbs, 0), 0);
     assert_eq!(le_mp_load_l(&limbs, 1), 0);
-
 
     let limbs: [u8; 2] = [1, 0];
     assert_eq!(le_mp_load_l(&limbs, 0), 1);
@@ -524,7 +551,6 @@ fn test_le_mp_load_l() {
     assert_eq!(le_mp_load_l(&limbs, 0), 0);
     assert_eq!(le_mp_load_l_full(&limbs, 0), 0);
     assert_eq!(le_mp_load_l(&limbs, 1), 1);
-
 
     let limbs: [u8; 2] = [0, 1];
     assert_eq!(le_mp_load_l(&limbs, 0), 0x0100);
@@ -536,22 +562,23 @@ fn test_le_mp_load_l() {
     assert_eq!(le_mp_load_l(&limbs, 1), 0x0100);
 }
 
-/// Internal helper to update some fully contained limb in a multiprecision integer little-endian
-/// byte buffer.
+/// Internal helper to update some fully contained limb in a multiprecision
+/// integer little-endian byte buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is not such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is not such a partially
+/// covered high limb.
 ///
 /// Runs in constant time as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
 /// * `dst_begin` - The position of the limb to be updated in `limbs`.
 /// * `value` - The value to store in `limbs` at the specified position.
-///
 fn _le_mp_store_l_full(limbs: &mut [u8], dst_begin: usize, value: LimbType) {
     let dst_end = dst_begin + LIMB_BYTES;
     let dst = &mut limbs[dst_begin..dst_end];
@@ -559,25 +586,26 @@ fn _le_mp_store_l_full(limbs: &mut [u8], dst_begin: usize, value: LimbType) {
     *dst = value.to_le_bytes();
 }
 
-/// Internal helper to update some partially contained limb in a multiprecision integer little-endian
-/// byte buffer.
+/// Internal helper to update some partially contained limb in a multiprecision
+/// integer little-endian byte buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. This internal helper is used whenever the
-/// specified limb is not such a partially covered high limb.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. This
+/// internal helper is used whenever the specified limb is not such a partially
+/// covered high limb.
 ///
-/// Execution time depends only on the `dst_end` argument and is otherwise constant as far as
-/// branching is concerned.
+/// Execution time depends only on the `dst_end` argument and is otherwise
+/// constant as far as branching is concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
 /// * `dst_begin` - The position of the limb to be updated in `limbs`.
-/// * `value` - The value to store in `limbs` at the specified position. The high
-///             bits corresponding to any of the excess limb bytes not covered by
-///             `limbs` can have arbitrary values, but are ignored.
-///
+/// * `value` - The value to store in `limbs` at the specified position. The
+///   high bits corresponding to any of the excess limb bytes not covered by
+///   `limbs` can have arbitrary values, but are ignored.
 fn _le_mp_store_l_high_partial(limbs: &mut [u8], dst_begin: usize, value: LimbType) {
     let dst_end = limbs.len();
     let dst = &mut limbs[dst_begin..];
@@ -585,23 +613,27 @@ fn _le_mp_store_l_high_partial(limbs: &mut [u8], dst_begin: usize, value: LimbTy
     dst.copy_from_slice(&src[0..dst_end - dst_begin]);
 }
 
-/// Update some fully contained limb in a multiprecision integer little-endian byte buffer.
+/// Update some fully contained limb in a multiprecision integer little-endian
+/// byte buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. The generic [`le_mp_store_l()`] implements some extra logic for
-/// handling this special case of a partially stored high limb, which can be avoided if it is known
-/// that the limb to be accessed is completely covered by the `limbs` buffer. This function here
-/// provides such a less generic, but more performant variant.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. The
+/// generic [`le_mp_store_l()`] implements some extra logic for handling this
+/// special case of a partially stored high limb, which can be avoided if it is
+/// known that the limb to be accessed is completely covered by the `limbs`
+/// buffer. This function here provides such a less generic, but more performant
+/// variant.
 ///
 /// Runs in constant time.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
-/// * `i` - The index of the limb to update, counted from least to most significant.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
+/// * `i` - The index of the limb to update, counted from least to most
+///   significant.
 /// * `value` - The value to store at limb index `i` in `limbs`.
-///
 fn le_mp_store_l_full(limbs: &mut [u8], i: usize, value: LimbType) {
     let dst_begin = i * LIMB_BYTES;
     debug_assert!(dst_begin < limbs.len());
@@ -610,23 +642,27 @@ fn le_mp_store_l_full(limbs: &mut [u8], i: usize, value: LimbType) {
 
 /// Update some limb in a multiprecision integer little-endian byte buffer.
 ///
-/// The byte buffer's length doesn't necessarily align with the size of a [`LimbType`], in which
-/// case the most significant limb's might be stored only partially, with its virtual excess high
-/// bytes defined to equal zero. If the most significant limb is to be stored, all bytes in `value`
-/// corresponding to these excess bytes must be zero accordingly.
+/// The byte buffer's length doesn't necessarily align with the size of a
+/// [`LimbType`], in which case the most significant limb's might be stored only
+/// partially, with its virtual excess high bytes defined to equal zero. If the
+/// most significant limb is to be stored, all bytes in `value` corresponding to
+/// these excess bytes must be zero accordingly.
 
-/// If it is known that the limb to be stored at position `i` is fully covered by the `limbs`
-/// buffer, consider using [`le_mp_store_l_full()`] for improved performance instead.
+/// If it is known that the limb to be stored at position `i` is fully covered
+/// by the `limbs` buffer, consider using [`le_mp_store_l_full()`] for improved
+/// performance instead.
 ///
-/// Execution time depends only on the multiprecision integer's length and the limb index argument
-/// `i`, and is otherwise constant as far as branching is concerned.
+/// Execution time depends only on the multiprecision integer's length and the
+/// limb index argument `i`, and is otherwise constant as far as branching is
+/// concerned.
 ///
 /// # Arguments
 ///
-/// * `limbs` - The multiprecision integer's underlying byte buffer in little-endian order.
-/// * `i` - The index of the limb to update, counted from least to most significant.
+/// * `limbs` - The multiprecision integer's underlying byte buffer in
+///   little-endian order.
+/// * `i` - The index of the limb to update, counted from least to most
+///   significant.
 /// * `value` - The value to store at limb index `i` in `limbs`.
-///
 fn le_mp_store_l(limbs: &mut [u8], i: usize, value: LimbType) {
     let dst_begin = i * LIMB_BYTES;
     debug_assert!(dst_begin < limbs.len());
@@ -981,7 +1017,7 @@ pub trait MpIntByteSliceCommon: MpIntByteSliceCommonPriv + fmt::LowerHex {
         }
         if self.is_empty() {
             f.write_str("(empty)")?;
-            return Ok(())
+            return Ok(());
         }
 
         let v = self.load_l(self.nlimbs() - 1);
@@ -1000,33 +1036,41 @@ pub trait MpIntByteSliceCommon: MpIntByteSliceCommonPriv + fmt::LowerHex {
 }
 
 pub trait MpIntByteSlicePriv: MpIntByteSliceCommon {
-    type SelfT<'a>: MpIntByteSlice where Self: 'a;
+    type SelfT<'a>: MpIntByteSlice
+    where
+        Self: 'a;
 
     fn split_at<'a>(&'a self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>)
-    where Self: 'a;
+    where
+        Self: 'a;
 }
 
 pub trait MpIntByteSlice: MpIntByteSlicePriv {
     type FromBytesError: fmt::Debug;
 
     fn from_bytes<'a: 'b, 'b>(bytes: &'a [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError>
-    where Self: 'b;
+    where
+        Self: 'b;
 
     fn coerce_lifetime(&self) -> Self::SelfT<'_>;
 }
 
 pub trait MpIntMutByteSlicePriv: MpIntByteSliceCommon {
-    type SelfT<'a>: MpIntMutByteSlice where Self: 'a;
+    type SelfT<'a>: MpIntMutByteSlice
+    where
+        Self: 'a;
 
     fn split_at<'a>(&'a mut self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>)
-    where Self: 'a;
+    where
+        Self: 'a;
 }
 
 pub trait MpIntMutByteSlice: MpIntMutByteSlicePriv {
     type FromBytesError: fmt::Debug;
 
     fn from_bytes<'a: 'b, 'b>(bytes: &'a mut [u8]) -> Result<Self::SelfT<'b>, Self::FromBytesError>
-    where Self: 'b;
+    where
+        Self: 'b;
 
     fn coerce_lifetime(&mut self) -> Self::SelfT<'_>;
 
@@ -1048,17 +1092,14 @@ pub trait MpIntMutByteSlice: MpIntMutByteSlicePriv {
             self.store_l_full(i, src.load_l_full(i));
         }
         let high_limb = src.load_l(src_nlimbs - 1);
-        debug_assert!(
-            src_nlimbs < dst_nlimbs ||
-            (high_limb & !self.partial_high_mask()) == 0
-        );
+        debug_assert!(src_nlimbs < dst_nlimbs || (high_limb & !self.partial_high_mask()) == 0);
         self.store_l(src_nlimbs - 1, high_limb);
         self.zeroize_bytes_above(src.len());
     }
 }
 
 pub struct MpBigEndianByteSlice<'a> {
-    bytes: &'a [u8]
+    bytes: &'a [u8],
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpBigEndianByteSlice<'a> {
@@ -1092,10 +1133,14 @@ impl<'a> MpIntByteSlicePriv for MpBigEndianByteSlice<'a> {
     type SelfT<'b> = MpBigEndianByteSlice<'b> where Self: 'b;
 
     fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where Self: 'b
+    where
+        Self: 'b,
     {
         let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
-        (Self::SelfT::<'b> { bytes: h }, Self::SelfT::<'b> { bytes: l })
+        (
+            Self::SelfT::<'b> { bytes: h },
+            Self::SelfT::<'b> { bytes: l },
+        )
     }
 }
 
@@ -1103,7 +1148,8 @@ impl<'a> MpIntByteSlice for MpBigEndianByteSlice<'a> {
     type FromBytesError = convert::Infallible;
 
     fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
-    where Self: 'c
+    where
+        Self: 'c,
     {
         Ok(Self::SelfT::<'c> { bytes })
     }
@@ -1120,7 +1166,7 @@ impl<'a> fmt::LowerHex for MpBigEndianByteSlice<'a> {
 }
 
 pub struct MpBigEndianMutByteSlice<'a> {
-    bytes: &'a mut [u8]
+    bytes: &'a mut [u8],
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpBigEndianMutByteSlice<'a> {
@@ -1154,7 +1200,8 @@ impl<'a> MpIntMutByteSlicePriv for MpBigEndianMutByteSlice<'a> {
     type SelfT<'b> = MpBigEndianMutByteSlice<'b> where Self: 'b;
 
     fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where Self: 'b
+    where
+        Self: 'b,
     {
         let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
         (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
@@ -1165,7 +1212,8 @@ impl<'a> MpIntMutByteSlice for MpBigEndianMutByteSlice<'a> {
     type FromBytesError = convert::Infallible;
 
     fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
-    where Self: 'c
+    where
+        Self: 'c,
     {
         Ok(Self::SelfT::<'c> { bytes })
     }
@@ -1198,7 +1246,7 @@ impl<'a> fmt::LowerHex for MpBigEndianMutByteSlice<'a> {
 }
 
 pub struct MpLittleEndianByteSlice<'a> {
-    bytes: &'a [u8]
+    bytes: &'a [u8],
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpLittleEndianByteSlice<'a> {
@@ -1232,10 +1280,14 @@ impl<'a> MpIntByteSlicePriv for MpLittleEndianByteSlice<'a> {
     type SelfT<'b> = MpLittleEndianByteSlice<'b> where Self: 'b;
 
     fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where Self: 'b
+    where
+        Self: 'b,
     {
         let (l, h) = self.bytes.split_at(nbytes);
-        (Self::SelfT::<'b> { bytes: h }, Self::SelfT::<'b> { bytes: l })
+        (
+            Self::SelfT::<'b> { bytes: h },
+            Self::SelfT::<'b> { bytes: l },
+        )
     }
 }
 
@@ -1243,7 +1295,8 @@ impl<'a> MpIntByteSlice for MpLittleEndianByteSlice<'a> {
     type FromBytesError = convert::Infallible;
 
     fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
-    where Self: 'c
+    where
+        Self: 'c,
     {
         Ok(Self::SelfT::<'c> { bytes })
     }
@@ -1260,7 +1313,7 @@ impl<'a> fmt::LowerHex for MpLittleEndianByteSlice<'a> {
 }
 
 pub struct MpLittleEndianMutByteSlice<'a> {
-    bytes: &'a mut [u8]
+    bytes: &'a mut [u8],
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpLittleEndianMutByteSlice<'a> {
@@ -1294,7 +1347,8 @@ impl<'a> MpIntMutByteSlicePriv for MpLittleEndianMutByteSlice<'a> {
     type SelfT<'b> = MpLittleEndianMutByteSlice<'b> where Self: 'b;
 
     fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where Self: 'b
+    where
+        Self: 'b,
     {
         let (l, h) = self.bytes.split_at_mut(nbytes);
         (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
@@ -1305,7 +1359,8 @@ impl<'a> MpIntMutByteSlice for MpLittleEndianMutByteSlice<'a> {
     type FromBytesError = convert::Infallible;
 
     fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
-    where Self: 'c
+    where
+        Self: 'c,
     {
         Ok(Self::SelfT::<'c> { bytes })
     }
@@ -1341,7 +1396,7 @@ impl<'a> fmt::LowerHex for MpLittleEndianMutByteSlice<'a> {
 pub struct UnalignedMpByteSliceLenError {}
 
 pub struct MpNativeEndianByteSlice<'a> {
-    bytes: &'a [u8]
+    bytes: &'a [u8],
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpNativeEndianByteSlice<'a> {
@@ -1376,11 +1431,15 @@ impl<'a> MpIntByteSlicePriv for MpNativeEndianByteSlice<'a> {
     type SelfT<'b> = MpNativeEndianByteSlice<'b> where Self: 'b;
 
     fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where Self: 'b
+    where
+        Self: 'b,
     {
         debug_assert_eq!(nbytes % LIMB_BYTES, 0);
         let (l, h) = self.bytes.split_at(nbytes);
-        (Self::SelfT::<'b> { bytes: h }, Self::SelfT::<'b> { bytes: l })
+        (
+            Self::SelfT::<'b> { bytes: h },
+            Self::SelfT::<'b> { bytes: l },
+        )
     }
 }
 
@@ -1388,7 +1447,8 @@ impl<'a> MpIntByteSlice for MpNativeEndianByteSlice<'a> {
     type FromBytesError = UnalignedMpByteSliceLenError;
 
     fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
-    where Self: 'c
+    where
+        Self: 'c,
     {
         if bytes.len() % LIMB_BYTES == 0 {
             Ok(Self::SelfT::<'c> { bytes })
@@ -1409,7 +1469,7 @@ impl<'a> fmt::LowerHex for MpNativeEndianByteSlice<'a> {
 }
 
 pub struct MpNativeEndianMutByteSlice<'a> {
-    bytes: &'a mut [u8]
+    bytes: &'a mut [u8],
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpNativeEndianMutByteSlice<'a> {
@@ -1444,7 +1504,8 @@ impl<'a> MpIntMutByteSlicePriv for MpNativeEndianMutByteSlice<'a> {
     type SelfT<'b> = MpNativeEndianMutByteSlice<'b> where Self: 'b;
 
     fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where Self: 'b
+    where
+        Self: 'b,
     {
         debug_assert_eq!(nbytes % LIMB_BYTES, 0);
         let (l, h) = self.bytes.split_at_mut(nbytes);
@@ -1456,7 +1517,8 @@ impl<'a> MpIntMutByteSlice for MpNativeEndianMutByteSlice<'a> {
     type FromBytesError = UnalignedMpByteSliceLenError;
 
     fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> Result<Self::SelfT<'c>, Self::FromBytesError>
-    where Self: 'c
+    where
+        Self: 'c,
     {
         if bytes.len() % LIMB_BYTES == 0 {
             Ok(Self::SelfT::<'c> { bytes })
@@ -1512,7 +1574,7 @@ fn find_last_set_limb<T0: MpIntByteSliceCommon>(op0: &T0) -> usize {
 }
 
 #[cfg(test)]
-fn test_find_last_set_limb_with_unaligned_lengths<T0: MpIntMutByteSlice>()  {
+fn test_find_last_set_limb_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
     let mut op0: [u8; 2 * LIMB_BYTES + 2] = [0; 2 * LIMB_BYTES + 2];
     let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     op0.store_l(0, 1);
@@ -1526,7 +1588,7 @@ fn test_find_last_set_limb_with_unaligned_lengths<T0: MpIntMutByteSlice>()  {
 }
 
 #[cfg(test)]
-fn test_find_last_set_limb_with_aligned_lengths<T0: MpIntMutByteSlice>()  {
+fn test_find_last_set_limb_with_aligned_lengths<T0: MpIntMutByteSlice>() {
     let mut op0: [u8; 0] = [0; 0];
     let op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
     assert_eq!(find_last_set_limb(&op0), 0);
@@ -1543,19 +1605,19 @@ fn test_find_last_set_limb_with_aligned_lengths<T0: MpIntMutByteSlice>()  {
 }
 
 #[test]
-fn test_find_last_set_limb_be()  {
+fn test_find_last_set_limb_be() {
     test_find_last_set_limb_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
     test_find_last_set_limb_with_aligned_lengths::<MpBigEndianMutByteSlice>();
 }
 
 #[test]
-fn test_find_last_set_limb_le()  {
+fn test_find_last_set_limb_le() {
     test_find_last_set_limb_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
     test_find_last_set_limb_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
 }
 
 #[test]
-fn test_find_last_set_limb_ne()  {
+fn test_find_last_set_limb_ne() {
     test_find_last_set_limb_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
 }
 
@@ -1619,10 +1681,14 @@ pub fn ct_find_first_set_bit_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> (LimbChoi
     let mut ntrailing_zeroes: usize = 0;
     for i in 0..op0.nlimbs() {
         let op0_val = op0.load_l(i);
-        ntrailing_zeroes += tail_is_zero.select(0, ct_find_first_set_bit_l(op0_val) as LimbType) as usize;
+        ntrailing_zeroes +=
+            tail_is_zero.select(0, ct_find_first_set_bit_l(op0_val) as LimbType) as usize;
         tail_is_zero &= LimbChoice::from(ct_is_zero_l(op0_val));
     }
-    (!tail_is_zero, tail_is_zero.select_usize(ntrailing_zeroes, 0))
+    (
+        !tail_is_zero,
+        tail_is_zero.select_usize(ntrailing_zeroes, 0),
+    )
 }
 
 #[cfg(test)]
@@ -1634,7 +1700,7 @@ fn test_find_first_set_bit_mp<T0: MpIntMutByteSlice>() {
     assert_eq!(first_set_bit_pos, 0);
 
     for i in 0..3 * LIMB_BITS as usize {
-    let mut limbs: [u8; 3 * LIMB_BYTES] = [0u8; 3 * LIMB_BYTES];
+        let mut limbs: [u8; 3 * LIMB_BYTES] = [0u8; 3 * LIMB_BYTES];
         let mut limbs = T0::from_bytes(&mut limbs).unwrap();
         let limb_index = i / LIMB_BITS as usize;
         let bit_pos_in_limb = i % LIMB_BITS as usize;
@@ -1678,11 +1744,14 @@ pub fn ct_find_last_set_bit_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> (LimbChoic
         let op0_val = op0.load_l(i);
         nleading_zeroes += head_is_zero.select(
             0,
-            LIMB_BITS as LimbType - ct_find_last_set_bit_l(op0_val) as LimbType
+            LIMB_BITS as LimbType - ct_find_last_set_bit_l(op0_val) as LimbType,
         ) as usize;
         head_is_zero &= LimbChoice::from(ct_is_zero_l(op0_val));
     }
-    (!head_is_zero, op0.nlimbs() * LIMB_BITS as usize - nleading_zeroes)
+    (
+        !head_is_zero,
+        op0.nlimbs() * LIMB_BITS as usize - nleading_zeroes,
+    )
 }
 
 #[cfg(test)]
@@ -1730,7 +1799,7 @@ fn test_find_last_set_bit_ne() {
 }
 
 pub fn ct_zeroize_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) {
-    let first_limb_index = begin / LIMB_BITS  as usize;
+    let first_limb_index = begin / LIMB_BITS as usize;
     let first_limb_retain_nbits = begin % LIMB_BITS as usize;
     let first_limb_mask = ct_lsb_mask_l(first_limb_retain_nbits as u32);
     let mut next_mask = !0;
@@ -1758,7 +1827,12 @@ fn test_ct_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     let mut op0 = vec![0u8; op0_len];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
     fill_with_ones(&mut op0);
-    for begin in [8 * op0_len, 8 * op0_len + 1, 8 * op0.nlimbs() * LIMB_BYTES, 8 * op0.nlimbs() * LIMB_BYTES + 1] {
+    for begin in [
+        8 * op0_len,
+        8 * op0_len + 1,
+        8 * op0.nlimbs() * LIMB_BYTES,
+        8 * op0.nlimbs() * LIMB_BYTES + 1,
+    ] {
         ct_zeroize_bits_above_mp(&mut op0, begin);
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -1787,7 +1861,7 @@ fn test_ct_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 
     for j in 1..ct_mp_nlimbs(op0_len) {
         let begin = j * LIMB_BITS as usize - 1;
-        let begin = begin.min(8 * op0_len  - 1);
+        let begin = begin.min(8 * op0_len - 1);
 
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -1839,7 +1913,7 @@ fn test_ct_zeroize_bits_above_ne() {
 }
 
 pub fn zeroize_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) {
-    let first_limb_index = begin / LIMB_BITS  as usize;
+    let first_limb_index = begin / LIMB_BITS as usize;
     if op0.nlimbs() <= first_limb_index {
         return;
     }
@@ -1847,7 +1921,7 @@ pub fn zeroize_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) 
     let first_limb_mask = ct_lsb_mask_l(first_limb_retain_nbits as u32);
     op0.store_l(
         first_limb_index,
-        op0.load_l(first_limb_index) & first_limb_mask
+        op0.load_l(first_limb_index) & first_limb_mask,
     );
 
     op0.zeroize_bytes_above((begin + LIMB_BITS as usize - 1) / LIMB_BITS as usize * LIMB_BYTES);
@@ -1868,7 +1942,12 @@ fn test_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     let mut op0 = vec![0u8; op0_len];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
     fill_with_ones(&mut op0);
-    for begin in [8 * op0_len, 8 * op0_len + 1, 8 * op0.nlimbs() * LIMB_BYTES, 8 * op0.nlimbs() * LIMB_BYTES + 1] {
+    for begin in [
+        8 * op0_len,
+        8 * op0_len + 1,
+        8 * op0.nlimbs() * LIMB_BYTES,
+        8 * op0.nlimbs() * LIMB_BYTES + 1,
+    ] {
         zeroize_bits_above_mp(&mut op0, begin);
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -1897,7 +1976,7 @@ fn test_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 
     for j in 1..ct_mp_nlimbs(op0_len) {
         let begin = j * LIMB_BITS as usize - 1;
-        let begin = begin.min(8 * op0_len  - 1);
+        let begin = begin.min(8 * op0_len - 1);
 
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -1949,7 +2028,7 @@ fn test_zeroize_bits_above_ne() {
 }
 
 pub fn ct_zeroize_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
-    let last_limb_index = end / LIMB_BITS  as usize;
+    let last_limb_index = end / LIMB_BITS as usize;
     let last_limb_clear_nbits = end % LIMB_BITS as usize;
     let last_limb_mask = !ct_lsb_mask_l(last_limb_clear_nbits as u32);
     let mut next_mask = 0;
@@ -2008,7 +2087,7 @@ fn test_ct_zeroize_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 
     for j in 1..ct_mp_nlimbs(op0_len) {
         let begin = j * LIMB_BITS as usize - 1;
-        let begin = begin.min(8 * op0_len  - 1);
+        let begin = begin.min(8 * op0_len - 1);
 
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -2064,7 +2143,7 @@ fn test_ct_zeroize_bits_below_ne() {
 }
 
 pub fn zeroize_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
-    let last_limb_index = end / LIMB_BITS  as usize;
+    let last_limb_index = end / LIMB_BITS as usize;
     op0.zeroize_bytes_below(last_limb_index * LIMB_BYTES);
     if last_limb_index >= op0.nlimbs() {
         return;
@@ -2073,7 +2152,7 @@ pub fn zeroize_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
     let last_limb_mask = !ct_lsb_mask_l(last_limb_clear_nbits as u32);
     op0.store_l(
         last_limb_index,
-        op0.load_l(last_limb_index) & last_limb_mask
+        op0.load_l(last_limb_index) & last_limb_mask,
     );
 }
 
@@ -2123,7 +2202,7 @@ fn test_zeroize_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 
     for j in 1..ct_mp_nlimbs(op0_len) {
         let begin = j * LIMB_BITS as usize - 1;
-        let begin = begin.min(8 * op0_len  - 1);
+        let begin = begin.min(8 * op0_len - 1);
 
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
@@ -2179,7 +2258,9 @@ fn test_zeroize_bits_below_ne() {
 }
 
 pub fn ct_swap_cond_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
-    op0: &mut T0, op1: &mut T1, cond: LimbChoice
+    op0: &mut T0,
+    op1: &mut T1,
+    cond: LimbChoice,
 ) {
     debug_assert_eq!(op0.nlimbs(), op1.nlimbs());
     let nlimbs = op0.nlimbs();
@@ -2236,72 +2317,77 @@ fn test_ct_swap_cond_ne_ne() {
     test_ct_swap_cond_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>();
 }
 
-/// Internal data structure describing a single one of a [`CompositeLimbsBuffer`]'s constituting
-/// segments.
+/// Internal data structure describing a single one of a
+/// [`CompositeLimbsBuffer`]'s constituting segments.
 struct CompositeLimbsBufferSegment<'a, ST: MpIntByteSliceCommon> {
-    /// The total number of limbs whose least significant bytes are held in this or less significant
-    /// segments each (note that a limb may span multiple segments).
+    /// The total number of limbs whose least significant bytes are held in this
+    /// or less significant segments each (note that a limb may span
+    /// multiple segments).
     end: usize,
-    /// The actual data, interpreted as a segment within a composed multiprecision integer
-    /// byte buffer.
+    /// The actual data, interpreted as a segment within a composed
+    /// multiprecision integer byte buffer.
     ///
-    /// The `segment` slice, if non-empty, will be made to align with the least significant limb
-    /// whose least significant byte is found in this segment. That is, the slice's last byte
-    /// (in memory order) corresponds to the least significant byte of the least significant limb.
-    ///
+    /// The `segment` slice, if non-empty, will be made to align with the least
+    /// significant limb whose least significant byte is found in this
+    /// segment. That is, the slice's last byte (in memory order)
+    /// corresponds to the least significant byte of the least significant limb.
     segment: ST,
-    /// Continuation bytes of this or preceeding, less significant segment's most significant limb.
+    /// Continuation bytes of this or preceeding, less significant segment's
+    /// most significant limb.
     ///
-    /// A segment's most significant limb might be covered only partially by it and extend across
-    /// one or more subsequent, more significant segments. In this case its remaining, more
-    /// significant continutation bytes are collected from this and the subsequent, more significant
+    /// A segment's most significant limb might be covered only partially by it
+    /// and extend across one or more subsequent, more significant segments.
+    /// In this case its remaining, more significant continutation bytes are
+    /// collected from this and the subsequent, more significant
     /// segments' `high_next_partial` slices.
     high_next_partial: ST,
 
-    _phantom: marker::PhantomData<&'a [u8]>
+    _phantom: marker::PhantomData<&'a [u8]>,
 }
 
-/// Access multiprecision integers composed of multiple virtually concatenated byte buffers in units
-/// of [`LimbType`].
+/// Access multiprecision integers composed of multiple virtually concatenated
+/// byte buffers in units of [`LimbType`].
 ///
-/// A [`CompositeLimbsBuffer`] provides a composed multiprecision integer byte buffer view on
-/// `N_SEGMENTS` virtually concatenated byte slices, of endianess as specified by the `E` generic
-/// parameter each. Primitives are provided alongside for accessing the composed integer in units of
-/// [`LimbType`].
+/// A [`CompositeLimbsBuffer`] provides a composed multiprecision integer byte
+/// buffer view on `N_SEGMENTS` virtually concatenated byte slices, of endianess
+/// as specified by the `E` generic parameter each. Primitives are provided
+/// alongside for accessing the composed integer in units of [`LimbType`].
 ///
-/// Certain applications need to truncate the result of some multiprecision integer arithmetic
-/// operation result and dismiss the rest. An example would be key generation modulo some large
-/// integer by the method of oversampling. A `CompositeLimbsBuffer` helps such applications to
-/// reduce the memory footprint of the truncation operation: instead of allocating a smaller
-/// destination buffer and copying the to be retained parts over from the result, the arithmetic
-/// primitive can, if supported, operate directly on a multiprecision integer byte buffer composed
-/// of several independent smaller slices by virtual concatenation. Assuming the individual
-/// segments' slice lengths align properly with the needed and unneeded parts of the result, the
-/// latter ones can get truncated away trivially when done by simply dismissing the corresponding
-/// underlying buffers.
+/// Certain applications need to truncate the result of some multiprecision
+/// integer arithmetic operation result and dismiss the rest. An example would
+/// be key generation modulo some large integer by the method of oversampling. A
+/// `CompositeLimbsBuffer` helps such applications to reduce the memory
+/// footprint of the truncation operation: instead of allocating a smaller
+/// destination buffer and copying the to be retained parts over from the
+/// result, the arithmetic primitive can, if supported, operate directly on a
+/// multiprecision integer byte buffer composed of several independent smaller
+/// slices by virtual concatenation. Assuming the individual segments' slice
+/// lengths align properly with the needed and unneeded parts of the result, the
+/// latter ones can get truncated away trivially when done by simply dismissing
+/// the corresponding underlying buffers.
 ///
 /// See also [`CompositeLimbsBuffer`] for a non-mutable variant.
-///
 pub struct CompositeLimbsBuffer<'a, ST: MpIntByteSliceCommon, const N_SEGMENTS: usize> {
-    /// The composed view's individual segments, ordered from least to most significant.
+    /// The composed view's individual segments, ordered from least to most
+    /// significant.
     segments: [CompositeLimbsBufferSegment<'a, ST>; N_SEGMENTS],
 }
 
-impl<'a, ST: MpIntByteSliceCommon, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
-    /// Construct a `CompositeLimbsBuffer` view from the individual byte buffer segments.
+impl<'a, ST: MpIntByteSliceCommon, const N_SEGMENTS: usize>
+    CompositeLimbsBuffer<'a, ST, N_SEGMENTS>
+{
+    /// Construct a `CompositeLimbsBuffer` view from the individual byte buffer
+    /// segments.
     ///
     /// # Arguments
     ///
-    /// * `segments` - An array of `N_SEGMENTS` byte slices to compose the multiprecision integer
-    ///                byte buffer view from by virtual concatenation. Ordered from least to most
-    ///                significant relative with respect to their position within the resulting
-    ///                view.
-    ///
-    pub fn new(segments: [ST; N_SEGMENTS]) -> Self
-    {
+    /// * `segments` - An array of `N_SEGMENTS` byte slices to compose the
+    ///   multiprecision integer byte buffer view from by virtual concatenation.
+    ///   Ordered from least to most significant relative with respect to their
+    ///   position within the resulting view.
+    pub fn new(segments: [ST; N_SEGMENTS]) -> Self {
         let mut segments = <[ST; N_SEGMENTS] as IntoIterator>::into_iter(segments);
-        let mut segments: [Option<ST>; N_SEGMENTS]
-            = core::array::from_fn(|_| segments.next());
+        let mut segments: [Option<ST>; N_SEGMENTS] = core::array::from_fn(|_| segments.next());
         let mut n_bytes_total = 0;
         let mut create_segment = |i: usize| {
             let segment = segments[i].take().unwrap();
@@ -2324,26 +2410,34 @@ impl<'a, ST: MpIntByteSliceCommon, const N_SEGMENTS: usize> CompositeLimbsBuffer
             let high_next_partial_len = high_next_partial.len();
             n_bytes_total += high_next_partial_len;
             let end = ct_mp_nlimbs(n_bytes_total);
-            CompositeLimbsBufferSegment { end, segment, high_next_partial, _phantom: marker::PhantomData }
+            CompositeLimbsBufferSegment {
+                end,
+                segment,
+                high_next_partial,
+                _phantom: marker::PhantomData,
+            }
         };
 
-        let segments: [CompositeLimbsBufferSegment<'a, ST>; N_SEGMENTS] = core::array::from_fn(&mut create_segment);
+        let segments: [CompositeLimbsBufferSegment<'a, ST>; N_SEGMENTS] =
+            core::array::from_fn(&mut create_segment);
         Self { segments }
     }
 
-    /// Lookup the least significant buffer segment holding the specified limb's least significant
-    /// byte.
+    /// Lookup the least significant buffer segment holding the specified limb's
+    /// least significant byte.
     ///
-    /// Returns a pair of segment index and, as a by-product of the search, the corresponding segment's
-    /// offset within the composed multiprecision integer byte buffer in terms of limbs.
+    /// Returns a pair of segment index and, as a by-product of the search, the
+    /// corresponding segment's offset within the composed multiprecision
+    /// integer byte buffer in terms of limbs.
     ///
-    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
-    /// well as as on on the limb index argument `i` as far as branching is concerned.
+    /// Execution time depends on the composed multiprecision integer's
+    /// underlying segment layout as well as as on on the limb index
+    /// argument `i` as far as branching is concerned.
     ///
     /// # Arguments
     ///
-    /// * `i` - The index of the limb to load, counted from least to most significant.
-    ///
+    /// * `i` - The index of the limb to load, counted from least to most
+    ///   significant.
     fn limb_index_to_segment(&self, i: usize) -> (usize, usize) {
         let mut segment_offset = 0;
         for segment_index in 0..N_SEGMENTS {
@@ -2359,12 +2453,13 @@ impl<'a, ST: MpIntByteSliceCommon, const N_SEGMENTS: usize> CompositeLimbsBuffer
 
     /// Load a limb from the composed multiprecision integer byte buffer.
     ///
-    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
-    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
+    /// Execution time depends on the composed multiprecision integer's
+    /// underlying segment layout as well as as on on the limb index
+    /// argument `i`, and is otherwise constant as far as branching
     /// is concerned.
     ///
-    /// * `i` - The index of the limb to load, counted from least to most significant.
-    ///
+    /// * `i` - The index of the limb to load, counted from least to most
+    ///   significant.
     pub fn load(&self, i: usize) -> LimbType {
         let (segment_index, segment_offset) = self.limb_index_to_segment(i);
         let segment = &self.segments[segment_index];
@@ -2372,8 +2467,8 @@ impl<'a, ST: MpIntByteSliceCommon, const N_SEGMENTS: usize> CompositeLimbsBuffer
         if i != segment.end - 1 || !ST::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             segment_slice.load_l_full(i - segment_offset)
         } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
-            // The last (highest) segment's most significant bytes don't necessarily occupy a full
-            // limb.
+            // The last (highest) segment's most significant bytes don't necessarily occupy
+            // a full limb.
             segment_slice.load_l(i - segment_offset)
         } else {
             let mut npartial = segment_slice.len() % LIMB_BYTES;
@@ -2395,13 +2490,14 @@ impl<'a, ST: MpIntByteSliceCommon, const N_SEGMENTS: usize> CompositeLimbsBuffer
 impl<'a, ST: MpIntMutByteSlice, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a, ST, N_SEGMENTS> {
     /// Update a limb in the composed multiprecision integer byte buffer.
     ///
-    /// Execution time depends on the composed multiprecision integer's underlying segment layout as
-    /// well as as on on the limb index argument `i`, and is otherwise constant as far as branching
+    /// Execution time depends on the composed multiprecision integer's
+    /// underlying segment layout as well as as on on the limb index
+    /// argument `i`, and is otherwise constant as far as branching
     /// is concerned.
     ///
-    /// * `i` - The index of the limb to update, counted from least to most significant.
+    /// * `i` - The index of the limb to update, counted from least to most
+    ///   significant.
     /// * `value` - The value to store in the i'th limb.
-    ///
     pub fn store(&mut self, i: usize, value: LimbType) {
         let (segment_index, segment_offset) = self.limb_index_to_segment(i);
         let segment = &mut self.segments[segment_index];
@@ -2409,8 +2505,8 @@ impl<'a, ST: MpIntMutByteSlice, const N_SEGMENTS: usize> CompositeLimbsBuffer<'a
         if i != segment.end - 1 || !ST::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             segment_slice.store_l_full(i - segment_offset, value);
         } else if segment_index + 1 == N_SEGMENTS || segment_slice.len() % LIMB_BYTES == 0 {
-            // The last (highest) part's most significant bytes don't necessarily occupy a full
-            // limb.
+            // The last (highest) part's most significant bytes don't necessarily occupy a
+            // full limb.
             segment_slice.store_l(i - segment_offset, value)
         } else {
             let mut value = value;
@@ -2451,7 +2547,7 @@ fn test_composite_limbs_buffer_load_be() {
 
     // 0x07 00 .. 00 06 00 .. 00
     buf2[1 + LIMB_BYTES + LIMB_BYTES / 2] = 0x6;
-    buf2[1 + LIMB_BYTES ] = 0x7;
+    buf2[1 + LIMB_BYTES] = 0x7;
 
     // 0x09 00 .. 00 08 00 .. 00
     buf2[1 + LIMB_BYTES / 2] = 0x8;
@@ -2463,9 +2559,7 @@ fn test_composite_limbs_buffer_load_be() {
     let buf0 = MpBigEndianByteSlice::from_bytes(buf0.as_slice()).unwrap();
     let buf1 = MpBigEndianByteSlice::from_bytes(buf1.as_slice()).unwrap();
     let buf2 = MpBigEndianByteSlice::from_bytes(buf2.as_slice()).unwrap();
-    let limbs =  CompositeLimbsBuffer::new(
-        [buf0, buf1, buf2]
-    );
+    let limbs = CompositeLimbsBuffer::new([buf0, buf1, buf2]);
 
     let l0 = limbs.load(0);
     assert_eq!(l0, 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8);
@@ -2508,9 +2602,7 @@ fn test_composite_limbs_buffer_load_le() {
     let buf0 = MpLittleEndianByteSlice::from_bytes(buf0.as_slice()).unwrap();
     let buf1 = MpLittleEndianByteSlice::from_bytes(buf1.as_slice()).unwrap();
     let buf2 = MpLittleEndianByteSlice::from_bytes(buf2.as_slice()).unwrap();
-    let limbs =  CompositeLimbsBuffer::new(
-        [buf0, buf1, buf2]
-    );
+    let limbs = CompositeLimbsBuffer::new([buf0, buf1, buf2]);
 
     let l0 = limbs.load(0);
     assert_eq!(l0, 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8);
@@ -2569,9 +2661,7 @@ fn test_composite_limbs_buffer_load_ne() {
     let buf0 = MpNativeEndianByteSlice::from_bytes(buf0.as_slice()).unwrap();
     let buf1 = MpNativeEndianByteSlice::from_bytes(buf1.as_slice()).unwrap();
     let buf2 = MpNativeEndianByteSlice::from_bytes(buf2.as_slice()).unwrap();
-    let limbs =  CompositeLimbsBuffer::new(
-        [buf0, buf1, buf2]
-    );
+    let limbs = CompositeLimbsBuffer::new([buf0, buf1, buf2]);
 
     let l0 = limbs.load(0);
     assert_eq!(l0, 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8);
@@ -2593,15 +2683,13 @@ fn test_composite_limbs_buffer_store_with_unaligned_lengths<ST: MpIntMutByteSlic
     let buf0 = ST::from_bytes(&mut buf0).unwrap();
     let buf1 = ST::from_bytes(&mut buf1).unwrap();
     let buf2 = ST::from_bytes(&mut buf2).unwrap();
-    let mut limbs =  CompositeLimbsBuffer::new(
-        [buf0, buf1, buf2]
-    );
+    let mut limbs = CompositeLimbsBuffer::new([buf0, buf1, buf2]);
 
     let l0 = 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8;
     let l1 = 0x0504 << LIMB_BITS - 16 | 0x3 << LIMB_BITS / 2 - 8;
     let l2 = 0x7 << LIMB_BITS - 8 | 0x6 << LIMB_BITS / 2 - 8;
     let l3 = 0x9 << LIMB_BITS - 8 | 0x8 << LIMB_BITS / 2 - 8;
-    let l4  = 0xa;
+    let l4 = 0xa;
 
     limbs.store(0, l0);
     limbs.store(1, l1);
@@ -2623,9 +2711,7 @@ fn test_composite_limbs_buffer_store_with_aligned_lengths<ST: MpIntMutByteSlice>
     let buf0 = ST::from_bytes(&mut buf0).unwrap();
     let buf1 = ST::from_bytes(&mut buf1).unwrap();
     let buf2 = ST::from_bytes(&mut buf2).unwrap();
-    let mut limbs =  CompositeLimbsBuffer::new(
-        [buf0, buf1, buf2]
-    );
+    let mut limbs = CompositeLimbsBuffer::new([buf0, buf1, buf2]);
 
     let l0 = 0x2 << LIMB_BITS - 8 | 0x1 << LIMB_BITS / 2 - 8;
     let l1 = 0x0504 << LIMB_BITS - 16 | 0x3 << LIMB_BITS / 2 - 8;

@@ -1,23 +1,31 @@
 //! Implementation of multiprecision integer addition related primitives.
 
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_add_l_l_c, ct_find_last_set_byte_l, ct_sub_l_l, ct_sub_l_l_b, LimbChoice};
-use super::limbs_buffer::{MpIntMutByteSlice, MpIntByteSliceCommon};
+use super::limb::{
+    ct_add_l_l, ct_add_l_l_c, ct_find_last_set_byte_l, ct_sub_l_l, ct_sub_l_l_b, LimbChoice,
+    LimbType, LIMB_BITS,
+};
+use super::limbs_buffer::{MpIntByteSliceCommon, MpIntMutByteSlice};
 
 /// Add two multiprecision integers of specified endianess.
 ///
-/// The first operand's contents will be replaced by the resulting sum and the carry, if any,
-/// returned from the function.
+/// The first operand's contents will be replaced by the resulting sum and the
+/// carry, if any, returned from the function.
 ///
-/// Runs in constant time for a given configuration of input operand widths, i.e. execution time
-/// depends only on the integers' widths, but not their values.
+/// Runs in constant time for a given configuration of input operand widths,
+/// i.e. execution time depends only on the integers' widths, but not their
+/// values.
 ///
 /// # Arguments:
 ///
-/// * `op0` - The first input addend. It will be overwritten by the resulting sum. The slice
-///           length must greater or equal than the length of the second addend.
-/// * `op1` - The second input addend. Its length must not exceed the length of `op0`.
-///
-pub fn ct_add_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(op0: &mut T0, op1: &T1) -> LimbType {
+/// * `op0` - The first input addend. It will be overwritten by the resulting
+///   sum. The slice length must greater or equal than the length of the second
+///   addend.
+/// * `op1` - The second input addend. Its length must not exceed the length of
+///   `op0`.
+pub fn ct_add_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
+    op0: &mut T0,
+    op1: &T1,
+) -> LimbType {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     debug_assert!(op1_nlimbs <= op0_nlimbs);
@@ -181,21 +189,24 @@ pub fn ct_add_mp_l<T0: MpIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> LimbTy
 
 /// Conditionally subtract two multiprecision integers of specified endianess.
 ///
-/// The first operand's contents will be replaced by the resulting difference if `cond` is set and
-/// the borrow, if any, returned from the function.
+/// The first operand's contents will be replaced by the resulting difference if
+/// `cond` is set and the borrow, if any, returned from the function.
 ///
-/// Runs in constant time for a given configuration of input operand widths, i.e. execution time
-/// depends only on the integers' widths, but not their values and neither on `cond`.
+/// Runs in constant time for a given configuration of input operand widths,
+/// i.e. execution time depends only on the integers' widths, but not their
+/// values and neither on `cond`.
 ///
 /// # Arguments:
 ///
-/// * `op0` - The minuend. It will be overwritten by the resulting difference if `cond` is set. The slice
-///           length must greater or equal than the length of the second operand.
+/// * `op0` - The minuend. It will be overwritten by the resulting difference if
+///   `cond` is set. The slice length must greater or equal than the length of
+///   the second operand.
 /// * `op1` - The subtrahend. Its length must not exceed the length of `op0`.
 /// * `cond` - Whether or not to replace `ob0` by the difference.
-///
 pub fn ct_sub_cond_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
-    op0: &mut T0, op1: &T1, cond: LimbChoice
+    op0: &mut T0,
+    op1: &T1,
+    cond: LimbChoice,
 ) -> LimbType {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
@@ -370,7 +381,8 @@ fn test_ct_sub_cond_ne_ne() {
 }
 
 pub fn ct_sub_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
-    op0: &mut T0, op1: &T1
+    op0: &mut T0,
+    op1: &T1,
 ) -> LimbType {
     ct_sub_cond_mp_mp(op0, op1, LimbChoice::from(1))
 }

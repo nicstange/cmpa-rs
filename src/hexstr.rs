@@ -8,18 +8,21 @@ pub enum BytesFromHexStrError {
     InvalidHexChar,
 }
 
-pub const fn be_bytes_from_hexstr<const N: usize>(hexstr: &str) -> Result<[u8; N], BytesFromHexStrError> {
+pub const fn be_bytes_from_hexstr<const N: usize>(
+    hexstr: &str,
+) -> Result<[u8; N], BytesFromHexStrError> {
     const fn byte_from_hex(hexstr: &[u8; 2]) -> Result<u8, BytesFromHexStrError> {
         let mut result = 0u8;
         let mut i = 0;
         while i < 2 {
             let hex_char = hexstr[i];
-            let nibble = hex_char - match hex_char {
-                b'0'..=b'9' => b'0',
-                b'a'..=b'f' => b'a' - 0xa,
-                b'A'..=b'F' => b'A' - 0xa,
-                _ => return Err(BytesFromHexStrError::InvalidHexChar),
-            };
+            let nibble = hex_char
+                - match hex_char {
+                    b'0'..=b'9' => b'0',
+                    b'a'..=b'f' => b'a' - 0xa,
+                    b'A'..=b'F' => b'A' - 0xa,
+                    _ => return Err(BytesFromHexStrError::InvalidHexChar),
+                };
             result = result << 4 | nibble;
             i += 1;
         }
@@ -37,7 +40,7 @@ pub const fn be_bytes_from_hexstr<const N: usize>(hexstr: &str) -> Result<[u8; N
     while i > 1 {
         i -= 2;
         let hexstr: [u8; 2] = [hexstr[i], hexstr[i + 1]];
-        result[result_offset +  (i + 1) / 2] = match byte_from_hex(&hexstr) {
+        result[result_offset + (i + 1) / 2] = match byte_from_hex(&hexstr) {
             Ok(b) => b,
             Err(e) => return Err(e),
         };
@@ -52,7 +55,9 @@ pub const fn be_bytes_from_hexstr<const N: usize>(hexstr: &str) -> Result<[u8; N
     Ok(result)
 }
 
-pub const fn bytes_from_hexstr<const N: usize>(hexstr: &str) -> Result<[u8; N], BytesFromHexStrError> {
+pub const fn bytes_from_hexstr<const N: usize>(
+    hexstr: &str,
+) -> Result<[u8; N], BytesFromHexStrError> {
     if hexstr.len() != 2 * N {
         return Err(BytesFromHexStrError::InvalidHexStrLen);
     }
@@ -72,54 +77,38 @@ pub const fn bytes_from_hexstr_cnst<const N: usize>(hexstr: &str) -> [u8; N] {
 fn test_be_bytes_from_hexstr() {
     assert_eq!(
         be_bytes_from_hexstr::<11>("0123456789abcdefABCDEF").unwrap(),
-        [
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-            0xabu8, 0xcdu8, 0xefu8
-        ],
+        [0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8, 0xabu8, 0xcdu8, 0xefu8],
     );
     assert_eq!(
         be_bytes_from_hexstr::<11>("123456789abcdefABCDEF").unwrap(),
-        [
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-            0xabu8, 0xcdu8, 0xefu8
-        ],
+        [0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8, 0xabu8, 0xcdu8, 0xefu8],
     );
     assert_eq!(
         be_bytes_from_hexstr::<12>("0123456789abcdefABCDEF").unwrap(),
         [
-            0x00u8,
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-            0xabu8, 0xcdu8, 0xefu8
+            0x00u8, 0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8, 0xabu8, 0xcdu8,
+            0xefu8
         ],
     );
     assert_eq!(
         be_bytes_from_hexstr::<12>("123456789abcdefABCDEF").unwrap(),
         [
-            0x00u8,
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-            0xabu8, 0xcdu8, 0xefu8
+            0x00u8, 0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8, 0xabu8, 0xcdu8,
+            0xefu8
         ],
     );
     assert_eq!(
         be_bytes_from_hexstr::<13>("0123456789abcdefABCDEF").unwrap(),
         [
-            0x00u8, 0x00u8,
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-            0xabu8, 0xcdu8, 0xefu8
+            0x00u8, 0x00u8, 0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8, 0xabu8,
+            0xcdu8, 0xefu8
         ],
     );
     assert_eq!(
         be_bytes_from_hexstr::<13>("123456789abcdefABCDEF").unwrap(),
         [
-            0x00u8, 0x00u8,
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-            0xabu8, 0xcdu8, 0xefu8
+            0x00u8, 0x00u8, 0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8, 0xabu8,
+            0xcdu8, 0xefu8
         ],
     );
 }
@@ -128,18 +117,13 @@ fn test_be_bytes_from_hexstr() {
 fn test_bytes_from_hexstr() {
     assert_eq!(
         bytes_from_hexstr::<11>("0123456789abcdefABCDEF").unwrap(),
-        [
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-            0xabu8, 0xcdu8, 0xefu8
-        ],
+        [0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8, 0xabu8, 0xcdu8, 0xefu8],
     );
     assert_eq!(
         bytes_from_hexstr::<11>("123456789abcdefABCDEF"),
         Err(BytesFromHexStrError::InvalidHexStrLen)
     );
 }
-
 
 pub fn bytes_to_hexstr(bytes: &[u8]) -> Result<String, alloc::collections::TryReserveError> {
     fn nibble_to_hexchar(nibble: u8) -> char {
@@ -163,10 +147,8 @@ pub fn bytes_to_hexstr(bytes: &[u8]) -> Result<String, alloc::collections::TryRe
 #[test]
 fn test_bytes_to_hexstr() {
     assert_eq!(
-        bytes_to_hexstr(&[
-            0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8,
-            0xabu8, 0xcdu8, 0xefu8,
-        ]).unwrap(),
+        bytes_to_hexstr(&[0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8,])
+            .unwrap(),
         "0123456789abcdef",
     );
 }

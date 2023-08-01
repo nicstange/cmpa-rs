@@ -1,6 +1,6 @@
 //! Implementation of multiprecision integer comparison primitives.
 
-use super::limb::{LimbChoice, ct_is_zero_l, LimbType, ct_lt_or_eq_l_l, ct_leq_l_l};
+use super::limb::{ct_is_zero_l, ct_leq_l_l, ct_lt_or_eq_l_l, LimbChoice, LimbType};
 use super::limbs_buffer::MpIntByteSliceCommon;
 #[cfg(test)]
 use super::limbs_buffer::MpIntMutByteSlice;
@@ -13,8 +13,10 @@ use super::limbs_buffer::MpIntMutByteSlice;
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-///
-pub fn ct_eq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
+pub fn ct_eq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
+    op0: &T0,
+    op1: &T1,
+) -> LimbChoice {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
@@ -103,12 +105,15 @@ fn test_ct_eq_ne_ne() {
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_neq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
+pub fn ct_neq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
+    op0: &T0,
+    op1: &T1,
+) -> LimbChoice {
     !ct_eq_mp_mp(op0, op1)
 }
 
 pub struct CtLeqMpMpKernel {
-    tail_is_leq: LimbType
+    tail_is_leq: LimbType,
 }
 
 impl CtLeqMpMpKernel {
@@ -131,12 +136,14 @@ impl CtLeqMpMpKernel {
 }
 
 pub struct CtGeqMpMpKernel {
-    leq_kernel: CtLeqMpMpKernel
+    leq_kernel: CtLeqMpMpKernel,
 }
 
 impl CtGeqMpMpKernel {
     pub fn new() -> Self {
-        Self { leq_kernel: CtLeqMpMpKernel::new() }
+        Self {
+            leq_kernel: CtLeqMpMpKernel::new(),
+        }
     }
 
     pub fn update(&mut self, v0_val: LimbType, v1_val: LimbType) {
@@ -156,7 +163,10 @@ impl CtGeqMpMpKernel {
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_leq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
+pub fn ct_leq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
+    op0: &T0,
+    op1: &T1,
+) -> LimbChoice {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
@@ -268,8 +278,10 @@ fn test_ct_leq_ne_ne() {
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-///
-pub fn ct_lt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
+pub fn ct_lt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
+    op0: &T0,
+    op1: &T1,
+) -> LimbChoice {
     !ct_geq_mp_mp(op0, op1)
 }
 
@@ -281,7 +293,10 @@ pub fn ct_lt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0,
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_geq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
+pub fn ct_geq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
+    op0: &T0,
+    op1: &T1,
+) -> LimbChoice {
     ct_leq_mp_mp(op1, op0)
 }
 
@@ -293,7 +308,10 @@ pub fn ct_geq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_gt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
+pub fn ct_gt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
+    op0: &T0,
+    op1: &T1,
+) -> LimbChoice {
     !ct_leq_mp_mp(op0, op1)
 }
 

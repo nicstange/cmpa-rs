@@ -1,5 +1,5 @@
-//! Definitions and arithmetic primitives related to [LimbType], the basic unit of multiprecision
-//! integer arithmetic.
+//! Definitions and arithmetic primitives related to [LimbType], the basic unit
+//! of multiprecision integer arithmetic.
 use core::arch::asm;
 use core::convert;
 use core::mem;
@@ -14,15 +14,15 @@ use zeroize::Zeroize;
 /// The following arithmetic on a [`LimbType`] is assumed to be constant-time:
 /// - Binary operations: `not`, `or`, `and`, `xor`.
 /// - Wrapping addition and subtraction of two [`LimbType`] words.
-/// - Multiplication of two [`LimbType`] words where the result also fits
-///   a [`LimbType`].
+/// - Multiplication of two [`LimbType`] words where the result also fits a
+///   [`LimbType`].
 /// - Division of one [`LimbType`] by another.
 ///
-/// Wider [`LimbType`] type defines would improve multiprecision arithmetic performance, but it must
-/// be made sure that all of the operations from above map to (constant-time) CPU instructions and
-/// are not implemented by e.g. some architecture support runtime library. For now, the smallest
+/// Wider [`LimbType`] type defines would improve multiprecision arithmetic
+/// performance, but it must be made sure that all of the operations from above
+/// map to (constant-time) CPU instructions and are not implemented by e.g. some
+/// architecture support runtime library. For now, the smallest
 /// common denominator of `u32` is chosen.
-///
 
 #[cfg(not(target_arch = "x86_64"))]
 pub type LimbType = u32;
@@ -39,28 +39,30 @@ const HALF_LIMB_BITS: u32 = LIMB_BITS / 2;
 /// The size of a half a [`LimbType`], i.e. a "halfword", in bytes.
 const HALF_LIMB_MASK: LimbType = ct_lsb_mask_l(HALF_LIMB_BITS);
 
-
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
 mod x86_64_math;
-
 
 // core::hint::black_box() is inefficient: it writes and reads from memory.
 #[inline(always)]
 pub fn black_box_l(v: LimbType) -> LimbType {
     let result: LimbType;
-    unsafe { asm!("/* {v} */", v = inout(reg) v => result, options(pure, nomem, nostack)); }
+    unsafe {
+        asm!("/* {v} */", v = inout(reg) v => result, options(pure, nomem, nostack));
+    }
     result
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct LimbChoice {
-    mask: LimbType
+    mask: LimbType,
 }
 
 impl LimbChoice {
     pub const fn new(cond: LimbType) -> Self {
         debug_assert!(cond == 0 || cond == 1);
-        Self { mask: (0 as LimbType).wrapping_sub(cond) }
+        Self {
+            mask: (0 as LimbType).wrapping_sub(cond),
+        }
     }
 
     pub fn unwrap(&self) -> LimbType {
@@ -96,7 +98,9 @@ impl ops::BitAnd for LimbChoice {
     type Output = Self;
 
     fn bitand(self, rhs: Self) -> Self::Output {
-        Self { mask: self.mask & rhs.mask }
+        Self {
+            mask: self.mask & rhs.mask,
+        }
     }
 }
 
@@ -110,7 +114,9 @@ impl ops::BitOr for LimbChoice {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        Self { mask: self.mask | rhs.mask }
+        Self {
+            mask: self.mask | rhs.mask,
+        }
     }
 }
 
@@ -143,7 +149,7 @@ pub fn generic_ct_is_nonzero_l(v: LimbType) -> LimbType {
 pub use self::generic_ct_is_nonzero_l as ct_is_nonzero_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_is_nonzero_l as ct_is_nonzero_l;
+pub use x86_64_math::ct_is_nonzero_l;
 
 #[allow(unused)]
 pub fn generic_ct_is_zero_l(v: LimbType) -> LimbType {
@@ -154,7 +160,7 @@ pub fn generic_ct_is_zero_l(v: LimbType) -> LimbType {
 pub use self::generic_ct_is_zero_l as ct_is_zero_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_is_zero_l as ct_is_zero_l;
+pub use x86_64_math::ct_is_zero_l;
 
 pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     LimbChoice::from(ct_is_zero_l(v0 ^ v1))
@@ -193,10 +199,11 @@ pub fn ct_geq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
 
 pub const fn ct_lsb_mask_l(nbits: u32) -> LimbType {
     debug_assert!(nbits <= LIMB_BITS);
-    // The standard way for generating a mask with nbits of the lower bits set is (1 << nbits) -
-    // 1. However, for nbits == LIMB_BITS, the right shift would be undefined behaviour. Split nbits
-    // into nbits_lo < LIMB_BITS and a nbits_hi == (nbits == LIMB_BITS) components and generate
-    // masks for each individually.
+    // The standard way for generating a mask with nbits of the lower bits set is
+    // (1 << nbits) - 1. However, for nbits == LIMB_BITS, the right shift would be
+    // undefined behaviour. Split nbits into the nbits_lo < LIMB_BITS and
+    // nbits_hi == (nbits == LIMB_BITS) components and generate masks for each
+    // individually.
     let nbits_lo = nbits % LIMB_BITS;
     let nbits_hi = nbits / LIMB_BITS;
     debug_assert!(nbits_hi <= 1);
@@ -225,9 +232,11 @@ fn test_ct_lsb_mask_l() {
 /// # Arguments
 ///
 /// * `v` - the limb to split.
-///
 fn ct_l_to_hls(v: LimbType) -> (LimbType, LimbType) {
-    (black_box_l(v >> HALF_LIMB_BITS), black_box_l(v & HALF_LIMB_MASK))
+    (
+        black_box_l(v >> HALF_LIMB_BITS),
+        black_box_l(v & HALF_LIMB_MASK),
+    )
 }
 
 /// Construct a limb from upper and lower half limbs in constant time.
@@ -238,7 +247,6 @@ fn ct_l_to_hls(v: LimbType) -> (LimbType, LimbType) {
 ///
 /// * `vh` - the upper half limb.
 /// * `vl` - the upper half limb.
-///
 fn ct_hls_to_l(vh: LimbType, vl: LimbType) -> LimbType {
     vh << HALF_LIMB_BITS | vl
 }
@@ -253,11 +261,10 @@ fn ct_hls_to_l(vh: LimbType, vl: LimbType) -> LimbType {
 ///
 /// * `v0` - first operand
 /// * `v1` - second operand
-///
 #[allow(unused)]
 pub fn generic_ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
-    // Don't rely on overflowing_add() for determining the carry -- that would almost certainly
-    // branch and not be constant-time.
+    // Don't rely on overflowing_add() for determining the carry -- that would
+    // almost certainly branch and not be constant-time.
     let v0 = black_box_l(v0);
     let v1 = black_box_l(v1);
     let r = v0.wrapping_add(v1);
@@ -269,7 +276,7 @@ pub fn generic_ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
 pub use self::generic_ct_add_l_l as ct_add_l_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_add_l_l as ct_add_l_l;
+pub use x86_64_math::ct_add_l_l;
 
 #[test]
 fn test_ct_add_l_l() {
@@ -277,8 +284,14 @@ fn test_ct_add_l_l() {
     assert_eq!(ct_add_l_l(1, 0), (0, 1));
     assert_eq!(ct_add_l_l(!0 - 1, 1), (0, !0));
     assert_eq!(ct_add_l_l(!0, 1), (1, 0));
-    assert_eq!(ct_add_l_l(1 << (LIMB_BITS - 1), 1 << (LIMB_BITS - 1)), (1, 0));
-    assert_eq!(ct_add_l_l(!0, 1 << (LIMB_BITS - 1)), (1, ct_lsb_mask_l(LIMB_BITS - 1)));
+    assert_eq!(
+        ct_add_l_l(1 << (LIMB_BITS - 1), 1 << (LIMB_BITS - 1)),
+        (1, 0)
+    );
+    assert_eq!(
+        ct_add_l_l(!0, 1 << (LIMB_BITS - 1)),
+        (1, ct_lsb_mask_l(LIMB_BITS - 1))
+    );
     assert_eq!(ct_add_l_l(!0, !0), (1, !0 - 1));
 }
 
@@ -293,7 +306,8 @@ pub fn ct_add_l_l_c(v0: LimbType, v1: LimbType, carry: LimbType) -> (LimbType, L
 
 /// Subtract two limbs.
 ///
-/// Returns a pair of borrow and the [`LimbType::BITS`] lower bits of the difference.
+/// Returns a pair of borrow and the [`LimbType::BITS`] lower bits of the
+/// difference.
 ///
 /// Runs in constant time.
 ///
@@ -301,11 +315,10 @@ pub fn ct_add_l_l_c(v0: LimbType, v1: LimbType, carry: LimbType) -> (LimbType, L
 ///
 /// * `v0` - first operand
 /// * `v1` - second operand
-///
 #[allow(unused)]
 pub fn generic_ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
-    // Don't rely on overflowing_sub() for determining the borrow -- that would almost certainly
-    // branch and not be constant-time.
+    // Don't rely on overflowing_sub() for determining the borrow -- that would
+    // almost certainly branch and not be constant-time.
     let v0 = black_box_l(v0);
     let v1 = black_box_l(v1);
     let r = v0.wrapping_sub(v1);
@@ -317,16 +330,25 @@ pub fn generic_ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
 pub use self::generic_ct_sub_l_l as ct_sub_l_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_sub_l_l as ct_sub_l_l;
+pub use x86_64_math::ct_sub_l_l;
 
 #[test]
 fn test_ct_sub_l_l() {
     assert_eq!(ct_sub_l_l(0, 0), (0, 0));
     assert_eq!(ct_sub_l_l(1, 0), (0, 1));
     assert_eq!(ct_sub_l_l(0, 1), (1, !0));
-    assert_eq!(ct_sub_l_l(1 << (LIMB_BITS - 1), 1 << (LIMB_BITS - 1)), (0, 0));
-    assert_eq!(ct_sub_l_l(0, 1 << (LIMB_BITS - 1)), (1, 1 << (LIMB_BITS - 1)));
-    assert_eq!(ct_sub_l_l(1 << (LIMB_BITS - 1), (1 << (LIMB_BITS - 1)) + 1), (1, !0));
+    assert_eq!(
+        ct_sub_l_l(1 << (LIMB_BITS - 1), 1 << (LIMB_BITS - 1)),
+        (0, 0)
+    );
+    assert_eq!(
+        ct_sub_l_l(0, 1 << (LIMB_BITS - 1)),
+        (1, 1 << (LIMB_BITS - 1))
+    );
+    assert_eq!(
+        ct_sub_l_l(1 << (LIMB_BITS - 1), (1 << (LIMB_BITS - 1)) + 1),
+        (1, !0)
+    );
 }
 
 pub fn ct_sub_l_l_b(v0: LimbType, v1: LimbType, borrow: LimbType) -> (LimbType, LimbType) {
@@ -340,9 +362,8 @@ pub fn ct_sub_l_l_b(v0: LimbType, v1: LimbType, borrow: LimbType) -> (LimbType, 
 
 /// A pair of [`LimbType`]s interpreted as a double precision integer.
 ///
-/// Used internally for the result of [`LimbType`] multiplications and also for the implementation
-/// of multiprecision integer division.
-///
+/// Used internally for the result of [`LimbType`] multiplications and also for
+/// the implementation of multiprecision integer division.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize))]
 pub struct DoubleLimb {
@@ -364,13 +385,13 @@ impl DoubleLimb {
 
     /// Extract a half limb from a double limb.
     ///
-    /// Interpret the [`DoubleLimb`] as an integer composed of four half limbs and extract the one
-    /// at at a given position.
+    /// Interpret the [`DoubleLimb`] as an integer composed of four half limbs
+    /// and extract the one at at a given position.
     ///
     /// # Arguments
     ///
-    /// * `i` - index of the half limb to extract, the half limbs are ordered by increasing
-    ///         significance.
+    /// * `i` - index of the half limb to extract, the half limbs are ordered by
+    ///   increasing significance.
     fn get_half_limb(&self, i: usize) -> LimbType {
         if i & 1 != 0 {
             black_box_l(self.v[i / 2] >> HALF_LIMB_BITS)
@@ -390,7 +411,6 @@ impl DoubleLimb {
 ///
 /// * `v0` - first operand
 /// * `v1` - second operand
-///
 #[allow(unused)]
 pub fn generic_ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
     let (v0h, v0l) = ct_l_to_hls(v0);
@@ -407,12 +427,14 @@ pub fn generic_ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
     let (prod_v0l_v1h_h, prod_v0l_v1h_l) = ct_l_to_hls(prod_v0l_v1h);
     let (prod_v0h_v1l_h, prod_v0h_v1l_l) = ct_l_to_hls(prod_v0h_v1l);
 
-    let (result_low_carry, result_low_sum) = ct_add_l_l(result_low, prod_v0l_v1h_l << HALF_LIMB_BITS);
+    let (result_low_carry, result_low_sum) =
+        ct_add_l_l(result_low, prod_v0l_v1h_l << HALF_LIMB_BITS);
     result_low = result_low_sum;
     result_high += result_low_carry;
     result_high += prod_v0l_v1h_h;
 
-    let (result_low_carry, result_low_sum) = ct_add_l_l(result_low, prod_v0h_v1l_l << HALF_LIMB_BITS);
+    let (result_low_carry, result_low_sum) =
+        ct_add_l_l(result_low, prod_v0h_v1l_l << HALF_LIMB_BITS);
     result_low = result_low_sum;
     result_high += result_low_carry;
     result_high += prod_v0h_v1l_h;
@@ -424,7 +446,7 @@ pub fn generic_ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
 pub use self::generic_ct_mul_l_l as ct_mul_l_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_mul_l_l as ct_mul_l_l;
+pub use x86_64_math::ct_mul_l_l;
 
 #[test]
 fn test_ct_mul_l_l() {
@@ -453,7 +475,12 @@ fn test_ct_mul_l_l() {
     assert_eq!(p.high(), !1);
 }
 
-pub fn ct_mul_add_l_l_l_c(op0: LimbType, op10: LimbType, op11: LimbType, carry: LimbType) -> (LimbType, LimbType) {
+pub fn ct_mul_add_l_l_l_c(
+    op0: LimbType,
+    op10: LimbType,
+    op11: LimbType,
+    carry: LimbType,
+) -> (LimbType, LimbType) {
     let prod = ct_mul_l_l(op10, op11);
     // Basic property of the multiplication.
     debug_assert!(prod.high() < !1 || prod.high() == !1 && prod.low() == 1);
@@ -469,7 +496,12 @@ pub fn ct_mul_add_l_l_l_c(op0: LimbType, op10: LimbType, op11: LimbType, carry: 
     (carry, result)
 }
 
-pub fn ct_mul_sub_b(op0: LimbType, op10: LimbType, op11: LimbType, borrow: LimbType) -> (LimbType, LimbType) {
+pub fn ct_mul_sub_b(
+    op0: LimbType,
+    op10: LimbType,
+    op11: LimbType,
+    borrow: LimbType,
+) -> (LimbType, LimbType) {
     let prod = ct_mul_l_l(op10, op11);
     // Basic property of the multiplication.
     debug_assert!(prod.high() < !1 || prod.high() == !1 && prod.low() == 1);
@@ -488,9 +520,8 @@ pub fn ct_mul_sub_b(op0: LimbType, op10: LimbType, op11: LimbType, borrow: LimbT
 /// A normalized divisor for input to [`generic_ct_div_dl_l()`].
 ///
 /// In order to avoid scaling the same divisor all over again in loop invoking
-/// [`generic_ct_div_dl_l()`], the latter takes an already scaled divisor as input. This allows for
-/// reusing the result of the scaling operation.
-///
+/// [`generic_ct_div_dl_l()`], the latter takes an already scaled divisor as
+/// input. This allows for reusing the result of the scaling operation.
 #[cfg_attr(feature = "zeroize", derive(Zeroize))]
 #[allow(unused)]
 pub struct GenericCtDivDlLNormalizedDivisor {
@@ -507,26 +538,30 @@ impl GenericCtDivDlLNormalizedDivisor {
     /// # Arguments
     ///
     /// * `v` - the unscaled, but non-zero divisor to normalize.
-    ///
     pub fn new(v: LimbType) -> Self {
         debug_assert!(v != 0);
-        // If the upper half is zero, shift v by half limb. This is accounted for by shifting u
-        // accordingly in generic_ct_div_dl_l() and allows for constant-time division computation,
-        // independent of the value of v.
+        // If the upper half is zero, shift v by half limb. This is accounted for by
+        // shifting u accordingly in generic_ct_div_dl_l() and allows for
+        // constant-time division computation, independent of the value of v.
         let v_h = v >> HALF_LIMB_BITS;
         let shifted_v = ct_eq_l_l(v_h, 0);
         let v = shifted_v.select(v, v << HALF_LIMB_BITS);
         let v_h = black_box_l(v >> HALF_LIMB_BITS);
         let scaling = black_box_l(1 << HALF_LIMB_BITS) / (v_h + 1);
         let normalized_v = scaling * v;
-        Self { scaling, normalized_v, shifted_v }
+        Self {
+            scaling,
+            normalized_v,
+            shifted_v,
+        }
     }
 }
 
 /// Divide a double limb by a limb.
 ///
-/// This routine is intended as a supporting primitive for the multiprecision integer division
-/// implementation. The result will be returned as a pair of quotient and remainder.
+/// This routine is intended as a supporting primitive for the multiprecision
+/// integer division implementation. The result will be returned as a pair of
+/// quotient and remainder.
 ///
 /// Runs in constant time.
 ///
@@ -537,29 +572,33 @@ impl GenericCtDivDlLNormalizedDivisor {
 ///
 /// # Note
 ///
-/// This software implementation of double limb division relies only on single precision
-/// [`LimbType`] division operations mapping to constant-time CPU instructions and will be
-/// _much_ slower than the native double word division instructions available on some
-/// architectures like e.g. the `div` instruction on x86.
-///
+/// This software implementation of double limb division relies only on single
+/// precision [`LimbType`] division operations mapping to constant-time CPU
+/// instructions and will be _much_ slower than the native double word division
+/// instructions available on some architectures like e.g. the `div` instruction
+/// on x86.
 #[allow(unused)]
-pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor) -> (DoubleLimb, LimbType) {
-    // Division algorithm according to D. E. Knuth, "The Art of Computer Programming", vol 2 for the
-    // special case of a double limb dividend interpreted as four half limbs.
+pub fn generic_ct_div_dl_l(
+    u: &DoubleLimb,
+    v: &GenericCtDivDlLNormalizedDivisor,
+) -> (DoubleLimb, LimbType) {
+    // Division algorithm according to D. E. Knuth, "The Art of Computer
+    // Programming", vol 2 for the special case of a double limb dividend
+    // interpreted as four half limbs.
     //
-    // The local u and temporary q's are stored as an array of LimbType words, in little endian order,
-    // interpreted as a multiprecision integer of half limbs. Define some helpers for
-    // accessiong the individual half limbs, indexed from least to most significant as usual.
+    // The local u and temporary q's are stored as an array of LimbType words, in
+    // little endian order, interpreted as a multiprecision integer of half
+    // limbs. Define some helpers for accessiong the individual half limbs,
+    // indexed from least to most significant as usual.
     fn le_limbs_half_limb_index(i: usize) -> (usize, u32) {
-        let half_limb_shift = if i % 2 != 0 {
-            HALF_LIMB_BITS
-        } else {
-            0
-        };
+        let half_limb_shift = if i % 2 != 0 { HALF_LIMB_BITS } else { 0 };
         (i / 2, half_limb_shift)
     }
 
-    fn _le_limbs_load_half_limb(limbs: &[LimbType], (limb_index, half_limb_shift): (usize, u32)) -> LimbType {
+    fn _le_limbs_load_half_limb(
+        limbs: &[LimbType],
+        (limb_index, half_limb_shift): (usize, u32),
+    ) -> LimbType {
         black_box_l((limbs[limb_index] >> half_limb_shift) & HALF_LIMB_MASK)
     }
 
@@ -567,7 +606,11 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
         _le_limbs_load_half_limb(limbs, le_limbs_half_limb_index(half_limb_index))
     }
 
-    fn _le_limbs_store_half_limb(limbs: &mut [LimbType], (limb_index, half_limb_shift): (usize, u32), value: LimbType) {
+    fn _le_limbs_store_half_limb(
+        limbs: &mut [LimbType],
+        (limb_index, half_limb_shift): (usize, u32),
+        value: LimbType,
+    ) {
         let mask = HALF_LIMB_MASK << half_limb_shift;
         limbs[limb_index] = black_box_l(value << half_limb_shift | limbs[limb_index] & !mask);
     }
@@ -576,11 +619,12 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
         _le_limbs_store_half_limb(limbs, le_limbs_half_limb_index(half_limb_index), value)
     }
 
-    // u as a sequence of half words in little endian order. Allocate one extra half word
-    // to accomodate for the scaling and another one to shift in case v had been shifted.
+    // u as a sequence of half words in little endian order. Allocate one extra half
+    // word to accomodate for the scaling and another one to shift in case v had
+    // been shifted.
     let mut u: [LimbType; 3] = [u.low(), u.high(), 0];
-    // Conditionally shift u by one half limb in order to align with the shifting of the normalized
-    // v, if any.
+    // Conditionally shift u by one half limb in order to align with the shifting of
+    // the normalized v, if any.
     for i in [2, 1] {
         let shifted_u_val = u[i] << HALF_LIMB_BITS | u[i - 1] >> HALF_LIMB_BITS;
         u[i] = v.shifted_v.select(u[i], shifted_u_val);
@@ -629,8 +673,8 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             // of the "over-estimated" check here would be quite pointless. Skip it.
             let u_tail_high = le_limbs_load_half_limb(u.as_slice(), 2 + j - 2);
             let qv_tail_high = q * v_l;
-            let over_estimated = !r_carry &
-                ct_gt_l_l(qv_tail_high, r << HALF_LIMB_BITS | u_tail_high);
+            let over_estimated =
+                !r_carry & ct_gt_l_l(qv_tail_high, r << HALF_LIMB_BITS | u_tail_high);
             q - over_estimated.select(0, 1)
         };
 
@@ -682,7 +726,8 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
         }
     }
 
-    // Conditionally shift u back by one half limb in order to undo the shifting to align with v.
+    // Conditionally shift u back by one half limb in order to undo the shifting to
+    // align with v.
     for i in [0, 1] {
         let shifted_u_val = u[i] >> HALF_LIMB_BITS | (u[i + 1] & HALF_LIMB_MASK) << HALF_LIMB_BITS;
         u[i] = v.shifted_v.select(u[i], shifted_u_val);
@@ -697,14 +742,14 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
 }
 
 #[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::GenericCtDivDlLNormalizedDivisor as CtDivDlLNormalizedDivisor;
-#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
 pub use self::generic_ct_div_dl_l as ct_div_dl_l;
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+pub use self::GenericCtDivDlLNormalizedDivisor as CtDivDlLNormalizedDivisor;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::CtDivDlLNormalizedDivisor as CtDivDlLNormalizedDivisor;
+pub use x86_64_math::ct_div_dl_l;
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_div_dl_l as ct_div_dl_l;
+pub use x86_64_math::CtDivDlLNormalizedDivisor;
 
 #[test]
 fn test_ct_div_dl_l() {
@@ -713,7 +758,8 @@ fn test_ct_div_dl_l() {
 
         let (q, r) = ct_div_dl_l(&u.clone(), &normalized_v);
 
-        // Multiply q by v again and add the remainder back, the result should match the initial u.
+        // Multiply q by v again and add the remainder back, the result should match the
+        // initial u.
         let prod_l = ct_mul_l_l(q.low(), v);
         let prod_h = ct_mul_l_l(q.high(), v);
         assert_eq!(prod_h.high(), 0);
@@ -740,11 +786,7 @@ fn test_ct_div_dl_l() {
     for i in 0..LIMB_BITS {
         for j1 in 0..LIMB_BITS {
             for j2 in 0..j1 + 1 {
-                let u_h = if i != 0 {
-                    !0 >> (LIMB_BITS - i)
-                } else {
-                    0
-                };
+                let u_h = if i != 0 { !0 >> (LIMB_BITS - i) } else { 0 };
                 let u = DoubleLimb::new(u_h, !0);
                 let v = 1 << j1 | 1 << j2;
                 div_and_check(u, v);
@@ -756,7 +798,8 @@ fn test_ct_div_dl_l() {
 pub fn ct_inv_mod_l(v: LimbType) -> LimbType {
     // Apply Hensel's lifting lemma for v * x - 1 to lift the trivial root
     // (i.e. inverse of v) mod 2^1 to a root mod 2^LIMB_BITS. Successive steps
-    // double the bits, i.e. if r is a root mod 2^k, one step makes it a root mod 2^2*k.
+    // double the bits, i.e. if r is a root mod 2^k, one step makes it a root mod
+    // 2^2*k.
     debug_assert_eq!(v & 1, 1);
     let mut k = 1;
     let mut r: LimbType = 1;
@@ -783,7 +826,6 @@ fn test_ct_inv_mod_l() {
     let v: LimbType = !0;
     assert_eq!(v.wrapping_mul(ct_inv_mod_l(v)), 1);
 }
-
 
 // Position of MSB + 1, if any, zero otherwise.
 pub fn ct_find_last_set_bit_l(mut v: LimbType) -> usize {
@@ -869,66 +911,36 @@ pub fn ct_arithmetic_rshift_l(v: LimbType, rshift: LimbType) -> LimbType {
 #[test]
 fn test_ct_arithmetic_shift_l() {
     assert_eq!(
-        ct_arithmetic_rshift_l(
-            ct_lsb_mask_l(LIMB_BITS - 1),
-            0
-        ),
+        ct_arithmetic_rshift_l(ct_lsb_mask_l(LIMB_BITS - 1), 0),
         ct_lsb_mask_l(LIMB_BITS - 1)
     );
 
     assert_eq!(
-        ct_arithmetic_rshift_l(
-            ct_lsb_mask_l(LIMB_BITS - 1),
-            (LIMB_BITS - 2) as LimbType
-        ),
+        ct_arithmetic_rshift_l(ct_lsb_mask_l(LIMB_BITS - 1), (LIMB_BITS - 2) as LimbType),
         1
     );
 
     assert_eq!(
-        ct_arithmetic_rshift_l(
-            ct_lsb_mask_l(LIMB_BITS - 1),
-            (LIMB_BITS - 1) as LimbType
-        ),
+        ct_arithmetic_rshift_l(ct_lsb_mask_l(LIMB_BITS - 1), (LIMB_BITS - 1) as LimbType),
         0
     );
 
     assert_eq!(
-        ct_arithmetic_rshift_l(
-            ct_lsb_mask_l(LIMB_BITS - 1),
-            LIMB_BITS as LimbType
-        ),
+        ct_arithmetic_rshift_l(ct_lsb_mask_l(LIMB_BITS - 1), LIMB_BITS as LimbType),
         0
     );
 
-    assert_eq!(
-        ct_arithmetic_rshift_l(
-            !0 ^ 1,
-            0
-        ),
-        !0 ^ 1
-    );
+    assert_eq!(ct_arithmetic_rshift_l(!0 ^ 1, 0), !0 ^ 1);
 
     assert_eq!(
-        ct_arithmetic_rshift_l(
-            !0 ^ 1,
-            (LIMB_BITS - 2) as LimbType
-        ),
+        ct_arithmetic_rshift_l(!0 ^ 1, (LIMB_BITS - 2) as LimbType),
         !0
     );
 
     assert_eq!(
-        ct_arithmetic_rshift_l(
-            !0 ^ 1,
-            (LIMB_BITS - 1) as LimbType
-        ),
+        ct_arithmetic_rshift_l(!0 ^ 1, (LIMB_BITS - 1) as LimbType),
         !0
     );
 
-    assert_eq!(
-        ct_arithmetic_rshift_l(
-            !0 ^ 1,
-            LIMB_BITS as LimbType
-        ),
-        !0
-    );
+    assert_eq!(ct_arithmetic_rshift_l(!0 ^ 1, LIMB_BITS as LimbType), !0);
 }
