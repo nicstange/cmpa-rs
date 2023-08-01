@@ -89,10 +89,10 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     let scaled_prod_high: &mut T1 = op1;
     debug_assert!(scaled_prod_high.nlimbs() >= gcd_max_nlimbs);
     let src_begin = prod_scratch.len() - gcd_max_len;
-    let src_low_rshift = 8 * (src_begin % LIMB_BYTES as usize) as u32;
+    let src_low_rshift = 8 * (src_begin % LIMB_BYTES) as u32;
     let dst_high_lshift = (LIMB_BITS - src_low_rshift) % LIMB_BITS;
     let src_high_mask = ct_lsb_mask_l(src_low_rshift);
-    let src_begin_limb_index = src_begin / LIMB_BYTES as usize; // Rounding down is on purpose.
+    let src_begin_limb_index = src_begin / LIMB_BYTES; // Rounding down is on purpose.
     debug_assert!(src_begin_limb_index + gcd_max_nlimbs <= prod_scratch.nlimbs());
     let mut last_src_val = prod_scratch.load_l(src_begin_limb_index);
     let mut i = 0;

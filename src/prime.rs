@@ -706,7 +706,7 @@ impl PrimeWheelSieveLvl1 {
 
     pub fn produce_next_delta(&mut self) -> LimbType {
         let mut next_offset = self.last_offset;
-        let mut next_offset_delta = 0;
+        let mut next_offset_delta;
         let mut last_offset = self.last_offset;
         loop {
             let lvl0_delta = self.lvl0_wheel.produce_next_delta();
@@ -720,9 +720,8 @@ impl PrimeWheelSieveLvl1 {
             next_offset_delta = wrapped.select(0, Self::PRIMORIAL - self.last_offset);
 
             let mut is_not_coprime = LimbChoice::from(0);
-            for i in PrimeWheelSieveLvl0::PRIMORIAL_NFACTORS..Self::PRIMORIAL_NFACTORS {
-                let factor = FIRST_PRIMES[i] as LimbType;
-                let rem = next_offset % factor;
+            for factor in FIRST_PRIMES.iter().take(Self::PRIMORIAL_NFACTORS).skip(PrimeWheelSieveLvl0::PRIMORIAL_NFACTORS) {
+                let rem = next_offset % *factor as LimbType;
                 is_not_coprime |= ct_eq_l_l(rem, 0);
             }
             if is_not_coprime.unwrap() != 0 {

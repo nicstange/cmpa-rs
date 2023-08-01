@@ -12,7 +12,7 @@ fn ct_montgomery_radix_shift_mp_nlimbs(n_len: usize) -> usize {
     ct_mp_nlimbs(n_len)
 }
 
-pub fn ct_montgomery_neg_n0_inv_mod_l_mp<'a, NT: MpIntByteSliceCommon>(n: &NT) -> LimbType {
+pub fn ct_montgomery_neg_n0_inv_mod_l_mp<NT: MpIntByteSliceCommon>(n: &NT) -> LimbType {
     debug_assert!(!n.is_empty());
     let n0 = n.load_l(0);
     let n0_inv_mod_l = ct_inv_mod_l(n0);
@@ -61,7 +61,7 @@ impl CtMontgomeryRedcKernel {
         // There are two possible cases where redc_pow2_rshift == 0:
         // a.) redc_pow2_exp == 0. In this case redc_pow2_mask == 0 as well.
         // b.) redc_pow2_exp == LIMB_BITS. In this case redc_pow2_mask == !0.
-        (val & redc_pow2_mask) << (LIMB_BITS - redc_pow2_rshift) % LIMB_BITS
+        (val & redc_pow2_mask) << ((LIMB_BITS - redc_pow2_rshift) % LIMB_BITS)
     }
 
     pub fn start(redc_pow2_exp: u32, t0_val: LimbType, n0_val: LimbType,
@@ -73,7 +73,7 @@ impl CtMontgomeryRedcKernel {
         // shift.  See the comments in redc_rshift_lo()/redc_rshift_hi() for the mask<->rshift
         // interaction.
         let redc_pow2_rshift = redc_pow2_exp % LIMB_BITS;
-        let redc_pow2_mask = ct_lsb_mask_l(redc_pow2_exp as u32);
+        let redc_pow2_mask = ct_lsb_mask_l(redc_pow2_exp);
 
         // For any i >= j, if n' == -n^{-1} mod 2^i, then n' mod 2^j == -n^{-1} mod 2^j.
         let neg_n0_inv_mod_l = neg_n0_inv_mod_l & redc_pow2_mask;
@@ -128,16 +128,16 @@ impl CtMontgomeryRedcKernel {
     }
 
     pub fn finish_in_twos_complement(self, t_val: LimbType) -> (LimbType, LimbType) {
-        let t_val_sign = t_val >> LIMB_BITS - 1;
+        let t_val_sign = t_val >> (LIMB_BITS - 1);
         let (carry, redced_t_val) = ct_add_l_l(t_val, self.carry);
 
         // In two's complement representation, the addition overflows iff the sign
         // bit (indicating a virtual borrow) is getting neutralized.
         debug_assert!(carry == 0 || t_val_sign == 1);
-        debug_assert!(carry == 0 || redced_t_val >> LIMB_BITS - 1 == 0);
-        debug_assert!(carry == 1 || redced_t_val >> LIMB_BITS - 1 == t_val_sign);
+        debug_assert!(carry == 0 || redced_t_val >> (LIMB_BITS - 1) == 0);
+        debug_assert!(carry == 1 || redced_t_val >> (LIMB_BITS - 1) == t_val_sign);
         let redced_t_val_sign = carry ^ t_val_sign;
-        debug_assert!(redced_t_val >> LIMB_BITS - 1 == redced_t_val_sign);
+        debug_assert!(redced_t_val >> (LIMB_BITS - 1) == redced_t_val_sign);
         let redced_t_val_extended_sign = (0 as LimbType).wrapping_sub(redced_t_val_sign) & !self.redc_pow2_mask;
         (
             redced_t_val_sign,

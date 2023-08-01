@@ -201,10 +201,10 @@ impl TransitionMatrix {
         }
 
         // Apply shift and store the high result limbs back to to {f,g}_shadow_head[1] respectively.
-        for i in 0..2 {
+        for (i, last_new_val) in last_new_val.iter_mut().enumerate() {
             let s = self.row_shift[i];
-            last_new_val[i] = ct_arithmetic_rshift_l(last_new_val[i], s);
-            debug_assert!(last_new_val[i] == 0 || last_new_val[i] == !0);
+            *last_new_val = ct_arithmetic_rshift_l(*last_new_val, s);
+            debug_assert!(*last_new_val == 0 || *last_new_val == !0);
         }
         f_shadow_head[1] = last_new_val[0];
         g_shadow_head[1] = last_new_val[1];
@@ -243,6 +243,7 @@ impl TransitionMatrix {
             (carry, redc_kernel)
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn mat_mul_row_scale_mod_odd_n_compute_limb(
             carry: &mut [LimbType; 2],
             borrow: &mut LimbType,
@@ -364,7 +365,7 @@ impl TransitionMatrix {
             // its high (sign) bit.
             debug_assert!(carry[i][1] == 0 || borrow[i] != 0);
             debug_assert!(borrow[i] - carry[i][1] <= 1);
-            debug_assert_eq!(borrow[i] - carry[i][1], u_i_new_val >> LIMB_BITS - 1);
+            debug_assert_eq!(borrow[i] - carry[i][1], u_i_new_val >> (LIMB_BITS - 1));
             u_head_new_val[i] = u_i_new_val ;
         }
         // Final reduction outside of the loop over i in [0, 1] above, because the operation
@@ -418,10 +419,10 @@ impl TransitionMatrix {
     }
 
     fn t_is_neg_mask(&self) -> [[LimbType; 2]; 2] {
-        let t_f_f_is_neg = LimbChoice::from(self.t[0][0] >> LIMB_BITS - 1);
-        let t_f_g_is_neg = LimbChoice::from(self.t[0][1] >> LIMB_BITS - 1);
-        let t_g_f_is_neg = LimbChoice::from(self.t[1][0] >> LIMB_BITS - 1);
-        let t_g_g_is_neg = LimbChoice::from(self.t[1][1] >> LIMB_BITS - 1);
+        let t_f_f_is_neg = LimbChoice::from(self.t[0][0] >> (LIMB_BITS - 1));
+        let t_f_g_is_neg = LimbChoice::from(self.t[0][1] >> (LIMB_BITS - 1));
+        let t_g_f_is_neg = LimbChoice::from(self.t[1][0] >> (LIMB_BITS - 1));
+        let t_g_g_is_neg = LimbChoice::from(self.t[1][1] >> (LIMB_BITS - 1));
         [
             [t_f_f_is_neg.select(0, !0), t_f_g_is_neg.select(0, !0)],
             [t_g_f_is_neg.select(0, !0), t_g_g_is_neg.select(0, !0)],
@@ -439,14 +440,14 @@ fn batch_divsteps(
     debug_assert_eq!(f_low & 1, 1);
     let mut m = TransitionMatrix::identity();
     for _ in 0..STEPS_PER_BATCH {
-        let delta_is_pos = LimbChoice::from((delta.wrapping_neg() >> usize::BITS - 1) as LimbType);
+        let delta_is_pos = LimbChoice::from((delta.wrapping_neg() >> (usize::BITS - 1)) as LimbType);
         debug_assert!(delta == 0 || delta > isize::MAX as usize || delta_is_pos.unwrap() == 1);
         debug_assert!(!(delta == 0 || delta > isize::MAX as usize) || delta_is_pos.unwrap() == 0);
         let g0 = LimbChoice::from(g_low & 1);
         let case0 = delta_is_pos & g0;
         m.push_transition(case0, g0);
 
-        delta = case0.select_usize((1 as usize).wrapping_add(delta), (1 as usize).wrapping_sub(delta));
+        delta = case0.select_usize((1_usize).wrapping_add(delta), (1_usize).wrapping_sub(delta));
         let new_f_low = case0.select(f_low, g_low);
         // Calculate the new g.
         let case0_mask = case0.select(0, !0);
@@ -515,7 +516,7 @@ fn ct_gcd_ext_mp_mp<UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]), FT: MpIn
     }
 
     debug_assert!(f_shadow_head[1] == 0 || f_shadow_head[1] == !0);
-    let f_is_neg = LimbChoice::from(f_shadow_head[1] >> LIMB_BITS - 1);
+    let f_is_neg = LimbChoice::from(f_shadow_head[1] >> (LIMB_BITS - 1));
     f.store_l(nlimbs - 1, f_shadow_head[0] & f.partial_high_mask());
 
     f_is_neg
@@ -708,11 +709,11 @@ pub fn ct_inv_mod_odd_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: Mp
     let [f_work_scratch, ext_u1_scratch] = scratch;
     let work_scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
     debug_assert!(f_work_scratch.len() >= work_scratch_len);
-    let (mut f_work_scratch, _) = f_work_scratch.split_at_mut(work_scratch_len);
-    let mut f_work_scratch = MpNativeEndianMutByteSlice::from_bytes(&mut f_work_scratch).unwrap();
+    let (f_work_scratch, _) = f_work_scratch.split_at_mut(work_scratch_len);
+    let mut f_work_scratch = MpNativeEndianMutByteSlice::from_bytes(f_work_scratch).unwrap();
     debug_assert!(ext_u1_scratch.len() >= work_scratch_len);
-    let (mut ext_u1_scratch, _) = ext_u1_scratch.split_at_mut(work_scratch_len);
-    let mut ext_u1_scratch = MpNativeEndianMutByteSlice::from_bytes(&mut ext_u1_scratch).unwrap();
+    let (ext_u1_scratch, _) = ext_u1_scratch.split_at_mut(work_scratch_len);
+    let mut ext_u1_scratch = MpNativeEndianMutByteSlice::from_bytes(ext_u1_scratch).unwrap();
 
     // ext_u0 starts out as 0.
     result.zeroize_bytes_above(0);

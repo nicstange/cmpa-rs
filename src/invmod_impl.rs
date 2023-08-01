@@ -23,8 +23,8 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
 
     result.zeroize_bytes_above(max_pow2_exp_len);
     let (_, mut result) = result.split_at(RT::limbs_align_len(max_pow2_exp_len));
-    let mut scratch = &mut scratch[..MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len)];
-    let mut tmp = MpNativeEndianMutByteSlice::from_bytes(&mut scratch).unwrap();
+    let (scratch, _) = scratch.split_at_mut(MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len));
+    let mut tmp = MpNativeEndianMutByteSlice::from_bytes(scratch).unwrap();
 
     // Use Hensel's lemma to lift the root x == 1 of op0 * x - 1 mod 2 to a root mod
     // 2^{2^pow2_exp_bits}.  Note that an inverse modulo 2^pow2_exp_bits is also an inverse for any

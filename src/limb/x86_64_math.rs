@@ -69,11 +69,11 @@ pub fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
 }
 
 pub fn ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
-    let mut l: LimbType = v0;
-    let mut h: LimbType = 0;
+    let l: LimbType;
+    let h: LimbType;
     unsafe {
         asm!("mul {v1:r};",
-             inout("ax") l,
+             inout("ax") v0 => l,
              out("dx") h,
              v1 = in(reg) v1,
              options(pure, nomem, nostack),

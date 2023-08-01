@@ -12,7 +12,7 @@ pub fn black_box_usize(v: usize) -> usize {
 pub fn ct_is_nonzero_usize(v: usize) -> LimbType {
     // This trick is from subtle::*::ct_eq():
     // if v is non-zero, then v or -v or both have the high bit set.
-    black_box_usize((v | v.wrapping_neg()) >> usize::BITS - 1) as LimbType
+    black_box_usize((v | v.wrapping_neg()) >> (usize::BITS - 1)) as LimbType
 }
 
 pub fn ct_is_zero_usize(v: usize) -> LimbType {
@@ -33,7 +33,7 @@ fn ct_sub_usize_usize(v0: usize, v1: usize) -> (usize, usize) {
     let v0 = black_box_usize(v0);
     let v1 = black_box_usize(v1);
     let r = v0.wrapping_sub(v1);
-    let borrow = black_box_usize((((r | v1) & !v0) | (v1 & r)) >> usize::BITS - 1);
+    let borrow = black_box_usize((((r | v1) & !v0) | (v1 & r)) >> (usize::BITS - 1));
     (borrow, r)
 }
 

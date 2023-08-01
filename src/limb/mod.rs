@@ -73,7 +73,7 @@ impl LimbChoice {
 
     pub fn select_usize(&self, v0: usize, v1: usize) -> usize {
         let cond = self.unwrap() as usize;
-        let mask = (0 as usize).wrapping_sub(cond);
+        let mask = (0_usize).wrapping_sub(cond);
         v0 ^ (mask & (v0 ^ v1))
     }
 }
@@ -136,7 +136,7 @@ impl zeroize::DefaultIsZeroes for LimbChoice {}
 pub fn generic_ct_is_nonzero_l(v: LimbType) -> LimbType {
     // This trick is from subtle::*::ct_eq():
     // if v is non-zero, then v or -v or both have the high bit set.
-    black_box_l((v | v.wrapping_neg()) >> LIMB_BITS - 1)
+    black_box_l((v | v.wrapping_neg()) >> (LIMB_BITS - 1))
 }
 
 #[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
@@ -261,7 +261,7 @@ pub fn generic_ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     let v0 = black_box_l(v0);
     let v1 = black_box_l(v1);
     let r = v0.wrapping_add(v1);
-    let carry = black_box_l((((v0 | v1) & !r) | (v0 & v1)) >> LIMB_BITS - 1);
+    let carry = black_box_l((((v0 | v1) & !r) | (v0 & v1)) >> (LIMB_BITS - 1));
     (carry, r)
 }
 
@@ -309,7 +309,7 @@ pub fn generic_ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     let v0 = black_box_l(v0);
     let v1 = black_box_l(v1);
     let r = v0.wrapping_sub(v1);
-    let borrow = black_box_l((((r | v1) & !v0) | (v1 & r)) >> LIMB_BITS - 1);
+    let borrow = black_box_l((((r | v1) & !v0) | (v1 & r)) >> (LIMB_BITS - 1));
     (borrow, r)
 }
 
@@ -644,7 +644,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
             let u_val = u_val.wrapping_sub(borrow);
             let u_val = u_val.wrapping_sub(qv_val);
-            borrow = core::hint::black_box(u_val >> LIMB_BITS - 1);
+            borrow = core::hint::black_box(u_val >> (LIMB_BITS - 1));
             let u_val = u_val & HALF_LIMB_MASK;
             _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
         }
@@ -652,7 +652,7 @@ pub fn generic_ct_div_dl_l(u: &DoubleLimb, v: &GenericCtDivDlLNormalizedDivisor)
             let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
             let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
             let u_val = u_val.wrapping_sub(borrow);
-            borrow = black_box_l(u_val >> LIMB_BITS - 1);
+            borrow = black_box_l(u_val >> (LIMB_BITS - 1));
             let u_val = u_val & HALF_LIMB_MASK;
             _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
         }
@@ -789,7 +789,7 @@ fn test_ct_inv_mod_l() {
 pub fn ct_find_last_set_bit_l(mut v: LimbType) -> usize {
     let mut bits = LIMB_BITS as LimbType;
     assert!(bits != 0);
-    assert!(bits & bits - 1 == 0); // Is a power of two.
+    assert!(bits & (bits - 1) == 0); // Is a power of two.
     let mut count: usize = 0;
     let mut lsb_mask = !0;
     while bits > 1 {
@@ -819,14 +819,14 @@ fn test_ct_find_last_set_bit_l() {
 }
 
 pub fn ct_find_last_set_byte_l(v: LimbType) -> usize {
-    ((ct_find_last_set_bit_l(v) + 8 - 1) / 8) as usize
+    (ct_find_last_set_bit_l(v) + 8 - 1) / 8
 }
 
 // Position of LSB, if any, LIMB_BITS otherwise.
 pub fn ct_find_first_set_bit_l(mut v: LimbType) -> usize {
     let mut bits = LIMB_BITS as LimbType;
     assert!(bits != 0);
-    assert!(bits & bits - 1 == 0); // Is a power of two.
+    assert!(bits & (bits - 1) == 0); // Is a power of two.
     let mut count: usize = LIMB_BITS as usize;
     let mut lsb_mask = !0;
     while bits > 1 {
@@ -859,7 +859,7 @@ fn test_ct_find_first_set_bit_l() {
 
 pub fn ct_arithmetic_rshift_l(v: LimbType, rshift: LimbType) -> LimbType {
     let rshift_nz_mask = LimbChoice::from(ct_is_nonzero_l(rshift)).select(0, !0);
-    let sign_extend = (0 as LimbType).wrapping_sub(v >> LIMB_BITS - 1);
+    let sign_extend = (0 as LimbType).wrapping_sub(v >> (LIMB_BITS - 1));
     let sign_extend = sign_extend << ((LIMB_BITS as LimbType - rshift) & rshift_nz_mask);
     let sign_extend = sign_extend & rshift_nz_mask;
     let rshift_lt_max_mask = ct_eq_l_l(rshift, LIMB_BITS as LimbType).select(!0, 0);

@@ -10,7 +10,7 @@ pub fn ct_lshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
     // First determine what would get shifted out into the (virtual) next higher LIMB_BITS beyond
     // op0.len().
     let op0_nlimbs = op0.nlimbs();
-    let op0_nbits = 8 * op0.len() as usize;
+    let op0_nbits = 8 * op0.len();
     let shifted_out_low = {
         // The bits from [op0_nbits, op0_nbits + LIMB_BITS) - distance are getting
         // shifted into the (virtual) next higher limb. The begin or the whole range
@@ -289,7 +289,7 @@ pub fn ct_rshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
     // First determine what would get shifted out into the (virtual) next lower LIMB_BITS beyond
     // the zeroth limb.
     let op0_nlimbs = op0.nlimbs();
-    let op0_nbits = 8 * op0.len() as usize;
+    let op0_nbits = 8 * op0.len();
     let shifted_out_high = {
         let src_bits_begin_lt_0 = ct_lt_usize_usize(distance, LIMB_BITS as usize);
         let src_bits_begin = distance.wrapping_sub(LIMB_BITS as usize);

@@ -114,7 +114,7 @@ fn q_estimate(
     // If v_nlimbs < 2 and j == 0, u[j + n - 2] might not be defined. But in this case v[n-2] (found
     // in scaled_v_head[1]) is zero anyway and the comparison test will always come out negative, so the
     // caller may load arbitrary value into its corresponding location at q_head[2].
-    let qv_head_low: DoubleLimb = ct_mul_l_l(scaled_v_head[1], q).into();
+    let qv_head_low: DoubleLimb = ct_mul_l_l(scaled_v_head[1], q);
     let over_estimated = !r_carry &
         (ct_gt_l_l(qv_head_low.high(), r) |
          (ct_eq_l_l(qv_head_low.high(), r) & ct_gt_l_l(qv_head_low.low(), u_head[2])));
@@ -904,7 +904,7 @@ pub fn ct_div_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT
     let u_head_high_partial_len = u.len() % LIMB_BYTES;
     let u_nlimbs = ct_mp_nlimbs(u.len());
     if u_head_high_partial_len != 0 {
-        u_head_high_shadow[1] = u_head_high_shadow[0] >> 8 * (LIMB_BYTES - (u_head_high_partial_len));
+        u_head_high_shadow[1] = u_head_high_shadow[0] >> (8 * (LIMB_BYTES - (u_head_high_partial_len)));
         u_head_high_shadow[0] <<= 8 * u_head_high_partial_len;
         u_head_high_shadow[0] |= u.load_l(u_nlimbs - 1);
     } else {
@@ -932,10 +932,8 @@ pub fn ct_div_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT
         (carry, u_val) = ct_mul_add_l_l_l_c(0, u_val, scaling, carry);
         u.store_l_full(i, u_val);
     }
-    for i in 0..3 - 1 {
-        let mut u_val = u_head_high_shadow[i];
-        (carry, u_val) = ct_mul_add_l_l_l_c(0, u_val, scaling, carry);
-        u_head_high_shadow[i] = u_val;
+    for u_val in u_head_high_shadow.iter_mut().take(3 - 1) {
+        (carry, *u_val) = ct_mul_add_l_l_l_c(0, *u_val, scaling, carry);
     }
     u_head_high_shadow[2] = carry;
 
@@ -1036,7 +1034,7 @@ pub fn ct_div_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT
     }
     debug_assert_eq!(u_head_high_shadow[2], 0);
     debug_assert_eq!(u_head_high_shadow[1], 0);
-    if u_nlimbs - 1 >= v_nlimbs {
+    if u_nlimbs > v_nlimbs {
         debug_assert_eq!(u_head_high_shadow[0], 0);
         u.store_l(u_nlimbs - 1, 0);
     }
@@ -1052,7 +1050,6 @@ pub fn ct_div_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT
     } else {
         u.load_l_full(v_nlimbs - 1)
     };
-    drop(u_head_high_shadow);
 
     let mut j = u_lshift_tail_nlimbs;
     while j > 0 {

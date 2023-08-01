@@ -144,7 +144,7 @@ fn test_bytes_from_hexstr() {
 pub fn bytes_to_hexstr(bytes: &[u8]) -> Result<String, alloc::collections::TryReserveError> {
     fn nibble_to_hexchar(nibble: u8) -> char {
         let c = match nibble {
-            0x0..=0x9 => b'0' + (nibble - 0x0),
+            0x0..=0x9 => b'0' + nibble,
             0xa..=0xf => b'a' + (nibble - 0xa),
             _ => unreachable!(),
         };
