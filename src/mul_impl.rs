@@ -410,7 +410,7 @@ fn test_ct_square_trunc_mp<T0: MpIntMutByteSlice>() {
         let mut op0 = op0.clone();
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         let (_, op0) = op0.split_at(op0_in_len);
-        ct_mul_trunc_cond_mp_mp(&mut result, op0_in_len, &op0, LimbChoice::from(1));
+        ct_mul_trunc_mp_mp(&mut result, op0_in_len, &op0);
         drop(result);
         _result
     }

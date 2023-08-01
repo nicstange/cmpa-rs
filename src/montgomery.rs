@@ -474,7 +474,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
     use super::div_impl::ct_div_mp_mp;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommonPriv as _, MpIntMutByteSlicePriv as _};
-    use super::mul_impl::ct_mul_trunc_cond_mp_mp;
+    use super::mul_impl::ct_mul_trunc_mp_mp;
 
     for i in 0..16 {
         const MERSENNE_PRIME_13: LimbType = 8191 as LimbType;
@@ -574,11 +574,10 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                     // avoids having to multiply
                                     // the conventional product by r^-1 mod n, which is
                                     // not known without implementing Euklid's algorithm.
-                                    ct_mul_trunc_cond_mp_mp(
+                                    ct_mul_trunc_mp_mp(
                                         &mut result,
                                         n.len(),
                                         &r_mod_n,
-                                        LimbChoice::from(1),
                                     );
                                     ct_div_mp_mp::<_, _, RT::SelfT<'_>>(
                                         None,
@@ -593,11 +592,10 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                     let mut expected =
                                         RT::from_bytes(_expected.as_mut_slice()).unwrap();
                                     expected.copy_from(&a);
-                                    ct_mul_trunc_cond_mp_mp(
+                                    ct_mul_trunc_mp_mp(
                                         &mut expected,
                                         op_len,
                                         &b,
-                                        LimbChoice::from(1),
                                     );
                                     ct_div_mp_mp::<_, _, RT::SelfT<'_>>(
                                         None,

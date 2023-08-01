@@ -339,7 +339,7 @@ fn test_ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutB
         split_u: bool,
     ) {
         use super::add_impl::ct_add_mp_mp;
-        use super::mul_impl::ct_mul_trunc_cond_mp_mp;
+        use super::mul_impl::ct_mul_trunc_mp_mp;
 
         let v_len = find_last_set_byte_mp(v);
         let q_len = if u.len() >= v_len {
@@ -372,7 +372,7 @@ fn test_ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutB
         let mut result = vec![0u8; u.len() + LIMB_BYTES];
         let mut result = UT::from_bytes(&mut result).unwrap();
         result.copy_from(&q);
-        ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
+        ct_mul_trunc_mp_mp(&mut result, q_len, v);
         let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
         assert_eq!(ct_eq_mp_mp(u, &result).unwrap(), 1);
@@ -796,7 +796,7 @@ fn test_ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMu
         v: &VT::SelfT<'_>,
     ) {
         use super::add_impl::ct_add_mp_mp;
-        use super::mul_impl::ct_mul_trunc_cond_mp_mp;
+        use super::mul_impl::ct_mul_trunc_mp_mp;
 
         let u_len = (u_pow2_exp + 1 + 8 - 1) / 8;
         let v_len = find_last_set_byte_mp(v);
@@ -813,7 +813,7 @@ fn test_ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMu
         let mut result = vec![0xffu8; QT::limbs_align_len(u_len + LIMB_BYTES)];
         let mut result = QT::from_bytes(&mut result).unwrap();
         result.copy_from(&q);
-        ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
+        ct_mul_trunc_mp_mp(&mut result, q_len, v);
         let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
         let u_nlimbs = ct_mp_nlimbs(u_len);
@@ -1277,7 +1277,7 @@ fn test_ct_div_lshifted_mp_mp<
         use super::add_impl::ct_add_mp_mp;
         use super::cmp_impl::ct_eq_mp_mp;
         use super::limb::ct_lsb_mask_l;
-        use super::mul_impl::ct_mul_trunc_cond_mp_mp;
+        use super::mul_impl::ct_mul_trunc_mp_mp;
         use super::shift_impl::ct_rshift_mp;
 
         let v_len = find_last_set_byte_mp(v);
@@ -1295,7 +1295,7 @@ fn test_ct_div_lshifted_mp_mp<
         let mut result = vec![0xffu8; UT::limbs_align_len(virtual_u_len + LIMB_BYTES)];
         let mut result = UT::from_bytes(&mut result).unwrap();
         result.copy_from(&q);
-        ct_mul_trunc_cond_mp_mp(&mut result, q_len, v, LimbChoice::from(1));
+        ct_mul_trunc_mp_mp(&mut result, q_len, v);
         let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
         for i in 0..ct_mp_nlimbs(u_lshift_len + 1) - 1 {
