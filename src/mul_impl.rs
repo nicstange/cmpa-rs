@@ -55,7 +55,7 @@ pub fn ct_mul_trunc_cond_mp_mp<T0: MpIntMutByteSlice, T1: MpIntByteSliceCommon>(
 
     let result_high_mask = op0.partial_high_mask();
     let op0_nlimbs = op0.nlimbs();
-    op0.zeroize_bytes_above(op0_in_len);
+    op0.clear_bytes_above(op0_in_len);
     let op0_in_nlimbs = ct_mp_nlimbs(op0_in_len);
 
     let mut j = op0_in_nlimbs;
@@ -258,7 +258,7 @@ pub fn ct_square_trunc_mp<T0: MpIntMutByteSlice>(op0: &mut T0, op0_in_len: usize
     debug_assert!(op0_in_len <= op0.len());
     let result_high_mask = op0.partial_high_mask();
     let op0_nlimbs = op0.nlimbs();
-    op0.zeroize_bytes_above(op0_in_len);
+    op0.clear_bytes_above(op0_in_len);
     let op0_in_nlimbs = ct_mp_nlimbs(op0_in_len);
 
     let mut j = op0_in_nlimbs;
@@ -509,7 +509,7 @@ pub fn ct_mul_trunc_mp_l<T0: MpIntMutByteSlice>(op0: &mut T0, op0_in_len: usize,
     debug_assert!(op0_in_len <= op0.len());
     let result_high_mask = op0.partial_high_mask();
     let op0_nlimbs = op0.nlimbs();
-    op0.zeroize_bytes_above(op0_in_len);
+    op0.clear_bytes_above(op0_in_len);
     let op0_in_nlimbs = ct_mp_nlimbs(op0_in_len);
 
     if op0_in_len == 0 {

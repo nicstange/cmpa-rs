@@ -3,7 +3,7 @@ use super::cmp_impl::{ct_is_zero_mp, ct_lt_mp_mp};
 use super::euclid::{ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
 use super::limb::{ct_is_nonzero_l, ct_sub_l_l_b, LIMB_BITS};
 use super::limbs_buffer::{
-    ct_find_first_set_bit_mp, ct_mp_nlimbs, ct_zeroize_bits_above_mp, zeroize_bits_above_mp,
+    clear_bits_above_mp, ct_clear_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs,
     MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _, MpIntMutByteSlice,
     MpNativeEndianMutByteSlice,
 };
@@ -29,7 +29,7 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
     debug_assert!(result.len() >= RT::limbs_align_len(max_pow2_exp_len));
     debug_assert!(scratch.len() >= MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len));
 
-    result.zeroize_bytes_above(max_pow2_exp_len);
+    result.clear_bytes_above(max_pow2_exp_len);
     let (_, mut result) = result.split_at(RT::limbs_align_len(max_pow2_exp_len));
     let (scratch, _) = scratch.split_at_mut(MpNativeEndianMutByteSlice::limbs_align_len(
         max_pow2_exp_len,
@@ -45,7 +45,7 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
     // pow2_exp bits. Quadratic lifting via
     // op0'_{i + 1} = 2 * op0'_i - op0 * op0'_i^2 allows for a runtime of
     // log_2(pow2_exp), i.e. pow2_exp_bits (of the loop).
-    result.zeroize_bytes_below(max_pow2_exp_len);
+    result.clear_bytes_below(max_pow2_exp_len);
     result.store_l(0, 1);
     let mut cur_pow2_exp = 1;
     while cur_pow2_exp < max_pow2_exp {
@@ -82,12 +82,12 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
         // multiplications above. Truncate the upper bits again so that they
         // won't be considered in the next iteration.
         cur_pow2_exp *= 2;
-        zeroize_bits_above_mp(&mut result, cur_pow2_exp);
+        clear_bits_above_mp(&mut result, cur_pow2_exp);
     }
 
     // Finally, wipe anything beyond the real pow2_exp, that is, take the result mod
     // 2^{pow2_exp}.
-    ct_zeroize_bits_above_mp(&mut result, pow2_exp);
+    ct_clear_bits_above_mp(&mut result, pow2_exp);
     debug_assert!(pow2_exp != 0 || ct_is_zero_mp(&result).unwrap() == 1);
 }
 
@@ -113,7 +113,7 @@ fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(
                     op0.store_l(k, op0_val & op0.partial_high_mask());
                 }
             }
-            op0.zeroize_bytes_above(op0_len);
+            op0.clear_bytes_above(op0_len);
 
             for pow2_exp in [0, 7, 8 * op0_len - 1, 8 * op0_len, 2 * 8 * op0_len] {
                 for max_pow2_exp in [pow2_exp, pow2_exp + 1, 2 * pow2_exp] {
@@ -135,7 +135,7 @@ fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(
                         // 2^pow2_exp.
                         let inv_mod_pow2_len = inv_mod_pow2.len();
                         ct_mul_trunc_mp_mp(&mut inv_mod_pow2, inv_mod_pow2_len, &op0);
-                        zeroize_bits_above_mp(&mut inv_mod_pow2, pow2_exp);
+                        clear_bits_above_mp(&mut inv_mod_pow2, pow2_exp);
                         assert_eq!(ct_is_one_mp(&inv_mod_pow2).unwrap(), 1);
                     } else {
                         // For pow2_exp == 0, the inverse is undefined, the result
@@ -242,7 +242,7 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     // op0^{-1} mod n_{*} * 2^e
     //  = (op0^{-1} mod n_{*})
     //    + ((((op0^{-1} mod 2^e) - (op0^{-1} mod n_{*})) * (n_{*}^{-1} mod 2^e))
-    //       mod 2^e)
+    //      mod 2^e)
     //      * n_{*}
     // Note that the inverse modulo the power 2^e of two can be computed
     // efficiently, in time logarithmic in (the upper bound on) e, via Hensel
@@ -280,7 +280,7 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     // (op0^{-1} mod 2^e) - (op0^{-1} mod n_{*}) * (n_{*}^{-1} mod 2^e).
     ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, &scratch1);
     // And take the product modulo 2^e
-    ct_zeroize_bits_above_mp(&mut scratch0, n_pow2_exp);
+    ct_clear_bits_above_mp(&mut scratch0, n_pow2_exp);
 
     // Multiply by n_{*} and add to op0 to obtain the final result.
     ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, n);

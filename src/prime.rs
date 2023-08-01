@@ -151,7 +151,7 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
         let mut scratch0 = vec![0u8; scratch_len];
         let mut scratch1 = vec![0u8; scratch_len];
 
-        p.zeroize_bytes_above(0);
+        p.clear_bytes_above(0);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
         assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
 
@@ -173,7 +173,7 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
     let p_len = 256 / 8;
     let mut p = vec![0u8; PT::limbs_align_len(p_len)];
     let mut p = PT::from_bytes(&mut p).unwrap();
-    p.zeroize_bytes_above(0);
+    p.clear_bytes_above(0);
     let bit255_limb_index = (255 / LIMB_BITS) as usize;
     let bit255_pos_in_limb = 255 % LIMB_BITS;
     p.store_l(bit255_limb_index, 1 << bit255_pos_in_limb);
@@ -365,7 +365,7 @@ fn test_ct_prime_test_miller_rabin_mp<
     // p = 2^255 - 19.
     let mut p = vec![0u8; PT::limbs_align_len(256 / 8)];
     let mut p = PT::from_bytes(&mut p).unwrap();
-    p.zeroize_bytes_above(0);
+    p.clear_bytes_above(0);
     let bit255_limb_index = (255 / LIMB_BITS) as usize;
     let bit255_pos_in_limb = 255 % LIMB_BITS;
     p.store_l(bit255_limb_index, 1 << bit255_pos_in_limb);

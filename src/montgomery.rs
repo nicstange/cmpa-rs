@@ -325,7 +325,7 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
     let n0_val = n.load_l(0);
     debug_assert!(n0_val.wrapping_mul(neg_n0_inv_mod_l) == !0);
 
-    result.zeroize_bytes_above(0);
+    result.clear_bytes_above(0);
     let mut result_carry = 0;
     // result's high limb might be a partial one, do not update directly in the
     // course of reducing in order to avoid overflowing it. Use a shadow

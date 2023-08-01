@@ -32,7 +32,7 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     debug_assert_eq!(op0.len(), op1.len());
     debug_assert!(result.len() >= op0_len + op1_len);
     if op0_len == 0 || op1_len == 0 {
-        result.zeroize_bytes_above(0);
+        result.clear_bytes_above(0);
         return;
     }
 
@@ -118,7 +118,7 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
         i += 1;
     }
     debug_assert_eq!(last_src_val >> src_low_rshift, 0);
-    scaled_prod_high.zeroize_bytes_above(gcd_max_len);
+    scaled_prod_high.clear_bytes_above(gcd_max_len);
     ct_rshift_mp(scaled_prod_high, 8 * gcd_max_len - scaling_shift);
     let (_, mut scaled_prod_high) = scaled_prod_high.split_at(T1::limbs_align_len(gcd_max_len));
     let mut scaled_prod_low = prod_scratch;

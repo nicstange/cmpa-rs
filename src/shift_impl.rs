@@ -1,6 +1,6 @@
 use super::limb::{ct_lsb_mask_l, LimbType, LIMB_BITS};
 use super::limbs_buffer::{
-    ct_mp_nlimbs, ct_zeroize_bits_above_mp, ct_zeroize_bits_below_mp, MpIntMutByteSlice,
+    ct_clear_bits_above_mp, ct_clear_bits_below_mp, ct_mp_nlimbs, MpIntMutByteSlice,
 };
 use super::usize_ct_cmp::{
     ct_eq_usize_usize, ct_geq_usize_usize, ct_gt_usize_usize, ct_leq_usize_usize, ct_lt_usize_usize,
@@ -111,7 +111,7 @@ pub fn ct_lshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 
     // The circular-buffer approach to shifting for the sake of constant time
     // filled the bits below distance with garbage. Clear them out.
-    ct_zeroize_bits_below_mp(op0, distance);
+    ct_clear_bits_below_mp(op0, distance);
 
     shifted_out_low
 }
@@ -374,7 +374,7 @@ pub fn ct_rshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 
     // The circular-buffer approach to shifting for the sake of constant time
     // filled the bits above op0_nbits - distance with garbage. Clear them out.
-    ct_zeroize_bits_above_mp(op0, op0_nbits - distance);
+    ct_clear_bits_above_mp(op0, op0_nbits - distance);
 
     shifted_out_high
 }

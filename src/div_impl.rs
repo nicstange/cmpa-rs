@@ -196,7 +196,7 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
 
     if u_len < v_len {
         if let Some(q_out) = q_out {
-            q_out.zeroize_bytes_above(0);
+            q_out.clear_bytes_above(0);
         }
         return Ok(());
     }
@@ -204,7 +204,7 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
     let q_out_max_len = u_len + 1 - v_len;
     let q_out_max_nlimbs = ct_mp_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
-        q_out.zeroize_bytes_above(q_out_max_len);
+        q_out.clear_bytes_above(q_out_max_len);
     }
 
     // Create a padding buffer extending u at its more significant end:
@@ -532,7 +532,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
     if r_out.len() < v_len.min(virtual_u_len) {
         return Err(CtDivMpError::InsufficientRemainderSpace);
     }
-    r_out.zeroize_bytes_above(0);
+    r_out.clear_bytes_above(0);
 
     // The virtual high limb of the base 2 power.
     let u_high_shift = (u_pow2_exp % LIMB_BITS as usize) as u32;
@@ -540,7 +540,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
     if virtual_u_len < v_len {
         r_out.store_l(virtual_u_nlimbs - 1, u_high);
         if let Some(q_out) = q_out {
-            q_out.zeroize_bytes_above(0);
+            q_out.clear_bytes_above(0);
         }
         return Ok(());
     }
@@ -548,7 +548,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
     let q_out_max_len = virtual_u_len + 1 - v_len;
     let q_out_max_nlimbs = ct_mp_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
-        q_out.zeroize_bytes_above(q_out_max_len);
+        q_out.clear_bytes_above(q_out_max_len);
     };
 
     // Normalize divisor's high limb.
@@ -943,7 +943,7 @@ pub fn ct_div_lshifted_mp_mp<
     if virtual_u_in_len < v_len {
         ct_lshift_mp(u, 8 * u_lshift_len);
         if let Some(q_out) = q_out {
-            q_out.zeroize_bytes_above(0);
+            q_out.clear_bytes_above(0);
         }
         return Ok(());
     }
@@ -951,7 +951,7 @@ pub fn ct_div_lshifted_mp_mp<
     let q_out_max_len = virtual_u_in_len + 1 - v_len;
     let q_out_max_nlimbs = ct_mp_nlimbs(q_out_max_len);
     if let Some(q_out) = &mut q_out {
-        q_out.zeroize_bytes_above(q_out_max_len);
+        q_out.clear_bytes_above(q_out_max_len);
     }
 
     // The unaligned part of u_lshift_len will be taken into account by shifting the
@@ -1398,11 +1398,11 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
             return Err(CtDivMpError::InsufficientQuotientSpace);
         }
         if u.len() < v_len {
-            q_out.zeroize_bytes_above(0);
+            q_out.clear_bytes_above(0);
             return Ok(u.load_l(0));
         }
         let q_out_len = u.len() - v_len + 1;
-        q_out.zeroize_bytes_above(q_out_len);
+        q_out.clear_bytes_above(q_out_len);
     }
 
     let normalized_v = CtDivDlLNormalizedDivisor::new(v);

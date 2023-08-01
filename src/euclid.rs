@@ -792,12 +792,12 @@ pub fn ct_inv_mod_odd_mp_mp<
     let mut ext_u1_scratch = MpNativeEndianMutByteSlice::from_bytes(ext_u1_scratch).unwrap();
 
     // ext_u0 starts out as 0.
-    result.zeroize_bytes_above(0);
+    result.clear_bytes_above(0);
     // ext_u1 starts out as 1. If the modulus is == 1, the result is undefined (the
     // multiplicative group does not exist). Force the result to zero in this
     // case.
     let n_is_one = ct_is_one_mp(n);
-    ext_u1_scratch.zeroize_bytes_above(0);
+    ext_u1_scratch.clear_bytes_above(0);
     ext_u1_scratch.store_l_full(0, 1 ^ n_is_one.unwrap());
 
     f_work_scratch.copy_from(n);

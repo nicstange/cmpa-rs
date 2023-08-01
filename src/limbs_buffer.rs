@@ -350,7 +350,7 @@ fn test_be_mp_store_l() {
     assert_eq!(be_mp_load_l(&limbs, 1), 0x0100);
 }
 
-fn be_mp_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
+fn be_mp_clear_bytes_above(limbs: &mut [u8], begin: usize) {
     let limbs_len = limbs.len();
     if limbs_len <= begin {
         return;
@@ -359,55 +359,55 @@ fn be_mp_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
 }
 
 #[test]
-fn test_be_mp_zeroize_bytes_above() {
+fn test_be_mp_clear_bytes_above() {
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     be_mp_store_l(&mut limbs, 0, !0);
     be_mp_store_l(&mut limbs, 1, !0 >> 8);
-    be_mp_zeroize_bytes_above(&mut limbs, LIMB_BYTES + 1);
+    be_mp_clear_bytes_above(&mut limbs, LIMB_BYTES + 1);
     assert_eq!(be_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(be_mp_load_l(&mut limbs, 1), !0 & 0xff);
 
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     be_mp_store_l(&mut limbs, 0, !0);
     be_mp_store_l(&mut limbs, 1, !0 >> 8);
-    be_mp_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
+    be_mp_clear_bytes_above(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(be_mp_load_l(&mut limbs, 0), !0 >> 8);
     assert_eq!(be_mp_load_l(&mut limbs, 1), 0);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     be_mp_store_l(&mut limbs, 0, !0);
     be_mp_store_l(&mut limbs, 1, !0);
-    be_mp_zeroize_bytes_above(&mut limbs, 2 * LIMB_BYTES);
+    be_mp_clear_bytes_above(&mut limbs, 2 * LIMB_BYTES);
     assert_eq!(be_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(be_mp_load_l(&mut limbs, 1), !0);
 }
 
-fn be_mp_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
+fn be_mp_clear_bytes_below(limbs: &mut [u8], end: usize) {
     let limbs_len = limbs.len();
     let end = end.min(limbs_len);
     limbs[limbs_len - end..].fill(0);
 }
 
 #[test]
-fn test_be_mp_zeroize_bytes_below() {
+fn test_be_mp_clear_bytes_below() {
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     be_mp_store_l(&mut limbs, 0, !0);
     be_mp_store_l(&mut limbs, 1, !0 >> 8);
-    be_mp_zeroize_bytes_below(&mut limbs, LIMB_BYTES + 1);
+    be_mp_clear_bytes_below(&mut limbs, LIMB_BYTES + 1);
     assert_eq!(be_mp_load_l(&mut limbs, 0), 0);
     assert_eq!(be_mp_load_l(&mut limbs, 1), (!0 >> 8) & !0xff);
 
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     be_mp_store_l(&mut limbs, 0, !0);
     be_mp_store_l(&mut limbs, 1, !0 >> 8);
-    be_mp_zeroize_bytes_below(&mut limbs, LIMB_BYTES - 1);
+    be_mp_clear_bytes_below(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(be_mp_load_l(&mut limbs, 0), 0xff << 8 * (LIMB_BYTES - 1));
     assert_eq!(be_mp_load_l(&mut limbs, 1), !0 >> 8);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     be_mp_store_l(&mut limbs, 0, !0);
     be_mp_store_l(&mut limbs, 1, !0);
-    be_mp_zeroize_bytes_below(&mut limbs, 0);
+    be_mp_clear_bytes_below(&mut limbs, 0);
     assert_eq!(be_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(be_mp_load_l(&mut limbs, 1), !0);
 }
@@ -719,7 +719,7 @@ fn test_le_mp_store_l() {
     assert_eq!(le_mp_load_l(&limbs, 1), 0x0100);
 }
 
-fn le_mp_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
+fn le_mp_clear_bytes_above(limbs: &mut [u8], begin: usize) {
     if limbs.len() <= begin {
         return;
     }
@@ -727,54 +727,54 @@ fn le_mp_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
 }
 
 #[test]
-fn test_le_mp_zeroize_bytes_above() {
+fn test_le_mp_clear_bytes_above() {
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     le_mp_store_l(&mut limbs, 0, !0);
     le_mp_store_l(&mut limbs, 1, !0 >> 8);
-    le_mp_zeroize_bytes_above(&mut limbs, LIMB_BYTES + 1);
+    le_mp_clear_bytes_above(&mut limbs, LIMB_BYTES + 1);
     assert_eq!(le_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(le_mp_load_l(&mut limbs, 1), !0 & 0xff);
 
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     le_mp_store_l(&mut limbs, 0, !0);
     le_mp_store_l(&mut limbs, 1, !0 >> 8);
-    le_mp_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
+    le_mp_clear_bytes_above(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(le_mp_load_l(&mut limbs, 0), !0 >> 8);
     assert_eq!(le_mp_load_l(&mut limbs, 1), 0);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     le_mp_store_l(&mut limbs, 0, !0);
     le_mp_store_l(&mut limbs, 1, !0);
-    le_mp_zeroize_bytes_above(&mut limbs, 2 * LIMB_BYTES);
+    le_mp_clear_bytes_above(&mut limbs, 2 * LIMB_BYTES);
     assert_eq!(le_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(le_mp_load_l(&mut limbs, 1), !0);
 }
 
-fn le_mp_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
+fn le_mp_clear_bytes_below(limbs: &mut [u8], end: usize) {
     let end = end.min(limbs.len());
     limbs[..end].fill(0);
 }
 
 #[test]
-fn test_le_mp_zeroize_bytes_below() {
+fn test_le_mp_clear_bytes_below() {
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     le_mp_store_l(&mut limbs, 0, !0);
     le_mp_store_l(&mut limbs, 1, !0 >> 8);
-    le_mp_zeroize_bytes_below(&mut limbs, LIMB_BYTES + 1);
+    le_mp_clear_bytes_below(&mut limbs, LIMB_BYTES + 1);
     assert_eq!(le_mp_load_l(&mut limbs, 0), 0);
     assert_eq!(le_mp_load_l(&mut limbs, 1), (!0 >> 8) & !0xff);
 
     let mut limbs: [u8; 2 * LIMB_BYTES - 1] = [0; 2 * LIMB_BYTES - 1];
     le_mp_store_l(&mut limbs, 0, !0);
     le_mp_store_l(&mut limbs, 1, !0 >> 8);
-    le_mp_zeroize_bytes_below(&mut limbs, LIMB_BYTES - 1);
+    le_mp_clear_bytes_below(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(le_mp_load_l(&mut limbs, 0), 0xff << 8 * (LIMB_BYTES - 1));
     assert_eq!(le_mp_load_l(&mut limbs, 1), !0 >> 8);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     le_mp_store_l(&mut limbs, 0, !0);
     le_mp_store_l(&mut limbs, 1, !0);
-    le_mp_zeroize_bytes_below(&mut limbs, 0);
+    le_mp_clear_bytes_below(&mut limbs, 0);
     assert_eq!(le_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(le_mp_load_l(&mut limbs, 1), !0);
 }
@@ -853,7 +853,7 @@ fn test_ne_mp_store_l() {
     assert_eq!(ne_mp_load_l(&limbs, 1), 1);
 }
 
-fn ne_mp_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
+fn ne_mp_clear_bytes_above(limbs: &mut [u8], begin: usize) {
     if begin >= limbs.len() {
         return;
     }
@@ -870,30 +870,30 @@ fn ne_mp_zeroize_bytes_above(limbs: &mut [u8], begin: usize) {
 }
 
 #[test]
-fn test_ne_mp_zeroize_bytes_above() {
+fn test_ne_mp_clear_bytes_above() {
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     ne_mp_store_l(&mut limbs, 0, !0);
     ne_mp_store_l(&mut limbs, 1, !0);
-    ne_mp_zeroize_bytes_above(&mut limbs, LIMB_BYTES + 1);
+    ne_mp_clear_bytes_above(&mut limbs, LIMB_BYTES + 1);
     assert_eq!(ne_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(ne_mp_load_l(&mut limbs, 1), !0 & 0xff);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     ne_mp_store_l(&mut limbs, 0, !0);
     ne_mp_store_l(&mut limbs, 1, !0);
-    ne_mp_zeroize_bytes_above(&mut limbs, LIMB_BYTES - 1);
+    ne_mp_clear_bytes_above(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(ne_mp_load_l(&mut limbs, 0), !0 >> 8);
     assert_eq!(ne_mp_load_l(&mut limbs, 1), 0);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     ne_mp_store_l(&mut limbs, 0, !0);
     ne_mp_store_l(&mut limbs, 1, !0);
-    ne_mp_zeroize_bytes_above(&mut limbs, 2 * LIMB_BYTES);
+    ne_mp_clear_bytes_above(&mut limbs, 2 * LIMB_BYTES);
     assert_eq!(ne_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(ne_mp_load_l(&mut limbs, 1), !0);
 }
 
-fn ne_mp_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
+fn ne_mp_clear_bytes_below(limbs: &mut [u8], end: usize) {
     let end = end.min(limbs.len());
     let end_limb = ct_mp_nlimbs(end);
     let mut end_aligned = end_limb * LIMB_BYTES;
@@ -910,25 +910,25 @@ fn ne_mp_zeroize_bytes_below(limbs: &mut [u8], end: usize) {
 }
 
 #[test]
-fn test_ne_mp_zeroize_bytes_below() {
+fn test_ne_mp_clear_bytes_below() {
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     ne_mp_store_l(&mut limbs, 0, !0);
     ne_mp_store_l(&mut limbs, 1, !0);
-    ne_mp_zeroize_bytes_below(&mut limbs, LIMB_BYTES + 1);
+    ne_mp_clear_bytes_below(&mut limbs, LIMB_BYTES + 1);
     assert_eq!(ne_mp_load_l(&mut limbs, 0), 0);
     assert_eq!(ne_mp_load_l(&mut limbs, 1), !0xff);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     ne_mp_store_l(&mut limbs, 0, !0);
     ne_mp_store_l(&mut limbs, 1, !0);
-    ne_mp_zeroize_bytes_below(&mut limbs, LIMB_BYTES - 1);
+    ne_mp_clear_bytes_below(&mut limbs, LIMB_BYTES - 1);
     assert_eq!(ne_mp_load_l(&mut limbs, 0), 0xff << 8 * (LIMB_BYTES - 1));
     assert_eq!(ne_mp_load_l(&mut limbs, 1), !0);
 
     let mut limbs: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
     ne_mp_store_l(&mut limbs, 0, !0);
     ne_mp_store_l(&mut limbs, 1, !0);
-    ne_mp_zeroize_bytes_below(&mut limbs, 0);
+    ne_mp_clear_bytes_below(&mut limbs, 0);
     assert_eq!(ne_mp_load_l(&mut limbs, 0), !0);
     assert_eq!(ne_mp_load_l(&mut limbs, 1), !0);
 }
@@ -1076,8 +1076,8 @@ pub trait MpIntMutByteSlice: MpIntMutByteSlicePriv {
 
     fn store_l_full(&mut self, i: usize, value: LimbType);
     fn store_l(&mut self, i: usize, value: LimbType);
-    fn zeroize_bytes_above(&mut self, begin: usize);
-    fn zeroize_bytes_below(&mut self, end: usize);
+    fn clear_bytes_above(&mut self, begin: usize);
+    fn clear_bytes_below(&mut self, end: usize);
 
     fn copy_from<S: MpIntByteSliceCommon>(&'_ mut self, src: &S) {
         let src_nlimbs = src.nlimbs();
@@ -1085,7 +1085,7 @@ pub trait MpIntMutByteSlice: MpIntMutByteSlicePriv {
         debug_assert!(dst_nlimbs >= src_nlimbs);
 
         if src_nlimbs == 0 {
-            self.zeroize_bytes_above(0);
+            self.clear_bytes_above(0);
             return;
         }
         for i in 0..src_nlimbs - 1 {
@@ -1094,7 +1094,7 @@ pub trait MpIntMutByteSlice: MpIntMutByteSlicePriv {
         let high_limb = src.load_l(src_nlimbs - 1);
         debug_assert!(src_nlimbs < dst_nlimbs || (high_limb & !self.partial_high_mask()) == 0);
         self.store_l(src_nlimbs - 1, high_limb);
-        self.zeroize_bytes_above(src.len());
+        self.clear_bytes_above(src.len());
     }
 }
 
@@ -1230,12 +1230,12 @@ impl<'a> MpIntMutByteSlice for MpBigEndianMutByteSlice<'a> {
         be_mp_store_l(self.bytes, i, value)
     }
 
-    fn zeroize_bytes_above(&mut self, begin: usize) {
-        be_mp_zeroize_bytes_above(self.bytes, begin)
+    fn clear_bytes_above(&mut self, begin: usize) {
+        be_mp_clear_bytes_above(self.bytes, begin)
     }
 
-    fn zeroize_bytes_below(&mut self, end: usize) {
-        be_mp_zeroize_bytes_below(self.bytes, end)
+    fn clear_bytes_below(&mut self, end: usize) {
+        be_mp_clear_bytes_below(self.bytes, end)
     }
 }
 
@@ -1377,12 +1377,12 @@ impl<'a> MpIntMutByteSlice for MpLittleEndianMutByteSlice<'a> {
         le_mp_store_l(self.bytes, i, value)
     }
 
-    fn zeroize_bytes_above(&mut self, begin: usize) {
-        le_mp_zeroize_bytes_above(self.bytes, begin)
+    fn clear_bytes_above(&mut self, begin: usize) {
+        le_mp_clear_bytes_above(self.bytes, begin)
     }
 
-    fn zeroize_bytes_below(&mut self, end: usize) {
-        le_mp_zeroize_bytes_below(self.bytes, end)
+    fn clear_bytes_below(&mut self, end: usize) {
+        le_mp_clear_bytes_below(self.bytes, end)
     }
 }
 
@@ -1539,12 +1539,12 @@ impl<'a> MpIntMutByteSlice for MpNativeEndianMutByteSlice<'a> {
         ne_mp_store_l(self.bytes, i, value)
     }
 
-    fn zeroize_bytes_above(&mut self, begin: usize) {
-        ne_mp_zeroize_bytes_above(self.bytes, begin)
+    fn clear_bytes_above(&mut self, begin: usize) {
+        ne_mp_clear_bytes_above(self.bytes, begin)
     }
 
-    fn zeroize_bytes_below(&mut self, end: usize) {
-        ne_mp_zeroize_bytes_below(self.bytes, end)
+    fn clear_bytes_below(&mut self, end: usize) {
+        ne_mp_clear_bytes_below(self.bytes, end)
     }
 }
 
@@ -1692,7 +1692,7 @@ pub fn ct_find_first_set_bit_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> (LimbChoi
 }
 
 #[cfg(test)]
-fn test_find_first_set_bit_mp<T0: MpIntMutByteSlice>() {
+fn test_ct_find_first_set_bit_mp<T0: MpIntMutByteSlice>() {
     let mut limbs: [u8; 3 * LIMB_BYTES] = [0u8; 3 * LIMB_BYTES];
     let limbs = T0::from_bytes(&mut limbs).unwrap();
     let (is_nonzero, first_set_bit_pos) = ct_find_first_set_bit_mp(&limbs);
@@ -1721,18 +1721,18 @@ fn test_find_first_set_bit_mp<T0: MpIntMutByteSlice>() {
 }
 
 #[test]
-fn test_find_first_set_bit_be() {
-    test_find_first_set_bit_mp::<MpBigEndianMutByteSlice>()
+fn test_ct_find_first_set_bit_be() {
+    test_ct_find_first_set_bit_mp::<MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_find_first_set_bit_le() {
-    test_find_first_set_bit_mp::<MpLittleEndianMutByteSlice>()
+fn test_ct_find_first_set_bit_le() {
+    test_ct_find_first_set_bit_mp::<MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_find_first_set_bit_ne() {
-    test_find_first_set_bit_mp::<MpNativeEndianMutByteSlice>()
+fn test_ct_find_first_set_bit_ne() {
+    test_ct_find_first_set_bit_mp::<MpNativeEndianMutByteSlice>()
 }
 
 pub fn ct_find_last_set_bit_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> (LimbChoice, usize) {
@@ -1755,7 +1755,7 @@ pub fn ct_find_last_set_bit_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> (LimbChoic
 }
 
 #[cfg(test)]
-fn test_find_last_set_bit_mp<T0: MpIntMutByteSlice>() {
+fn test_ct_find_last_set_bit_mp<T0: MpIntMutByteSlice>() {
     let mut limbs: [u8; 3 * LIMB_BYTES] = [0u8; 3 * LIMB_BYTES];
     let limbs = T0::from_bytes(&mut limbs).unwrap();
     let (is_nonzero, first_set_bit_pos) = ct_find_last_set_bit_mp(&limbs);
@@ -1784,21 +1784,21 @@ fn test_find_last_set_bit_mp<T0: MpIntMutByteSlice>() {
 }
 
 #[test]
-fn test_find_last_set_bit_be() {
-    test_find_last_set_bit_mp::<MpBigEndianMutByteSlice>()
+fn test_ct_find_last_set_bit_be() {
+    test_ct_find_last_set_bit_mp::<MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_find_last_set_bit_le() {
-    test_find_last_set_bit_mp::<MpLittleEndianMutByteSlice>()
+fn test_ct_find_last_set_bit_le() {
+    test_ct_find_last_set_bit_mp::<MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_find_last_set_bit_ne() {
-    test_find_last_set_bit_mp::<MpNativeEndianMutByteSlice>()
+fn test_ct_find_last_set_bit_ne() {
+    test_ct_find_last_set_bit_mp::<MpNativeEndianMutByteSlice>()
 }
 
-pub fn ct_zeroize_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) {
+pub fn ct_clear_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) {
     let first_limb_index = begin / LIMB_BITS as usize;
     let first_limb_retain_nbits = begin % LIMB_BITS as usize;
     let first_limb_mask = ct_lsb_mask_l(first_limb_retain_nbits as u32);
@@ -1813,7 +1813,7 @@ pub fn ct_zeroize_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usiz
 }
 
 #[cfg(test)]
-fn test_ct_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+fn test_ct_clear_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -1833,7 +1833,7 @@ fn test_ct_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         8 * op0.nlimbs() * LIMB_BYTES,
         8 * op0.nlimbs() * LIMB_BYTES + 1,
     ] {
-        ct_zeroize_bits_above_mp(&mut op0, begin);
+        ct_clear_bits_above_mp(&mut op0, begin);
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
                 assert_eq!(op0.load_l_full(i), !0);
@@ -1849,7 +1849,7 @@ fn test_ct_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        ct_zeroize_bits_above_mp(&mut op0, begin);
+        ct_clear_bits_above_mp(&mut op0, begin);
         for i in 0..j {
             assert_eq!(op0.load_l_full(i), !0);
         }
@@ -1866,7 +1866,7 @@ fn test_ct_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        ct_zeroize_bits_above_mp(&mut op0, begin);
+        ct_clear_bits_above_mp(&mut op0, begin);
         for i in 0..j - 1 {
             assert_eq!(op0.load_l_full(i), !0);
         }
@@ -1881,38 +1881,38 @@ fn test_ct_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_ct_zeroize_bits_above_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
-    test_ct_zeroize_bits_above_mp_common::<T0>(0);
-    test_ct_zeroize_bits_above_mp_common::<T0>(LIMB_BYTES);
-    test_ct_zeroize_bits_above_mp_common::<T0>(2 * LIMB_BYTES);
-    test_ct_zeroize_bits_above_mp_common::<T0>(3 * LIMB_BYTES);
+fn test_ct_clear_bits_above_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+    test_ct_clear_bits_above_mp_common::<T0>(0);
+    test_ct_clear_bits_above_mp_common::<T0>(LIMB_BYTES);
+    test_ct_clear_bits_above_mp_common::<T0>(2 * LIMB_BYTES);
+    test_ct_clear_bits_above_mp_common::<T0>(3 * LIMB_BYTES);
 }
 
 #[cfg(test)]
-fn test_ct_zeroize_bits_above_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
-    test_ct_zeroize_bits_above_mp_common::<T0>(LIMB_BYTES - 1);
-    test_ct_zeroize_bits_above_mp_common::<T0>(2 * LIMB_BYTES - 1);
-    test_ct_zeroize_bits_above_mp_common::<T0>(3 * LIMB_BYTES - 1);
+fn test_ct_clear_bits_above_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+    test_ct_clear_bits_above_mp_common::<T0>(LIMB_BYTES - 1);
+    test_ct_clear_bits_above_mp_common::<T0>(2 * LIMB_BYTES - 1);
+    test_ct_clear_bits_above_mp_common::<T0>(3 * LIMB_BYTES - 1);
 }
 
 #[test]
-fn test_ct_zeroize_bits_above_be() {
-    test_ct_zeroize_bits_above_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
-    test_ct_zeroize_bits_above_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
+fn test_ct_clear_bits_above_be() {
+    test_ct_clear_bits_above_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
+    test_ct_clear_bits_above_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
 }
 
 #[test]
-fn test_ct_zeroize_bits_above_le() {
-    test_ct_zeroize_bits_above_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
-    test_ct_zeroize_bits_above_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
+fn test_ct_clear_bits_above_le() {
+    test_ct_clear_bits_above_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
+    test_ct_clear_bits_above_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
 }
 
 #[test]
-fn test_ct_zeroize_bits_above_ne() {
-    test_ct_zeroize_bits_above_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
+fn test_ct_clear_bits_above_ne() {
+    test_ct_clear_bits_above_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
 }
 
-pub fn zeroize_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) {
+pub fn clear_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) {
     let first_limb_index = begin / LIMB_BITS as usize;
     if op0.nlimbs() <= first_limb_index {
         return;
@@ -1924,11 +1924,11 @@ pub fn zeroize_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) 
         op0.load_l(first_limb_index) & first_limb_mask,
     );
 
-    op0.zeroize_bytes_above((begin + LIMB_BITS as usize - 1) / LIMB_BITS as usize * LIMB_BYTES);
+    op0.clear_bytes_above((begin + LIMB_BITS as usize - 1) / LIMB_BITS as usize * LIMB_BYTES);
 }
 
 #[cfg(test)]
-fn test_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+fn test_clear_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -1948,7 +1948,7 @@ fn test_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         8 * op0.nlimbs() * LIMB_BYTES,
         8 * op0.nlimbs() * LIMB_BYTES + 1,
     ] {
-        zeroize_bits_above_mp(&mut op0, begin);
+        clear_bits_above_mp(&mut op0, begin);
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
                 assert_eq!(op0.load_l_full(i), !0);
@@ -1964,7 +1964,7 @@ fn test_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        zeroize_bits_above_mp(&mut op0, begin);
+        clear_bits_above_mp(&mut op0, begin);
         for i in 0..j {
             assert_eq!(op0.load_l_full(i), !0);
         }
@@ -1981,7 +1981,7 @@ fn test_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        zeroize_bits_above_mp(&mut op0, begin);
+        clear_bits_above_mp(&mut op0, begin);
         for i in 0..j - 1 {
             assert_eq!(op0.load_l_full(i), !0);
         }
@@ -1996,38 +1996,38 @@ fn test_zeroize_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_zeroize_bits_above_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
-    test_zeroize_bits_above_mp_common::<T0>(0);
-    test_zeroize_bits_above_mp_common::<T0>(LIMB_BYTES);
-    test_zeroize_bits_above_mp_common::<T0>(2 * LIMB_BYTES);
-    test_zeroize_bits_above_mp_common::<T0>(3 * LIMB_BYTES);
+fn test_clear_bits_above_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+    test_clear_bits_above_mp_common::<T0>(0);
+    test_clear_bits_above_mp_common::<T0>(LIMB_BYTES);
+    test_clear_bits_above_mp_common::<T0>(2 * LIMB_BYTES);
+    test_clear_bits_above_mp_common::<T0>(3 * LIMB_BYTES);
 }
 
 #[cfg(test)]
-fn test_zeroize_bits_above_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
-    test_zeroize_bits_above_mp_common::<T0>(LIMB_BYTES - 1);
-    test_zeroize_bits_above_mp_common::<T0>(2 * LIMB_BYTES - 1);
-    test_zeroize_bits_above_mp_common::<T0>(3 * LIMB_BYTES - 1);
+fn test_clear_bits_above_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+    test_clear_bits_above_mp_common::<T0>(LIMB_BYTES - 1);
+    test_clear_bits_above_mp_common::<T0>(2 * LIMB_BYTES - 1);
+    test_clear_bits_above_mp_common::<T0>(3 * LIMB_BYTES - 1);
 }
 
 #[test]
-fn test_zeroize_bits_above_be() {
-    test_zeroize_bits_above_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
-    test_zeroize_bits_above_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
+fn test_clear_bits_above_be() {
+    test_clear_bits_above_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
+    test_clear_bits_above_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
 }
 
 #[test]
-fn test_zeroize_bits_above_le() {
-    test_zeroize_bits_above_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
-    test_zeroize_bits_above_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
+fn test_clear_bits_above_le() {
+    test_clear_bits_above_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
+    test_clear_bits_above_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
 }
 
 #[test]
-fn test_zeroize_bits_above_ne() {
-    test_zeroize_bits_above_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
+fn test_clear_bits_above_ne() {
+    test_clear_bits_above_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
 }
 
-pub fn ct_zeroize_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
+pub fn ct_clear_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
     let last_limb_index = end / LIMB_BITS as usize;
     let last_limb_clear_nbits = end % LIMB_BITS as usize;
     let last_limb_mask = !ct_lsb_mask_l(last_limb_clear_nbits as u32);
@@ -2042,7 +2042,7 @@ pub fn ct_zeroize_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize)
 }
 
 #[cfg(test)]
-fn test_ct_zeroize_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+fn test_ct_clear_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -2056,7 +2056,7 @@ fn test_ct_zeroize_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     let mut op0 = vec![0u8; op0_len];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
     fill_with_ones(&mut op0);
-    ct_zeroize_bits_below_mp(&mut op0, 0);
+    ct_clear_bits_below_mp(&mut op0, 0);
     for i in 0..op0.nlimbs() {
         if i + 1 != op0.nlimbs() {
             assert_eq!(op0.load_l_full(i), !0);
@@ -2071,7 +2071,7 @@ fn test_ct_zeroize_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        ct_zeroize_bits_below_mp(&mut op0, begin);
+        ct_clear_bits_below_mp(&mut op0, begin);
         for i in 0..j {
             assert_eq!(op0.load_l_full(i), 0);
         }
@@ -2092,7 +2092,7 @@ fn test_ct_zeroize_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        ct_zeroize_bits_below_mp(&mut op0, begin);
+        ct_clear_bits_below_mp(&mut op0, begin);
         for i in 0..j - 1 {
             assert_eq!(op0.load_l_full(i), 0);
         }
@@ -2111,40 +2111,40 @@ fn test_ct_zeroize_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_ct_zeroize_bits_below_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
-    test_ct_zeroize_bits_mp_below_common::<T0>(0);
-    test_ct_zeroize_bits_mp_below_common::<T0>(LIMB_BYTES);
-    test_ct_zeroize_bits_mp_below_common::<T0>(2 * LIMB_BYTES);
-    test_ct_zeroize_bits_mp_below_common::<T0>(3 * LIMB_BYTES);
+fn test_ct_clear_bits_below_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+    test_ct_clear_bits_mp_below_common::<T0>(0);
+    test_ct_clear_bits_mp_below_common::<T0>(LIMB_BYTES);
+    test_ct_clear_bits_mp_below_common::<T0>(2 * LIMB_BYTES);
+    test_ct_clear_bits_mp_below_common::<T0>(3 * LIMB_BYTES);
 }
 
 #[cfg(test)]
-fn test_ct_zeroize_bits_below_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
-    test_ct_zeroize_bits_mp_below_common::<T0>(LIMB_BYTES - 1);
-    test_ct_zeroize_bits_mp_below_common::<T0>(2 * LIMB_BYTES - 1);
-    test_ct_zeroize_bits_mp_below_common::<T0>(3 * LIMB_BYTES - 1);
+fn test_ct_clear_bits_below_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+    test_ct_clear_bits_mp_below_common::<T0>(LIMB_BYTES - 1);
+    test_ct_clear_bits_mp_below_common::<T0>(2 * LIMB_BYTES - 1);
+    test_ct_clear_bits_mp_below_common::<T0>(3 * LIMB_BYTES - 1);
 }
 
 #[test]
-fn test_ct_zeroize_bits_below_be() {
-    test_ct_zeroize_bits_below_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
-    test_ct_zeroize_bits_below_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
+fn test_ct_clear_bits_below_be() {
+    test_ct_clear_bits_below_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
+    test_ct_clear_bits_below_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
 }
 
 #[test]
-fn test_ct_zeroize_bits_below_le() {
-    test_ct_zeroize_bits_below_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
-    test_ct_zeroize_bits_below_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
+fn test_ct_clear_bits_below_le() {
+    test_ct_clear_bits_below_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
+    test_ct_clear_bits_below_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
 }
 
 #[test]
-fn test_ct_zeroize_bits_below_ne() {
-    test_ct_zeroize_bits_below_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
+fn test_ct_clear_bits_below_ne() {
+    test_ct_clear_bits_below_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
 }
 
-pub fn zeroize_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
+pub fn clear_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
     let last_limb_index = end / LIMB_BITS as usize;
-    op0.zeroize_bytes_below(last_limb_index * LIMB_BYTES);
+    op0.clear_bytes_below(last_limb_index * LIMB_BYTES);
     if last_limb_index >= op0.nlimbs() {
         return;
     }
@@ -2157,7 +2157,7 @@ pub fn zeroize_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
 }
 
 #[cfg(test)]
-fn test_zeroize_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+fn test_clear_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -2171,7 +2171,7 @@ fn test_zeroize_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     let mut op0 = vec![0u8; op0_len];
     let mut op0 = T0::from_bytes(&mut op0).unwrap();
     fill_with_ones(&mut op0);
-    zeroize_bits_below_mp(&mut op0, 0);
+    clear_bits_below_mp(&mut op0, 0);
     for i in 0..op0.nlimbs() {
         if i + 1 != op0.nlimbs() {
             assert_eq!(op0.load_l_full(i), !0);
@@ -2186,7 +2186,7 @@ fn test_zeroize_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        zeroize_bits_below_mp(&mut op0, begin);
+        clear_bits_below_mp(&mut op0, begin);
         for i in 0..j {
             assert_eq!(op0.load_l_full(i), 0);
         }
@@ -2207,7 +2207,7 @@ fn test_zeroize_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
         let mut op0 = vec![0u8; op0_len];
         let mut op0 = T0::from_bytes(&mut op0).unwrap();
         fill_with_ones(&mut op0);
-        zeroize_bits_below_mp(&mut op0, begin);
+        clear_bits_below_mp(&mut op0, begin);
         for i in 0..j - 1 {
             assert_eq!(op0.load_l_full(i), 0);
         }
@@ -2226,35 +2226,35 @@ fn test_zeroize_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_zeroize_bits_below_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
-    test_zeroize_bits_below_mp_common::<T0>(0);
-    test_zeroize_bits_below_mp_common::<T0>(LIMB_BYTES);
-    test_zeroize_bits_below_mp_common::<T0>(2 * LIMB_BYTES);
-    test_zeroize_bits_below_mp_common::<T0>(3 * LIMB_BYTES);
+fn test_clear_bits_below_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+    test_clear_bits_below_mp_common::<T0>(0);
+    test_clear_bits_below_mp_common::<T0>(LIMB_BYTES);
+    test_clear_bits_below_mp_common::<T0>(2 * LIMB_BYTES);
+    test_clear_bits_below_mp_common::<T0>(3 * LIMB_BYTES);
 }
 
 #[cfg(test)]
-fn test_zeroize_bits_below_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
-    test_zeroize_bits_below_mp_common::<T0>(LIMB_BYTES - 1);
-    test_zeroize_bits_below_mp_common::<T0>(2 * LIMB_BYTES - 1);
-    test_zeroize_bits_below_mp_common::<T0>(3 * LIMB_BYTES - 1);
+fn test_clear_bits_below_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+    test_clear_bits_below_mp_common::<T0>(LIMB_BYTES - 1);
+    test_clear_bits_below_mp_common::<T0>(2 * LIMB_BYTES - 1);
+    test_clear_bits_below_mp_common::<T0>(3 * LIMB_BYTES - 1);
 }
 
 #[test]
-fn test_zeroize_bits_below_be() {
-    test_zeroize_bits_below_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
-    test_zeroize_bits_below_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
+fn test_clear_bits_below_be() {
+    test_clear_bits_below_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
+    test_clear_bits_below_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
 }
 
 #[test]
-fn test_zeroize_bits_below_le() {
-    test_zeroize_bits_below_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
-    test_zeroize_bits_below_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
+fn test_clear_bits_below_le() {
+    test_clear_bits_below_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
+    test_clear_bits_below_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
 }
 
 #[test]
-fn test_zeroize_bits_below_ne() {
-    test_zeroize_bits_below_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
+fn test_clear_bits_below_ne() {
+    test_clear_bits_below_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
 }
 
 pub fn ct_swap_cond_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
