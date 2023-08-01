@@ -1,5 +1,5 @@
 use super::cmp_impl::{ct_is_one_mp, ct_leq_mp_l, ct_lt_mp_mp};
-use super::euclid::ct_gcd_mp_mp;
+use super::euclid::ct_gcd_odd_mp_mp;
 use super::hexstr;
 use super::limb::{
     ct_eq_l_l, ct_geq_l_l, ct_is_zero_l, ct_lt_l_l, ct_sub_l_l_b, LimbChoice, LimbType, LIMB_BITS,
@@ -126,7 +126,7 @@ pub fn ct_composite_test_small_prime_gcd_mp<PT: MpIntByteSliceCommon>(
     let mut p_work_scratch = MpNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
     p_work_scratch.copy_from(p);
 
-    ct_gcd_mp_mp(&mut gcd, &mut p_work_scratch);
+    ct_gcd_odd_mp_mp(&mut gcd, &mut p_work_scratch);
     let gcd_is_one = ct_is_one_mp(&gcd);
 
     // The small prime products don't include a factor of two.

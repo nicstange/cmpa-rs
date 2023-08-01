@@ -536,7 +536,7 @@ fn nbatches(len: usize) -> usize {
     (nsteps + STEPS_PER_BATCH - 1) / STEPS_PER_BATCH
 }
 
-fn ct_gcd_ext_mp_mp<
+fn ct_gcd_ext_odd_mp_mp<
     UES: FnMut(&TransitionMatrix, &[[LimbType; 2]; 2]),
     FT: MpIntMutByteSlice,
     GT: MpIntMutByteSlice,
@@ -592,8 +592,8 @@ fn ct_gcd_ext_mp_mp<
     f_is_neg
 }
 
-pub fn ct_gcd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(f: &mut FT, g: &mut GT) {
-    let gcd_is_neg = ct_gcd_ext_mp_mp(|_, _| {}, f, g);
+pub fn ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(f: &mut FT, g: &mut GT) {
+    let gcd_is_neg = ct_gcd_ext_odd_mp_mp(|_, _| {}, f, g);
 
     // If the GCD came out as negative, negate before returning.
     let neg_mask = gcd_is_neg.select(0, !0);
@@ -614,7 +614,7 @@ pub fn ct_gcd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(f: &mut FT, g:
 }
 
 #[cfg(test)]
-fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
+fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
     use super::mul_impl::ct_mul_trunc_mp_l;
@@ -637,7 +637,7 @@ fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         let mut f = FT::from_bytes(f_buf.as_mut_slice()).unwrap();
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 1);
-        ct_gcd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 1);
         assert_mp_is_equal(&g, 0);
 
@@ -654,7 +654,7 @@ fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
                 let limb_index = j / (8 * LIMB_BYTES);
                 let j = j % (8 * LIMB_BYTES);
                 g.store_l(limb_index, 1 << j);
-                ct_gcd_mp_mp(&mut f, &mut g);
+                ct_gcd_odd_mp_mp(&mut f, &mut g);
                 assert_mp_is_equal(&f, 1);
                 assert_mp_is_equal(&g, 0);
             }
@@ -666,7 +666,7 @@ fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 3 * 3 * 3 * 7);
         g.store_l(0, 3 * 3 * 5);
-        ct_gcd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 3 * 3);
         assert_mp_is_equal(&g, 0);
 
@@ -676,7 +676,7 @@ fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 3 * 3 * 5);
         g.store_l(0, 3 * 3 * 3 * 7);
-        ct_gcd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 3 * 3);
         assert_mp_is_equal(&g, 0);
 
@@ -695,7 +695,7 @@ fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
             ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        ct_gcd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 1);
         assert_mp_is_equal(&g, 0);
 
@@ -715,7 +715,7 @@ fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
             ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        ct_gcd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 241);
         assert_mp_is_equal(&g, 0);
 
@@ -735,28 +735,28 @@ fn test_ct_gcd_mp_mp_common<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
             ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        ct_gcd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g);
         assert_mp_is_equal(&f, 251);
         assert_mp_is_equal(&g, 0);
     }
 }
 
 #[test]
-fn test_ct_gcd_be_be() {
+fn test_ct_gcd_odd_be_be() {
     use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_gcd_mp_mp_common::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
+    test_ct_gcd_odd_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
 }
 
 #[test]
-fn test_ct_gcd_le_le() {
+fn test_ct_gcd_odd_le_le() {
     use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_gcd_mp_mp_common::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
+    test_ct_gcd_odd_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
 }
 
 #[test]
-fn test_ct_gcd_ne_ne() {
+fn test_ct_gcd_odd_ne_ne() {
     use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_gcd_mp_mp_common::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
+    test_ct_gcd_odd_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
 #[derive(Debug)]
@@ -803,7 +803,7 @@ pub fn ct_inv_mod_odd_mp_mp<
     f_work_scratch.copy_from(n);
     let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n);
 
-    let gcd_is_neg = ct_gcd_ext_mp_mp(
+    let gcd_is_neg = ct_gcd_ext_odd_mp_mp(
         |t, t_is_neg_mask| {
             t.apply_to_mod_odd_n(
                 t_is_neg_mask,

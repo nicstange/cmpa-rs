@@ -1,6 +1,6 @@
 use super::cmp_impl::ct_is_zero_mp;
 use super::div_impl::ct_div_mp_mp;
-use super::euclid::ct_gcd_mp_mp;
+use super::euclid::ct_gcd_odd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
     ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_mp_limbs_align_len, ct_mp_nlimbs,
@@ -68,7 +68,7 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     debug_assert!(op0_and_op1_zero.unwrap() != 0 || op0.load_l(0) & 1 == 1);
     // If both inputs are zero, force op0 to 1, the GCD needs that.
     op0.store_l(0, op0_and_op1_zero.select(op0.load_l(0), 1));
-    ct_gcd_mp_mp(op0, op1);
+    ct_gcd_odd_mp_mp(op0, op1);
     // Now the GCD (odd factors only) is in op0.
     let gcd_odd: &mut T0 = op0;
     debug_assert_eq!(ct_is_zero_mp(gcd_odd).unwrap(), 0);
