@@ -411,3 +411,82 @@ pub fn ct_sub_mp_l<T0: MpIntMutByteSlice>(op0: &mut T0, op1: LimbType) -> LimbTy
 
     borrow
 }
+
+pub fn ct_negate_cond_mp<T0: MpIntMutByteSlice>(op0: &mut T0, cond: LimbChoice) {
+    if op0.is_empty() {
+        return;
+    }
+
+    let nlimbs = op0.nlimbs();
+    let negate_mask = cond.select(0, !0);
+    let mut negate_carry = negate_mask & 1;
+    for i in 0..nlimbs - 1 {
+        let mut op0_val = op0.load_l(i);
+        op0_val ^= negate_mask;
+        (negate_carry, op0_val) = ct_add_l_l(op0_val, negate_carry);
+        op0.store_l(i, op0_val);
+    }
+
+    let mut op0_val = op0.load_l(nlimbs - 1);
+    op0_val ^= negate_mask;
+    (_, op0_val) = ct_add_l_l(op0_val, negate_carry);
+    op0.store_l(nlimbs - 1, op0_val & op0.partial_high_mask());
+}
+
+#[cfg(test)]
+fn test_ct_negate_cond_mp<T0: MpIntMutByteSlice>() {
+    use super::cmp_impl::{ct_is_one_mp, ct_is_zero_mp};
+    use super::limb::LIMB_BYTES;
+    use super::limbs_buffer::MpIntByteSliceCommonPriv as _;
+
+    let op0_len = T0::limbs_align_len(2 * LIMB_BYTES - 1);
+
+    let mut op0 = vec![0u8; op0_len];
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
+    ct_negate_cond_mp(&mut op0, LimbChoice::from(0));
+    assert_ne!(ct_is_zero_mp(&op0).unwrap(), 0);
+    ct_negate_cond_mp(&mut op0, LimbChoice::from(1));
+    assert_ne!(ct_is_zero_mp(&op0).unwrap(), 0);
+
+    let mut op0 = vec![0u8; op0_len];
+    let mut op0 = T0::from_bytes(&mut op0).unwrap();
+    // A one.
+    op0.store_l(0, 1);
+    ct_negate_cond_mp(&mut op0, LimbChoice::from(0));
+    assert_ne!(ct_is_one_mp(&op0).unwrap(), 0);
+
+    // Make it a minus one.
+    ct_negate_cond_mp(&mut op0, LimbChoice::from(1));
+    for i in 0..op0.nlimbs() - 1 {
+        assert_eq!(op0.load_l(i), !0);
+    }
+    assert_eq!(op0.load_l(op0.nlimbs() - 1), op0.partial_high_mask());
+
+    ct_negate_cond_mp(&mut op0, LimbChoice::from(0));
+    for i in 0..op0.nlimbs() - 1 {
+        assert_eq!(op0.load_l(i), !0);
+    }
+    assert_eq!(op0.load_l(op0.nlimbs() - 1), op0.partial_high_mask());
+
+    // And negate again to obtain positive one.
+    ct_negate_cond_mp(&mut op0, LimbChoice::from(1));
+    assert_ne!(ct_is_one_mp(&op0).unwrap(), 0);
+}
+
+#[test]
+fn test_ct_negate_cond_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_negate_cond_mp::<MpBigEndianMutByteSlice>()
+}
+
+#[test]
+fn test_ct_negate_cond_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_negate_cond_mp::<MpLittleEndianMutByteSlice>()
+}
+
+#[test]
+fn test_ct_negate_cond_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_negate_cond_mp::<MpNativeEndianMutByteSlice>()
+}
