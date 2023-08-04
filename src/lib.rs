@@ -35,7 +35,7 @@ pub use cmp_impl::{
     ct_lt_mp_mp, ct_neq_mp_mp,
 };
 
-pub use div_impl::{ct_div_mp_l, ct_div_mp_mp, CtDivMpError};
+pub use div_impl::{ct_div_mp_l, ct_div_mp_mp, ct_mod_mp_l, ct_mod_mp_mp, CtDivMpError};
 
 pub use euclid_impl::{ct_gcd_mp_mp, ct_gcd_odd_mp_mp, ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
 

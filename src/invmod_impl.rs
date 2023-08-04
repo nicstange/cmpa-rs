@@ -301,7 +301,7 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
 
     fn test_one<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(op0: &T0, n: &mut NT) {
         use super::cmp_impl::ct_is_one_mp;
-        use super::div_impl::ct_div_mp_mp;
+        use super::div_impl::ct_mod_mp_mp;
 
         // Reserve an extra byte for the NotCoprime checks below.
         let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
@@ -333,7 +333,7 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
         let mut product = MpNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
         product.copy_from(&op0_inv_mod_n);
         ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
-        ct_div_mp_mp::<_, _, MpNativeEndianMutByteSlice>(None, &mut product, n, None).unwrap();
+        ct_mod_mp_mp(None, &mut product, n).unwrap();
         assert_eq!(ct_is_one_mp(&product).unwrap(), 1);
 
         // Verify that ct_inv_mod_mp_mp() correctly detects common factors and would

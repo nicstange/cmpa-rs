@@ -5,7 +5,7 @@ use super::limb::{
 };
 use super::limbs_buffer::{
     ct_mp_nlimbs, find_last_set_byte_mp, CompositeLimbsBuffer, MpIntByteSliceCommon,
-    MpIntMutByteSlice,
+    MpIntMutByteSlice, MpNativeEndianMutByteSlice,
 };
 use super::shift_impl::ct_lshift_mp;
 
@@ -492,6 +492,15 @@ fn test_ct_div_ne_ne_ne() {
     >()
 }
 
+pub fn ct_mod_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
+    u_h: Option<&mut UT>,
+    u_l: &mut UT,
+    v: &VT,
+) -> Result<(), CtDivMpError> {
+    // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
+    ct_div_mp_mp::<_, _, MpNativeEndianMutByteSlice>(u_h, u_l, v, None)
+}
+
 pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u_pow2_exp: usize,
     r_out: &mut RT,
@@ -882,6 +891,15 @@ fn test_ct_div_pow2_ne_ne_ne() {
         MpNativeEndianMutByteSlice,
         MpNativeEndianMutByteSlice,
     >()
+}
+
+pub fn ct_mod_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
+    u_pow2_exp: usize,
+    r_out: &mut RT,
+    v: &VT,
+) -> Result<(), CtDivMpError> {
+    // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
+    ct_div_pow2_mp::<_, _, MpNativeEndianMutByteSlice>(u_pow2_exp, r_out, v, None)
 }
 
 pub fn ct_div_lshifted_mp_mp<
@@ -1376,6 +1394,16 @@ fn test_ct_div_lshifted_ne_ne_ne() {
     >()
 }
 
+pub fn ct_mod_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
+    u: &mut UT,
+    u_in_len: usize,
+    u_lshift_len: usize,
+    v: &VT,
+) -> Result<(), CtDivMpError> {
+    // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
+    ct_div_lshifted_mp_mp::<_, _, MpNativeEndianMutByteSlice>(u, u_in_len, u_lshift_len, v, None)
+}
+
 // Compute the modulo of a multiprecision integer modulo a [`LimbType`]
 // divisisor.
 pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
@@ -1421,4 +1449,12 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     }
 
     Ok(u_h)
+}
+
+pub fn ct_mod_mp_l<UT: MpIntByteSliceCommon>(
+    u: &UT,
+    v: LimbType,
+) -> Result<LimbType, CtDivMpError> {
+    // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
+    ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(u, v, None)
 }
