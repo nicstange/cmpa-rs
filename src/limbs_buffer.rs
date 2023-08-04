@@ -989,6 +989,14 @@ pub trait MpIntByteSliceCommon: MpIntByteSliceCommonPriv + fmt::LowerHex {
     fn load_l_full(&self, i: usize) -> LimbType;
     fn load_l(&self, i: usize) -> LimbType;
 
+    fn test_bit(&self, pos: usize) -> LimbChoice {
+        let limb_index = pos / LIMB_BITS as usize;
+        debug_assert!(limb_index < self.nlimbs());
+        let pos_in_limb = pos % LIMB_BITS as usize;
+        let l = self.load_l(limb_index);
+        LimbChoice::from((l >> pos_in_limb) & 1)
+    }
+
     fn fmt_lower_hex(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fn nibble_to_hexchar(nibble: u8) -> char {
             let c = match nibble {
@@ -1095,6 +1103,18 @@ pub trait MpIntMutByteSlice: MpIntMutByteSlicePriv {
         debug_assert!(src_nlimbs < dst_nlimbs || (high_limb & !self.partial_high_mask()) == 0);
         self.store_l(src_nlimbs - 1, high_limb);
         self.clear_bytes_above(src.len());
+    }
+
+    fn set_bit_to(&mut self, pos: usize, val: bool) {
+        let limb_index = pos / LIMB_BITS as usize;
+        debug_assert!(limb_index < self.nlimbs());
+        let pos_in_limb = pos % LIMB_BITS as usize;
+        let mut l = self.load_l(limb_index);
+        let bit_pos_mask = (1 as LimbType) << pos_in_limb;
+        let val_mask = LimbChoice::from(val as LimbType).select(0, bit_pos_mask);
+        l &= !bit_pos_mask;
+        l |= val_mask;
+        self.store_l(limb_index, l)
     }
 }
 

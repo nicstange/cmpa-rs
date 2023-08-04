@@ -457,8 +457,8 @@ fn test_ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutB
                 let v_len = ((j1 + 1) as usize + 8 - 1) / 8;
                 let mut v = vec![0u8; VT::limbs_align_len(v_len)];
                 let mut v = VT::from_bytes(&mut v).unwrap();
-                v.store_l((j1 / LIMB_BITS) as usize, 1 << (j1 % LIMB_BITS));
-                v.store_l((j2 / LIMB_BITS) as usize, 1 << (j2 % LIMB_BITS));
+                v.set_bit_to(j1 as usize, true);
+                v.set_bit_to(j2 as usize, true);
                 div_and_check::<UT, VT, QT>(&u, &v, false);
                 div_and_check::<UT, VT, QT>(&u, &v, true);
             }

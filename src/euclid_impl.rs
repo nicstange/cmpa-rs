@@ -652,13 +652,9 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
                 let mut g_buf = vec![0u8; g_len];
                 let mut f = FT::from_bytes(f_buf.as_mut_slice()).unwrap();
                 let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
-                let limb_index = i / (8 * LIMB_BYTES);
-                let i = i % (8 * LIMB_BYTES);
-                f.store_l(limb_index, 1 << i);
-                f.store_l(0, f.load_l(0) | 1);
-                let limb_index = j / (8 * LIMB_BYTES);
-                let j = j % (8 * LIMB_BYTES);
-                g.store_l(limb_index, 1 << j);
+                f.set_bit_to(i, true);
+                f.set_bit_to(0, true);
+                g.set_bit_to(j, true);
                 ct_gcd_odd_mp_mp(&mut f, &mut g);
                 assert_mp_is_equal(&f, 1);
                 assert_mp_is_equal(&g, 0);
@@ -1107,13 +1103,9 @@ fn test_ct_inv_mod_odd_mp_mp<
                 let mut op0_buf = vec![0u8; op0_len];
                 let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
                 let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
-                let limb_index = i / (8 * LIMB_BYTES);
-                let i = i % (8 * LIMB_BYTES);
-                n.store_l(limb_index, 1 << i);
-                n.store_l(0, n.load_l(0) | 1);
-                let limb_index = j / (8 * LIMB_BYTES);
-                let j = j % (8 * LIMB_BYTES);
-                op0.store_l(limb_index, 1 << j);
+                n.set_bit_to(i, true);
+                n.set_bit_to(0, true);
+                op0.set_bit_to(j, true);
                 test_one::<RT, _, _>(&op0, &n);
             }
         }
