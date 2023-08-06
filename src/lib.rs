@@ -28,7 +28,9 @@ pub use limbs_buffer::{
     MpNativeEndianMutByteSlice, UnalignedMpByteSliceLenError,
 };
 
-pub use add_impl::{ct_add_mp_l, ct_add_mp_mp, ct_negate_cond_mp, ct_sub_mp_l, ct_sub_mp_mp};
+pub use add_impl::{
+    ct_add_cond_mp_mp, ct_add_mp_l, ct_add_mp_mp, ct_negate_cond_mp, ct_sub_mp_l, ct_sub_mp_mp,
+};
 
 pub use cmp_impl::{
     ct_eq_mp_mp, ct_geq_mp_mp, ct_gt_mp_mp, ct_is_one_mp, ct_is_zero_mp, ct_leq_mp_l, ct_leq_mp_mp,
