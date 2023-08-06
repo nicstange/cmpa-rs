@@ -1,11 +1,12 @@
 use super::add_impl::ct_sub_cond_mp_mp;
-use super::cmp_impl::ct_geq_mp_mp;
+use super::cmp_impl::{ct_geq_mp_mp, ct_lt_mp_mp};
 use super::div_impl::{ct_mod_lshifted_mp_mp, ct_mod_pow2_mp, CtDivMpError};
 use super::limb::{
     ct_add_l_l, ct_inv_mod_l, ct_lsb_mask_l, ct_mul_add_l_l_l_c, LimbChoice, LimbType, LIMB_BITS,
 };
 use super::limbs_buffer::{
     ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntMutByteSlice,
+    MpNativeEndianMutByteSlice,
 };
 
 fn ct_montgomery_radix_shift_len(n_len: usize) -> usize {
@@ -767,6 +768,259 @@ fn test_ct_to_montgomery_form_le_le_le() {
 fn test_ct_to_montgomery_form_ne_ne_ne() {
     use super::limbs_buffer::MpNativeEndianMutByteSlice;
     test_ct_to_montgomery_form_mp::<
+        MpNativeEndianMutByteSlice,
+        MpNativeEndianMutByteSlice,
+        MpNativeEndianMutByteSlice,
+    >()
+}
+
+// result must have been initialized with a one in Montgomery form before the
+// call.
+fn _ct_montogmery_exp_mod_mp_mp<
+    RT: MpIntMutByteSlice,
+    T0: MpIntByteSliceCommon,
+    NT: MpIntByteSliceCommon,
+    ET: MpIntByteSliceCommon,
+>(
+    result: &mut RT,
+    op0: &T0,
+    n: &NT,
+    neg_n0_inv_mod_l: LimbType,
+    exponent: &ET,
+    exponent_nbits: usize,
+    scratch: &mut [u8],
+) {
+    debug_assert!(result.nlimbs() >= n.nlimbs());
+
+    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
+    debug_assert!(scratch.len() >= scratch_len);
+    let (scratch, _) = scratch.split_at_mut(scratch_len);
+    let mut scratch = MpNativeEndianMutByteSlice::from_bytes(scratch).unwrap();
+
+    let exponent_nbits = exponent_nbits.min(8 * exponent.len());
+    for i in 0..exponent_nbits {
+        ct_montgomery_mul_mod_mp_mp(&mut scratch, result, result, n, neg_n0_inv_mod_l);
+        ct_montgomery_mul_mod_cond_mp_mp(
+            result,
+            &scratch,
+            op0,
+            n,
+            neg_n0_inv_mod_l,
+            exponent.test_bit(exponent_nbits - i - 1),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn ct_montogmery_exp_mod_odd_mp_mp<
+    RT: MpIntMutByteSlice,
+    T0: MpIntByteSliceCommon,
+    NT: MpIntByteSliceCommon,
+    RXT: MpIntByteSliceCommon,
+    ET: MpIntByteSliceCommon,
+>(
+    result: &mut RT,
+    op0: &T0,
+    n: &NT,
+    neg_n0_inv_mod_l: LimbType,
+    radix_mod_n: &RXT,
+    exponent: &ET,
+    exponent_nbits: usize,
+    scratch: &mut [u8],
+) {
+    // Initialize the result with a one in Montgomery form.
+    result.copy_from(radix_mod_n);
+
+    _ct_montogmery_exp_mod_mp_mp(
+        result,
+        op0,
+        n,
+        neg_n0_inv_mod_l,
+        exponent,
+        exponent_nbits,
+        scratch,
+    );
+}
+
+pub fn ct_exp_mod_odd_mp_mp<
+    RT: MpIntMutByteSlice,
+    T0: MpIntMutByteSlice,
+    NT: MpIntByteSliceCommon,
+    ET: MpIntByteSliceCommon,
+>(
+    result: &mut RT,
+    op0: &mut T0,
+    n: &NT,
+    exponent: &ET,
+    exponent_nbits: usize,
+    scratch: &mut [u8],
+) {
+    debug_assert!(result.nlimbs() >= n.nlimbs());
+    debug_assert_ne!(ct_lt_mp_mp(op0, n).unwrap(), 0);
+
+    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
+    debug_assert!(scratch.len() >= scratch_len);
+
+    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n);
+    // The radix squared mod n gets into result[], it will be reduced
+    // later on to a one in Montgomery form.
+    ct_montgomery_radix2_mod_n_mp(result, n).unwrap();
+
+    // Transform op0 into Montgomery form, the function argument will get
+    // overwritten to save an extra scratch buffer.
+    let mut mg_op0 = MpNativeEndianMutByteSlice::from_bytes(scratch).unwrap();
+    ct_to_montgomery_form_mp(&mut mg_op0, op0, n, neg_n0_inv_mod_l, result);
+    op0.copy_from(&mg_op0);
+
+    // Reduce the radix squared mod n in result[] to the radix mod n,
+    // i.e. to a one in Montgomery form.
+    ct_montgomery_redc_mp(result, n, neg_n0_inv_mod_l);
+
+    // Do the Montgomery exponentiation.
+    _ct_montogmery_exp_mod_mp_mp(
+        result,
+        op0,
+        n,
+        neg_n0_inv_mod_l,
+        exponent,
+        exponent_nbits,
+        scratch,
+    );
+
+    // And transform the result back from Montgomery form.
+    ct_montgomery_redc_mp(result, n, neg_n0_inv_mod_l);
+}
+
+#[cfg(test)]
+fn test_ct_exp_mod_odd_mp_mp<
+    RT: MpIntMutByteSlice,
+    T0: MpIntMutByteSlice,
+    NT: MpIntMutByteSlice,
+    ET: MpIntMutByteSlice,
+>() {
+    use super::limb::LIMB_BYTES;
+    use super::mul_impl::ct_mul_trunc_mp_l;
+    use super::shift_impl::ct_lshift_mp;
+
+    fn test_one<
+        'a,
+        RT: MpIntMutByteSlice,
+        T0: MpIntMutByteSlice,
+        NT: MpIntByteSliceCommon,
+        ET: MpIntByteSliceCommon,
+    >(
+        op0: &T0,
+        n: &NT,
+        exponent: &'a ET,
+    ) {
+        use super::cmp_impl::ct_eq_mp_mp;
+        use super::div_impl::ct_mod_mp_mp;
+        use super::mul_impl::{ct_mul_trunc_mp_mp, ct_square_trunc_mp};
+
+        let n_len = n.len();
+
+        let op0_mod_n_aligned_len = T0::limbs_align_len(n_len.max(op0.len()));
+        let mut op0_mod_n = vec![0u8; op0_mod_n_aligned_len];
+        let mut op0_mod_n = T0::from_bytes(&mut op0_mod_n).unwrap();
+        op0_mod_n.copy_from(op0);
+        ct_mod_mp_mp(None, &mut op0_mod_n, n).unwrap();
+
+        let mut op0_scratch = vec![0u8; T0::limbs_align_len(n_len)];
+        let mut op0_scratch = T0::from_bytes(&mut op0_scratch).unwrap();
+        op0_scratch.copy_from(&op0_mod_n);
+        let mut result = vec![0u8; RT::limbs_align_len(n_len)];
+        let mut result = RT::from_bytes(&mut result).unwrap();
+        let mut scratch = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n_len)];
+        ct_exp_mod_odd_mp_mp(
+            &mut result,
+            &mut op0_scratch,
+            n,
+            exponent,
+            8 * exponent.len(),
+            &mut scratch,
+        );
+
+        // Compute the expected value using repeated multiplications/squarings and
+        // modular reductions.
+        let mut expected = vec![0u8; RT::limbs_align_len(2 * n_len)];
+        let mut expected = RT::from_bytes(&mut expected).unwrap();
+        expected.clear_bytes_above(0);
+        expected.store_l(0, 1);
+        for i in 0..8 * exponent.len() {
+            ct_square_trunc_mp(&mut expected, n_len);
+            ct_mod_mp_mp(None, &mut expected, n).unwrap();
+            if exponent.test_bit(8 * exponent.len() - i - 1).unwrap() != 0 {
+                ct_mul_trunc_mp_mp(&mut expected, n_len, &op0_mod_n);
+                ct_mod_mp_mp(None, &mut expected, n).unwrap();
+            }
+        }
+        println!("result={:x}", result);
+        assert_ne!(ct_eq_mp_mp(&result, &expected).unwrap(), 0);
+    }
+
+    let exponent_len = ET::limbs_align_len(LIMB_BYTES + 1);
+    let mut e0_buf = vec![0u8; exponent_len];
+    let mut e1_buf = vec![0u8; exponent_len];
+    let mut e1 = ET::from_bytes(&mut e1_buf).unwrap();
+    e1.store_l(0, 1);
+    drop(e1);
+    let mut e2_buf = vec![0u8; exponent_len];
+    let mut e2 = ET::from_bytes(&mut e2_buf).unwrap();
+    e2.store_l(0, 2);
+    drop(e2);
+    let mut ef_buf = vec![!0u8; exponent_len];
+
+    for n_len in [1, LIMB_BYTES + 1, 2 * LIMB_BYTES - 1, 3 * LIMB_BYTES] {
+        let mut n = vec![0u8; NT::limbs_align_len(n_len)];
+        let mut n = NT::from_bytes(&mut n).unwrap();
+        n.store_l(0, 1);
+        while n.load_l((n_len - 1) / LIMB_BYTES) >> (8 * ((n_len - 1) % LIMB_BYTES)) == 0 {
+            ct_mul_trunc_mp_l(&mut n, n_len, 251);
+        }
+
+        for op0_len in 1..n_len {
+            let mut op0 = vec![0u8; T0::limbs_align_len(n_len)];
+            let mut op0 = T0::from_bytes(&mut op0).unwrap();
+            op0.store_l(0, 1);
+            for _ in 0..op0_len {
+                ct_mul_trunc_mp_l(&mut op0, n_len, 241);
+            }
+            ct_lshift_mp(&mut op0, 8 * (n_len - op0_len));
+            for e_buf in [&mut e0_buf, &mut e1_buf, &mut e2_buf, &mut ef_buf] {
+                let e = ET::from_bytes(e_buf).unwrap();
+                test_one::<RT, _, _, _>(&op0, &n, &e);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_ct_exp_mod_odd_be_be_be_be() {
+    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    test_ct_exp_mod_odd_mp_mp::<
+        MpBigEndianMutByteSlice,
+        MpBigEndianMutByteSlice,
+        MpBigEndianMutByteSlice,
+        MpBigEndianMutByteSlice,
+    >()
+}
+
+#[test]
+fn test_ct_exp_mod_odd_le_le_le_le() {
+    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    test_ct_exp_mod_odd_mp_mp::<
+        MpLittleEndianMutByteSlice,
+        MpLittleEndianMutByteSlice,
+        MpLittleEndianMutByteSlice,
+        MpLittleEndianMutByteSlice,
+    >()
+}
+
+#[test]
+fn test_ct_exp_mod_odd_ne_ne_ne_ne() {
+    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    test_ct_exp_mod_odd_mp_mp::<
+        MpNativeEndianMutByteSlice,
         MpNativeEndianMutByteSlice,
         MpNativeEndianMutByteSlice,
         MpNativeEndianMutByteSlice,

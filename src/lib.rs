@@ -46,8 +46,9 @@ pub use invmod_impl::{ct_inv_mod_mp_mp, CtInvModMpMpError};
 pub use lcm_impl::ct_lcm_mp_mp;
 
 pub use montgomery_impl::{
-    ct_montgomery_mul_mod_mp_mp, ct_montgomery_neg_n0_inv_mod_l_mp, ct_montgomery_radix2_mod_n_mp,
-    ct_montgomery_redc_mp, ct_to_montgomery_form_direct_mp, ct_to_montgomery_form_mp,
+    ct_exp_mod_odd_mp_mp, ct_montgomery_mul_mod_mp_mp, ct_montgomery_neg_n0_inv_mod_l_mp,
+    ct_montgomery_radix2_mod_n_mp, ct_montgomery_redc_mp, ct_montogmery_exp_mod_odd_mp_mp,
+    ct_to_montgomery_form_direct_mp, ct_to_montgomery_form_mp,
 };
 
 pub use mul_impl::{ct_mul_trunc_mp_l, ct_mul_trunc_mp_mp, ct_square_trunc_mp};
