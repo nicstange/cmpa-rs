@@ -1122,6 +1122,14 @@ pub struct MpBigEndianByteSlice<'a> {
     bytes: &'a [u8],
 }
 
+impl<'a> MpBigEndianByteSlice<'a> {
+    pub fn shrink_to(&self, nbytes: usize) -> MpBigEndianByteSlice<'_> {
+        debug_assert!(self.len() >= nbytes);
+        debug_assert!(nbytes >= find_last_set_byte_mp(self));
+        self.split_at(nbytes).1
+    }
+}
+
 impl<'a> MpIntByteSliceCommonPriv for MpBigEndianByteSlice<'a> {
     const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = true;
 
@@ -1187,6 +1195,14 @@ impl<'a> fmt::LowerHex for MpBigEndianByteSlice<'a> {
 
 pub struct MpBigEndianMutByteSlice<'a> {
     bytes: &'a mut [u8],
+}
+
+impl<'a> MpBigEndianMutByteSlice<'a> {
+    pub fn shrink_to(&mut self, nbytes: usize) -> MpBigEndianMutByteSlice<'_> {
+        debug_assert!(self.len() >= nbytes);
+        debug_assert!(nbytes >= find_last_set_byte_mp(self));
+        self.split_at(nbytes).1
+    }
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpBigEndianMutByteSlice<'a> {
@@ -1269,6 +1285,14 @@ pub struct MpLittleEndianByteSlice<'a> {
     bytes: &'a [u8],
 }
 
+impl<'a> MpLittleEndianByteSlice<'a> {
+    pub fn shrink_to(&self, nbytes: usize) -> MpLittleEndianByteSlice<'_> {
+        debug_assert!(self.len() >= nbytes);
+        debug_assert!(nbytes >= find_last_set_byte_mp(self));
+        self.split_at(nbytes).1
+    }
+}
+
 impl<'a> MpIntByteSliceCommonPriv for MpLittleEndianByteSlice<'a> {
     const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = true;
 
@@ -1334,6 +1358,14 @@ impl<'a> fmt::LowerHex for MpLittleEndianByteSlice<'a> {
 
 pub struct MpLittleEndianMutByteSlice<'a> {
     bytes: &'a mut [u8],
+}
+
+impl<'a> MpLittleEndianMutByteSlice<'a> {
+    pub fn shrink_to(&mut self, nbytes: usize) -> MpLittleEndianMutByteSlice<'_> {
+        debug_assert!(self.len() >= nbytes);
+        debug_assert!(nbytes >= find_last_set_byte_mp(self));
+        self.split_at(nbytes).1
+    }
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpLittleEndianMutByteSlice<'a> {
@@ -1419,6 +1451,15 @@ pub struct MpNativeEndianByteSlice<'a> {
     bytes: &'a [u8],
 }
 
+impl<'a> MpNativeEndianByteSlice<'a> {
+    pub fn shrink_to(&self, nbytes: usize) -> MpNativeEndianByteSlice<'_> {
+        debug_assert!(self.len() >= nbytes);
+        debug_assert!(nbytes >= find_last_set_byte_mp(self));
+        let nbytes = Self::limbs_align_len(nbytes);
+        self.split_at(nbytes).1
+    }
+}
+
 impl<'a> MpIntByteSliceCommonPriv for MpNativeEndianByteSlice<'a> {
     const SUPPORTS_UNALIGNED_BUFFER_LENGTHS: bool = false;
 
@@ -1490,6 +1531,15 @@ impl<'a> fmt::LowerHex for MpNativeEndianByteSlice<'a> {
 
 pub struct MpNativeEndianMutByteSlice<'a> {
     bytes: &'a mut [u8],
+}
+
+impl<'a> MpNativeEndianMutByteSlice<'a> {
+    pub fn shrink_to(&mut self, nbytes: usize) -> MpNativeEndianMutByteSlice<'_> {
+        debug_assert!(self.len() >= nbytes);
+        debug_assert!(nbytes >= find_last_set_byte_mp(self));
+        let nbytes = Self::limbs_align_len(nbytes);
+        self.split_at(nbytes).1
+    }
 }
 
 impl<'a> MpIntByteSliceCommonPriv for MpNativeEndianMutByteSlice<'a> {
