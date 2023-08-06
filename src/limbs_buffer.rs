@@ -1090,18 +1090,21 @@ pub trait MpIntMutByteSlice: MpIntMutByteSlicePriv {
     fn copy_from<S: MpIntByteSliceCommon>(&'_ mut self, src: &S) {
         let src_nlimbs = src.nlimbs();
         let dst_nlimbs = self.nlimbs();
-        debug_assert!(dst_nlimbs >= src_nlimbs);
+        debug_assert!(find_last_set_byte_mp(src) <= self.len());
 
         if src_nlimbs == 0 {
             self.clear_bytes_above(0);
             return;
+        } else if dst_nlimbs == 0 {
+            return;
         }
-        for i in 0..src_nlimbs - 1 {
+        let common_nlimbs = src_nlimbs.min(dst_nlimbs);
+        for i in 0..common_nlimbs - 1 {
             self.store_l_full(i, src.load_l_full(i));
         }
-        let high_limb = src.load_l(src_nlimbs - 1);
+        let high_limb = src.load_l(common_nlimbs - 1);
         debug_assert!(src_nlimbs < dst_nlimbs || (high_limb & !self.partial_high_mask()) == 0);
-        self.store_l(src_nlimbs - 1, high_limb);
+        self.store_l(common_nlimbs - 1, high_limb);
         self.clear_bytes_above(src.len());
     }
 
