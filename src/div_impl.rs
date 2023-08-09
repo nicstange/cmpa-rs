@@ -1,6 +1,6 @@
 use super::limb::{
     ct_add_l_l, ct_div_dl_l, ct_eq_l_l, ct_find_last_set_byte_l, ct_gt_l_l, ct_mul_add_l_l_l_c,
-    ct_mul_l_l, ct_mul_sub_b, ct_sub_l_l, CtDivDlLNormalizedDivisor, DoubleLimb, LimbChoice,
+    ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtDivDlLNormalizedDivisor, DoubleLimb, LimbChoice,
     LimbType, LIMB_BITS, LIMB_BYTES,
 };
 use super::limbs_buffer::{
@@ -60,7 +60,7 @@ fn sub_scaled_qv_val<VT: MpIntByteSliceCommon>(
     borrow: LimbType,
 ) -> (LimbType, LimbType, LimbType) {
     let (scaled_v_carry, v_val) = scaled_v_val(i, scaling, v, scaled_v_carry);
-    let (borrow, result) = ct_mul_sub_b(op0, q, v_val, borrow);
+    let (borrow, result) = ct_mul_sub_l_l_l_b(op0, q, v_val, borrow);
     (borrow, result, scaled_v_carry)
 }
 

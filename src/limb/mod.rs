@@ -496,7 +496,7 @@ pub fn ct_mul_add_l_l_l_c(
     (carry, result)
 }
 
-pub fn ct_mul_sub_b(
+pub fn ct_mul_sub_l_l_l_b(
     op0: LimbType,
     op10: LimbType,
     op11: LimbType,
