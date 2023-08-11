@@ -17,7 +17,7 @@ mod usize_ct_cmp;
 
 pub use limb::{
     ct_eq_l_l, ct_geq_l_l, ct_gt_l_l, ct_is_nonzero_l, ct_is_zero_l, ct_leq_l_l, ct_lt_l_l,
-    ct_neq_l_l, LimbChoice, LimbType,
+    ct_neq_l_l, CtLDivisor, CtLDivisorError, LimbChoice, LimbType,
 };
 
 pub use limbs_buffer::{

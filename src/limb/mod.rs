@@ -517,6 +517,171 @@ pub fn ct_mul_sub_l_l_l_b(
     (borrow, result)
 }
 
+pub struct CtLDivisor {
+    m: LimbType,
+    v: LimbType,
+    v_width: u32,
+}
+
+#[derive(Debug)]
+pub enum CtLDivisorError {
+    DivisorIsZero,
+}
+
+impl CtLDivisor {
+    pub fn new(v: LimbType) -> Result<Self, CtLDivisorError> {
+        if ct_is_zero_l(v) != 0 {
+            return Err(CtLDivisorError::DivisorIsZero);
+        }
+        debug_assert_ne!(v, 0);
+        let v_width = ct_find_last_set_bit_l(v) as u32;
+        let m = Self::ct_compute_m(v, v_width);
+        Ok(Self { m, v, v_width })
+    }
+
+    fn ct_compute_m(v: LimbType, v_width: u32) -> LimbType {
+        debug_assert!(v_width > 0);
+        // Align the nominator and denominator all the way to the left. Then run a
+        // bit-wise long division for the sake of constant-time.  The quotient's
+        // high bit at position 2^LIMB_BITS is known to come out as one, but is
+        // to be subtracted at the end anyway. So just shift it out in the last
+        // iteration.
+        let v = v << (LIMB_BITS - v_width);
+        let mut r_msb = LimbChoice::from(0);
+        let mut r_h = !0;
+        let mut r_l = !ct_lsb_mask_l(LIMB_BITS - v_width);
+        let mut q = 0;
+        for _ in 0..LIMB_BITS + 1 {
+            let q_new_lsb = r_msb | ct_geq_l_l(r_h, v);
+            q = (q << 1) | q_new_lsb.unwrap();
+            r_h = r_h.wrapping_sub(q_new_lsb.select(0, v));
+            r_msb = LimbChoice::from(r_h >> (LIMB_BITS - 1));
+            r_h = (r_h << 1) | (r_l >> (LIMB_BITS - 1));
+            r_l <<= 1;
+        }
+        q
+    }
+}
+
+pub trait CtLDivisorPrivate {
+    fn ct_do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType);
+    fn get_v(&self) -> LimbType;
+}
+
+impl CtLDivisorPrivate for CtLDivisor {
+    fn ct_do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
+        let l = self.v_width;
+        debug_assert!(l > 0 && l <= LIMB_BITS);
+        // The dividend u is divided in three parts:
+        // - u0: The l - 1 least significant bits.
+        // - u1: The single bit at position l - 1.
+        // - u2: The remaining most significant bits. Because the quotient fits a limb
+        //       by assumption, this fits a limb as well. In fact, it is smaller
+        //       than LimbType::MAX.
+        //
+        // Shift in two steps to avoid undefined behaviour.
+        let u2 = (u.low() >> (l - 1)) >> 1;
+        let u2 = u2 | u.high() << (LIMB_BITS - l);
+        // u10 is (u1, u0) shifted all the way to the left limb boundary.
+        // That is, it equals u1 * 2^(LIMB_BITS - 1) + u0 * (LIMB_BITS - l).
+        let u10 = u.low() << (LIMB_BITS - l);
+
+        let u1 = u10 >> (LIMB_BITS - 1);
+        // Normalized divisor, shifted all the way to the left such that the MSB
+        // is set.
+        let v_norm = self.v << (LIMB_BITS - l);
+        debug_assert_eq!(v_norm >> (LIMB_BITS - 1), 1);
+        // u1 is equal to the high bit in u10. The high bit in v_norm is always set.
+        // So, if u1 is set, adding the two will (virtually) overflow into 2^(LIMB_BITS).
+        // Dismissing this carry is equivalent to a subtracting 2^(LIMB_BITS).
+        // So, n_adj will equal
+        // u10 + u1 * v_norm
+        // = u1 * 2^(LIMB_BITS - 1) + u0 * (LIMB_BITS - l) + u1 * v_norm
+        // = u1 * (2^(LIMB_BITS - 1) + v_norm) + u0 * ...
+        // = u1 * (2^LIMB_BITS + v_norm - 2^(LIMB_BITS - 1)) + u0 * ...
+        // and, after dismisiing the carry
+        // = u1 * (v_norm - 2^(LIMB_BITS - 1)) + u0 * ...
+        let n_adj = u10.wrapping_add(LimbChoice::from(u1).select(0, v_norm));
+
+        // u2 + u1 does not overflow. Otherwise the quotient would not fit a limb.
+        debug_assert!(u2 < !0 || u1 == 0);
+        let p = ct_mul_l_l(self.m, u2 + u1);
+        let (carry, _) = ct_add_l_l(p.low(), n_adj);
+        let (carry, q1) = ct_add_l_l_c(u2, p.high(), carry);
+        debug_assert_eq!(carry, 0);
+
+
+        // Compute the remainder u - (q1  + 1) * v.
+        // u - q1 * v is known to be in the range [0, 2 * v), subtracting
+        // an extra v brings it into the range [-v, v).
+
+        // -(q1 + 1) with a (virtual) borrow of 2^LIMB_BITS.
+        // The +1 guarantees that negation will indeed use a (virtual) borrow, so it
+        // can be uncondiitionally subtracted from the high part below.
+        let neg_q_plus_one = ct_negate_l(q1.wrapping_add(1));
+        // (2^LIMB_BITS - (q1 + 1)) * v
+        let p = ct_mul_l_l(neg_q_plus_one, self.v);
+        let (carry, r_l) = ct_add_l_l(u.low(), p.low());
+        let (carry, r_h) = ct_add_l_l_c(u.high(), p.high(), carry);
+        // Subtract the 2^LIMB_BITS * v borrowed above from the
+        // high part.
+        let (borrow, r_h) = ct_sub_l_l(r_h, self.v);
+        debug_assert!(carry == 0 || borrow != 0);
+        let borrow = borrow ^ carry;
+        let is_negative = LimbChoice::from(borrow);
+        let q = q1 + (!is_negative).select(0, 1);
+        let (carry, r_l) = ct_add_l_l(r_l, is_negative.select(0, self.v));
+        debug_assert_eq!(r_h.wrapping_add(carry), 0);
+        debug_assert!(r_l < self.v);
+        (q, r_l)
+    }
+
+    fn get_v(&self) -> LimbType {
+        self.v
+    }
+}
+
+#[test]
+fn test_ct_l_divisor() {
+    fn div_and_check(u: DoubleLimb, v: LimbType) {
+        let v = CtLDivisor::new(v).unwrap();
+        let (q, r) = v.ct_do_div(&u);
+
+        // Multiply q by v again and add the remainder back, the result should match the
+        // initial u.
+        let prod = ct_mul_l_l(q, v.v);
+
+        let (carry, result_l) = ct_add_l_l(prod.low(), r);
+        let (carry, result_h) = ct_add_l_l(prod.high(), carry);
+        assert_eq!(carry, 0);
+        assert_eq!(result_l, u.low());
+        assert_eq!(result_h, u.high());
+    }
+
+    div_and_check(DoubleLimb::new(!1, !0), !0);
+
+    div_and_check(DoubleLimb::new(!1, !1), !0);
+
+    div_and_check(DoubleLimb::new(0, 0), !0);
+
+    div_and_check(DoubleLimb::new(0, !1), !0);
+
+    div_and_check(DoubleLimb::new(0, !0), 1);
+
+    div_and_check(DoubleLimb::new(1, !0), 2);
+
+    for i in 0..LIMB_BITS {
+        for j1 in i..LIMB_BITS {
+            for j2 in 0..j1 + 1 {
+                let u_h = if i != 0 { !0 >> (LIMB_BITS - i) } else { 0 };
+                let u = DoubleLimb::new(u_h, !0);
+                let v = 1 << j1 | 1 << j2;
+                div_and_check(u, v);
+            }
+        }
+    }
+}
+
 /// A normalized divisor for input to [`generic_ct_div_dl_l()`].
 ///
 /// In order to avoid scaling the same divisor all over again in loop invoking
