@@ -10,13 +10,6 @@ use super::limbs_buffer::{
 use super::shift_impl::ct_lshift_mp;
 use super::usize_ct_cmp::ct_is_zero_usize;
 
-#[derive(Debug)]
-pub enum CtDivMpError {
-    DivisionByZero,
-    InsufficientQuotientSpace,
-    InsufficientRemainderSpace,
-}
-
 pub struct CtMpDivisor<'a, VT: MpIntByteSliceCommon> {
     v: &'a VT,
     v_len: usize,
@@ -228,12 +221,17 @@ impl<'a, VT: MpIntByteSliceCommon> CtMpDivisor<'a, VT> {
     }
 }
 
+#[derive(Debug)]
+pub enum CtDivMpMpError {
+    InsufficientQuotientSpace,
+}
+
 pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u_h: Option<&mut UT>,
     u_l: &mut UT,
     v: &CtMpDivisor<VT>,
     mut q_out: Option<&mut QT>,
-) -> Result<(), CtDivMpError> {
+) -> Result<(), CtDivMpMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer
     // Programming", vol 2.
 
@@ -258,7 +256,7 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
         // The code storing the quotient below will verify that the head limb is zero in
         // case it's not been provided storage for.
         if q_out.len() + v_len < u_len {
-            return Err(CtDivMpError::InsufficientQuotientSpace);
+            return Err(CtDivMpMpError::InsufficientQuotientSpace);
         }
     };
 
@@ -341,7 +339,7 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
                 debug_assert!(j < q_out.nlimbs());
                 q_out.store_l(j, q);
             } else if q != 0 {
-                return Err(CtDivMpError::InsufficientQuotientSpace);
+                return Err(CtDivMpMpError::InsufficientQuotientSpace);
             }
         }
         let mut carry = 0;
@@ -558,12 +556,18 @@ pub fn ct_mod_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
     ct_div_mp_mp::<_, _, MpNativeEndianMutByteSlice>(u_h, u_l, v, None).unwrap()
 }
 
+#[derive(Debug)]
+pub enum CtDivPow2MpError {
+    InsufficientQuotientSpace,
+    InsufficientRemainderSpace,
+}
+
 pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u_pow2_exp: usize,
     r_out: &mut RT,
     v: &CtMpDivisor<VT>,
     mut q_out: Option<&mut QT>,
-) -> Result<(), CtDivMpError> {
+) -> Result<(), CtDivPow2MpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer
     // Programming", vol 2 for the special case of the dividend being a power of
     // two.
@@ -583,12 +587,12 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
         // The code storing the quotient below will verify that the head limb is zero in
         // case it's not been provided storage for.
         if q_out.len() + v_len < virtual_u_len {
-            return Err(CtDivMpError::InsufficientQuotientSpace);
+            return Err(CtDivPow2MpError::InsufficientQuotientSpace);
         }
     };
 
     if r_out.len() < v_len.min(virtual_u_len) {
-        return Err(CtDivMpError::InsufficientRemainderSpace);
+        return Err(CtDivPow2MpError::InsufficientRemainderSpace);
     }
     r_out.clear_bytes_above(0);
 
@@ -778,7 +782,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
                 debug_assert!(j < q_out.nlimbs());
                 q_out.store_l(j, q);
             } else if q != 0 {
-                return Err(CtDivMpError::InsufficientQuotientSpace);
+                return Err(CtDivPow2MpError::InsufficientQuotientSpace);
             }
         }
         let mut carry = 0;
@@ -935,14 +939,31 @@ fn test_ct_div_pow2_ne_ne_ne() {
     >()
 }
 
+#[derive(Debug)]
+pub enum CtModPow2MpError {
+    InsufficientRemainderSpace,
+}
+
 pub fn ct_mod_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
     u_pow2_exp: usize,
     r_out: &mut RT,
     v: &CtMpDivisor<VT>,
-) -> Result<(), CtDivMpError> {
+) -> Result<(), CtModPow2MpError> {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
-    ct_div_pow2_mp::<_, _, MpNativeEndianMutByteSlice>(u_pow2_exp, r_out, v, None)
+    ct_div_pow2_mp::<_, _, MpNativeEndianMutByteSlice>(u_pow2_exp, r_out, v, None).map_err(|e| {
+        match e {
+            CtDivPow2MpError::InsufficientRemainderSpace => {
+                CtModPow2MpError::InsufficientRemainderSpace
+            }
+            CtDivPow2MpError::InsufficientQuotientSpace => {
+                // No quotient, no insufficient quotient space.
+                unreachable!()
+            }
+        }
+    })
 }
+
+pub type CtDivLshiftedMpMpError = CtDivPow2MpError;
 
 pub fn ct_div_lshifted_mp_mp<
     UT: MpIntMutByteSlice,
@@ -954,7 +975,7 @@ pub fn ct_div_lshifted_mp_mp<
     u_lshift_len: usize,
     v: &CtMpDivisor<VT>,
     mut q_out: Option<&mut QT>,
-) -> Result<(), CtDivMpError> {
+) -> Result<(), CtDivLshiftedMpMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer
     // Programming", vol 2 adapted to the case of a dividend extended on the
     // right by u_lshift_len zero bytes.
@@ -984,12 +1005,12 @@ pub fn ct_div_lshifted_mp_mp<
         // The code storing the quotient below will verify that the head limb is zero in
         // case it's not been provided storage for.
         if q_out.len() + v_len < virtual_u_in_len {
-            return Err(CtDivMpError::InsufficientQuotientSpace);
+            return Err(CtDivLshiftedMpMpError::InsufficientQuotientSpace);
         }
     }
 
     if u.len() < v_len.min(virtual_u_in_len) {
-        return Err(CtDivMpError::InsufficientRemainderSpace);
+        return Err(CtDivLshiftedMpMpError::InsufficientRemainderSpace);
     }
 
     if virtual_u_in_len < v_len {
@@ -1142,7 +1163,7 @@ pub fn ct_div_lshifted_mp_mp<
                 debug_assert!(u_lshift_tail_nlimbs + j < q_out.nlimbs());
                 q_out.store_l(u_lshift_tail_nlimbs + j, q);
             } else if q != 0 {
-                return Err(CtDivMpError::InsufficientQuotientSpace);
+                return Err(CtDivLshiftedMpMpError::InsufficientQuotientSpace);
             }
         }
         let mut carry = 0;
@@ -1254,7 +1275,7 @@ pub fn ct_div_lshifted_mp_mp<
                 debug_assert!(j < q_out.nlimbs());
                 q_out.store_l(j, q);
             } else if q != 0 {
-                return Err(CtDivMpError::InsufficientQuotientSpace);
+                return Err(CtDivLshiftedMpMpError::InsufficientQuotientSpace);
             }
         }
 
@@ -1417,15 +1438,28 @@ fn test_ct_div_lshifted_ne_ne_ne() {
     >()
 }
 
+pub type CtModLshiftedMpMpError = CtModPow2MpError;
+
 pub fn ct_mod_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
     u: &mut UT,
     u_in_len: usize,
     u_lshift_len: usize,
     v: &CtMpDivisor<VT>,
-) -> Result<(), CtDivMpError> {
+) -> Result<(), CtModLshiftedMpMpError> {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
     ct_div_lshifted_mp_mp::<_, _, MpNativeEndianMutByteSlice>(u, u_in_len, u_lshift_len, v, None)
+        .map_err(|e| match e {
+            CtDivLshiftedMpMpError::InsufficientRemainderSpace => {
+                CtModLshiftedMpMpError::InsufficientRemainderSpace
+            }
+            CtDivLshiftedMpMpError::InsufficientQuotientSpace => {
+                // No quotient, no insufficient quotient space.
+                unreachable!()
+            }
+        })
 }
+
+pub type CtDivMpLError = CtDivMpMpError;
 
 // Compute the modulo of a multiprecision integer modulo a [`LimbType`]
 // divisisor.
@@ -1433,7 +1467,7 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u: &UT,
     v: &CtLDivisor,
     mut q_out: Option<&mut QT>,
-) -> Result<LimbType, CtDivMpError> {
+) -> Result<LimbType, CtDivMpLError> {
     let u_nlimbs = ct_mp_nlimbs(u.len());
     if u_nlimbs == 0 {
         return Ok(0);
@@ -1442,7 +1476,7 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     if let Some(q_out) = &mut q_out {
         let v_len = ct_find_last_set_byte_l(v.get_v());
         if q_out.len() + v_len < u.len() + 1 {
-            return Err(CtDivMpError::InsufficientQuotientSpace);
+            return Err(CtDivMpLError::InsufficientQuotientSpace);
         }
         if u.len() < v_len {
             q_out.clear_bytes_above(0);
@@ -1470,6 +1504,12 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
 
 pub fn ct_mod_mp_l<UT: MpIntByteSliceCommon>(u: &UT, v: &CtLDivisor) -> LimbType {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
-    // No quotient output means no InsufficientQuotientSpace error.
-    ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(u, v, None).unwrap()
+    ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(u, v, None)
+        .map_err(|e| match e {
+            CtDivMpLError::InsufficientQuotientSpace => {
+                // No quotient, no insufficient quotient space.
+                unreachable!()
+            }
+        })
+        .unwrap()
 }

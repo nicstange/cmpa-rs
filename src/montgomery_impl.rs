@@ -1,6 +1,9 @@
 use super::add_impl::ct_sub_cond_mp_mp;
 use super::cmp_impl::{ct_geq_mp_mp, ct_lt_mp_mp};
-use super::div_impl::{ct_mod_lshifted_mp_mp, ct_mod_pow2_mp, CtDivMpError, CtMpDivisor};
+use super::div_impl::{
+    ct_mod_lshifted_mp_mp, ct_mod_pow2_mp, CtModLshiftedMpMpError, CtModPow2MpError, CtMpDivisor,
+    CtMpDivisorError,
+};
 use super::limb::{
     ct_add_l_l, ct_inv_mod_l, ct_lsb_mask_l, ct_mul_add_l_l_l_c, LimbChoice, LimbType, LIMB_BITS,
 };
@@ -574,11 +577,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                     // the conventional product by r^-1 mod n, which is
                                     // not known without implementing Euklid's algorithm.
                                     ct_mul_trunc_mp_mp(&mut result, n.len(), &r_mod_n);
-                                    ct_mod_mp_mp(
-                                        None,
-                                        &mut result,
-                                        &CtMpDivisor::new(&n).unwrap(),
-                                    );
+                                    ct_mod_mp_mp(None, &mut result, &CtMpDivisor::new(&n).unwrap());
                                     drop(result);
 
                                     let mut _expected: [u8; 4 * LIMB_BYTES] = [0; 4 * LIMB_BYTES];
@@ -652,24 +651,42 @@ pub fn ct_montgomery_mul_mod_mp_mp<
     ct_montgomery_mul_mod_cond_mp_mp(result, op0, op1, n, neg_n0_inv_mod_l, LimbChoice::from(1))
 }
 
+#[derive(Debug)]
+pub enum CtMontgomeryTransformationError {
+    InvalidModulus,
+    InsufficientDestinationSpace,
+}
+
 pub fn ct_to_montgomery_form_direct_mp<TT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
     t: &mut TT,
     n: &NT,
-) -> Result<(), CtDivMpError> {
+) -> Result<(), CtMontgomeryTransformationError> {
     debug_assert!(t.nlimbs() >= n.nlimbs());
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
-    let n = CtMpDivisor::new(n).map_err(|_| CtDivMpError::DivisionByZero)?;
-    ct_mod_lshifted_mp_mp(t, t.len(), radix_shift_len, &n)
+    let n = CtMpDivisor::new(n).map_err(|e| match e {
+        CtMpDivisorError::DivisorIsZero => CtMontgomeryTransformationError::InvalidModulus,
+    })?;
+    ct_mod_lshifted_mp_mp(t, t.len(), radix_shift_len, &n).map_err(|e| match e {
+        CtModLshiftedMpMpError::InsufficientRemainderSpace => {
+            CtMontgomeryTransformationError::InsufficientDestinationSpace
+        }
+    })
 }
 
 pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
     radix2_mod_n_out: &mut RX2T,
     n: &NT,
-) -> Result<(), CtDivMpError> {
+) -> Result<(), CtMontgomeryTransformationError> {
     debug_assert!(ct_mp_nlimbs(radix2_mod_n_out.len()) >= ct_mp_nlimbs(n.len()));
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
-    let n = CtMpDivisor::new(n).map_err(|_| CtDivMpError::DivisionByZero)?;
-    ct_mod_pow2_mp::<_, _>(2 * 8 * radix_shift_len, radix2_mod_n_out, &n)
+    let n = CtMpDivisor::new(n).map_err(|e| match e {
+        CtMpDivisorError::DivisorIsZero => CtMontgomeryTransformationError::InvalidModulus,
+    })?;
+    ct_mod_pow2_mp::<_, _>(2 * 8 * radix_shift_len, radix2_mod_n_out, &n).map_err(|e| match e {
+        CtModPow2MpError::InsufficientRemainderSpace => {
+            CtMontgomeryTransformationError::InsufficientDestinationSpace
+        }
+    })
 }
 
 pub fn ct_to_montgomery_form_mp<

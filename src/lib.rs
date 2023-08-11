@@ -37,7 +37,11 @@ pub use cmp_impl::{
     ct_lt_mp_mp, ct_neq_mp_mp,
 };
 
-pub use div_impl::{ct_div_mp_l, ct_div_mp_mp, ct_mod_mp_l, ct_mod_mp_mp, CtDivMpError};
+pub use div_impl::{
+    ct_div_mp_l, ct_div_mp_mp, ct_mod_mp_l, ct_mod_mp_mp, CtDivLshiftedMpMpError, CtDivMpLError,
+    CtDivMpMpError, CtDivPow2MpError, CtModLshiftedMpMpError, CtModPow2MpError, CtMpDivisor,
+    CtMpDivisorError,
+};
 
 pub use euclid_impl::{ct_gcd_mp_mp, ct_gcd_odd_mp_mp, ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
 
@@ -48,7 +52,7 @@ pub use lcm_impl::ct_lcm_mp_mp;
 pub use montgomery_impl::{
     ct_exp_mod_odd_mp_mp, ct_montgomery_mul_mod_mp_mp, ct_montgomery_neg_n0_inv_mod_l_mp,
     ct_montgomery_radix2_mod_n_mp, ct_montgomery_redc_mp, ct_montogmery_exp_mod_odd_mp_mp,
-    ct_to_montgomery_form_direct_mp, ct_to_montgomery_form_mp,
+    ct_to_montgomery_form_direct_mp, ct_to_montgomery_form_mp, CtMontgomeryTransformationError,
 };
 
 pub use mul_impl::{ct_mul_trunc_mp_l, ct_mul_trunc_mp_mp, ct_square_trunc_mp};
