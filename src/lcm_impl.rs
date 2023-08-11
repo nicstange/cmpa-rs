@@ -1,5 +1,5 @@
 use super::cmp_impl::ct_is_zero_mp;
-use super::div_impl::ct_div_mp_mp;
+use super::div_impl::{CtMpDivisor, ct_div_mp_mp};
 use super::euclid_impl::ct_gcd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
@@ -105,10 +105,11 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     ct_lshift_mp(&mut scaled_prod_low, scaling_shift);
 
     // Finally, do the division and be done.
+    let gcd = CtMpDivisor::new(gcd).unwrap();
     ct_div_mp_mp(
         Some(&mut scaled_prod_high),
         &mut scaled_prod_low,
-        gcd,
+        &gcd,
         Some(result),
     )
     .unwrap();

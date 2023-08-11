@@ -1041,7 +1041,7 @@ fn test_ct_inv_mod_odd_mp_mp<
         op0: &T0,
         n: &NT,
     ) {
-        use super::div_impl::ct_mod_mp_mp;
+        use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
         use super::mul_impl::ct_mul_trunc_mp_mp;
 
         let mut op0_work_scratch = vec![0u8; op0.len()];
@@ -1074,7 +1074,7 @@ fn test_ct_inv_mod_odd_mp_mp<
         let mut product = MpNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
         product.copy_from(&op0_inv_mod_n);
         ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
-        ct_mod_mp_mp(None, &mut product, n).unwrap();
+        ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n).unwrap());
         assert_eq!(ct_is_one_mp(&product).unwrap(), 1);
     }
 

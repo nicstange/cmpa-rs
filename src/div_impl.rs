@@ -1,13 +1,14 @@
 use super::limb::{
-    ct_add_l_l, ct_div_dl_l, ct_eq_l_l, ct_find_last_set_byte_l, ct_gt_l_l, ct_mul_add_l_l_l_c,
-    ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtDivDlLNormalizedDivisor, DoubleLimb, LimbChoice,
-    LimbType, LIMB_BITS, LIMB_BYTES,
+    ct_add_l_l, ct_eq_l_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_gt_l_l,
+    ct_lsb_mask_l, ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtLDivisor, CtLDivisorPrivate,
+    DoubleLimb, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
 };
 use super::limbs_buffer::{
     ct_mp_nlimbs, find_last_set_byte_mp, CompositeLimbsBuffer, MpIntByteSliceCommon,
     MpIntMutByteSlice, MpNativeEndianMutByteSlice,
 };
 use super::shift_impl::ct_lshift_mp;
+use super::usize_ct_cmp::ct_is_zero_usize;
 
 #[derive(Debug)]
 pub enum CtDivMpError {
@@ -16,161 +17,225 @@ pub enum CtDivMpError {
     InsufficientRemainderSpace,
 }
 
-fn v_scaling(v_high: LimbType) -> LimbType {
-    // Normalize divisor's high limb. Calculate 2^LIMB_BITS / (v_high + 1).
-    // Be careful to avoid overflow in calculating v_high + 1. The subsequent code
-    // below still returns the correct result if the increment is skipped in
-    // this case.
-    let den = v_high + ct_eq_l_l(v_high, !0).select(1, 0);
-
-    // First calculate (2^LIMB_BITS - 1) / (v_high + 1).
-    let q = !0 / den;
-    let rem = !0 - den * q;
-    // And possibly round up to get 2^LimbType::BITS / (v_high + 1).
-    // Note that the test below is equivalent to rem + 1 == v_high + 1.
-    q + ct_eq_l_l(rem, v_high).select(0, 1)
+pub struct CtMpDivisor<'a, VT: MpIntByteSliceCommon> {
+    v: &'a VT,
+    v_len: usize,
+    scaling_shift: u32,
+    scaling_low_src_rshift: u32,
+    scaling_low_src_mask: LimbType,
+    scaled_v_head_divisor: CtLDivisor,
+    scaled_v_head: LimbType,
+    scaled_v_tail_head: LimbType,
 }
 
-fn scaled_v_val<VT: MpIntByteSliceCommon>(
-    i: usize,
-    scaling: LimbType,
-    v: &VT,
-    scaled_v_carry: LimbType,
-) -> (LimbType, LimbType) {
-    ct_mul_add_l_l_l_c(0, scaling, v.load_l(i), scaled_v_carry)
+#[derive(Debug)]
+pub enum CtMpDivisorError {
+    DivisorIsZero,
 }
 
-fn add_scaled_v_val<VT: MpIntByteSliceCommon>(
-    op0: LimbType,
-    i: usize,
-    scaling: LimbType,
-    v: &VT,
-    carry: LimbType,
-) -> (LimbType, LimbType) {
-    ct_mul_add_l_l_l_c(op0, scaling, v.load_l(i), carry)
-}
+impl<'a, VT: MpIntByteSliceCommon> CtMpDivisor<'a, VT> {
+    pub fn new(v: &'a VT) -> Result<Self, CtMpDivisorError> {
+        // Find the index of the highest set limb in v. For divisors, constant time
+        // evaluation doesn't really matter, probably, as far as the number of zero
+        // high bytes is concerned. Also, the long division algorithm's runtime
+        // depends highly on the divisor's length anyway.
+        let v_len = find_last_set_byte_mp(v);
+        if ct_is_zero_usize(v_len) != 0 {
+            return Err(CtMpDivisorError::DivisorIsZero);
+        }
+        let v_nlimbs = ct_mp_nlimbs(v_len);
 
-fn sub_scaled_qv_val<VT: MpIntByteSliceCommon>(
-    op0: LimbType,
-    i: usize,
-    q: LimbType,
-    scaling: LimbType,
-    v: &VT,
-    scaled_v_carry: LimbType,
-    borrow: LimbType,
-) -> (LimbType, LimbType, LimbType) {
-    let (scaled_v_carry, v_val) = scaled_v_val(i, scaling, v, scaled_v_carry);
-    let (borrow, result) = ct_mul_sub_l_l_l_b(op0, q, v_val, borrow);
-    (borrow, result, scaled_v_carry)
-}
+        let v_head = v.load_l(v_nlimbs - 1);
+        let v_head_width = ct_find_last_set_bit_l(v_head);
+        debug_assert_ne!(v_head_width, 0);
 
-fn v_head_scaled<VT: MpIntByteSliceCommon>(
-    scaling: LimbType,
-    v: &VT,
-    v_nlimbs: usize,
-) -> (LimbType, LimbType) {
-    // Read-only v won't get scaled in-place, but on the fly as needed. For now,
-    // multiply v by scaling only to calculate the two scaled head limbs of v,
-    // as are needed for the q estimates. Note that multiplying v by scaling
-    // will not overflow the width of v: b = scaling * (v_high + 1) + rest,
-    // b >= scaling * (v_high + 1).
-    // The claim follows by interpreting the tail of v as a fractional number < 1.
-    let mut scaled_v_carry = 0;
-    // scaled v[n - 2], if v_nlimbs == 1, it will remain zero on purpose.
-    let mut scaled_v_tail_high = 0;
-    for i in 0..v_nlimbs - 1 {
-        (scaled_v_carry, scaled_v_tail_high) = scaled_v_val(i, scaling, v, scaled_v_carry);
+        // Normalize by shift such that the scaled v high limb's MSB is set.
+        let scaling_shift = LIMB_BITS - v_head_width as u32;
+        let scaling_low_src_rshift = (LIMB_BITS - scaling_shift) % LIMB_BITS;
+        let scaling_low_src_mask = ct_lsb_mask_l(scaling_shift);
+
+        // Read-only v won't get scaled in-place, but on the fly as needed. For now,
+        // scale v by only to calculate the two scaled head limbs of v,
+        // as are needed for the q estimates. For scaling by shifting (as opposed to
+        // by multiplication of a scaling factor), only the highest three limbs
+        // contribute to the highest two scaled limbs.
+        let mut scaled_v_carry = 0;
+        // If v_nlimbs == 1, it will remain zero on purpose.
+        let mut scaled_v_tail_head = 0; // Silence the compiler.
+        let mut scaled_v_head = 0;
+        for i in v_nlimbs - 3.min(v_nlimbs)..v_nlimbs {
+            scaled_v_tail_head = scaled_v_head;
+            (scaled_v_carry, scaled_v_head) = Self::_scale_val(
+                v.load_l(i),
+                scaling_shift,
+                scaling_low_src_rshift,
+                scaling_low_src_mask,
+                scaled_v_carry,
+            );
+        }
+        debug_assert_eq!(scaled_v_carry, 0);
+
+        let scaled_v_head_divisor = CtLDivisor::new(scaled_v_head).unwrap();
+
+        Ok(Self {
+            v,
+            v_len,
+            scaling_shift,
+            scaling_low_src_rshift,
+            scaling_low_src_mask,
+            scaled_v_head_divisor,
+            scaled_v_head,
+            scaled_v_tail_head,
+        })
     }
 
-    let scaled_v_high;
-    (scaled_v_carry, scaled_v_high) = scaled_v_val(v_nlimbs - 1, scaling, v, scaled_v_carry);
-    debug_assert_eq!(scaled_v_carry, 0);
-    (scaled_v_high, scaled_v_tail_high)
-}
+    fn make_q_estimate(&self, u_head: &[LimbType; 3]) -> LimbType {
+        // The double limb by limb division supports only dividends for
+        // which the quotient fits a limb. However, the quotient here
+        // might exceed a limb by one bit, but not more, because of
+        // the normalization of v_high.
+        // Before invoking the the CtDivDlLLDivisor, handle this
+        // case explicitly.
+        let (q_high_is_zero, u_high) = ct_sub_l_l(u_head[0], self.scaled_v_head);
+        let q_high_is_zero = LimbChoice::from(q_high_is_zero);
+        let u_high = q_high_is_zero.select(u_high, u_head[0]);
+        debug_assert!(u_high < self.scaled_v_head);
+        let (q_low, r) = self
+            .scaled_v_head_divisor
+            .ct_do_div(&DoubleLimb::new(u_high, u_head[1]));
 
-fn q_estimate(
-    u_head: &[LimbType; 3],
-    scaled_v_head: &[LimbType; 2],
-    normalized_scaled_v_high: &CtDivDlLNormalizedDivisor,
-) -> LimbType {
-    let (q, r) = ct_div_dl_l(
-        &DoubleLimb::new(u_head[0], u_head[1]),
-        normalized_scaled_v_high,
-    );
-    debug_assert!(q.high() <= 1); // As per the normalization of v_high.
+        // If !q_high_is_zero, q needs to get capped to fit single limb and r adjusted
+        // accordingly.
+        //
+        // For determining the adjusted r, note that if !q_high_is_zero, then then
+        // u_head[0] == scaled_v_head. To see this, observe that
+        // u_head[0] >= scaled_v_head holds trivially.
+        //
+        // OTOH, the invariant throughout the caller's loop over j is that
+        // u[j+n:j] / v[n-1:0] < b (u and v both scaled), from which it follows that
+        // u_head[0] <= scaled_v_head. Assume not, i.e.
+        // u_head[0] >= scaled_v_head + 1. We have v < (scaled_v_head + 1) * b^(n - 1).
+        // It would follow that
+        // u[j+n:j] >= (u_head[0] * b + u_head[1]) * b^(n - 1)
+        //          >= u_head[0] * b * b^(n - 1) >= (scaled_v_head + 1) * b * b^(n - 1)
+        //          > v * b,
+        // a contradiction to the loop invariant.
+        //
+        // Thus, in summary, if !q_high_is_zero, then u_head[0] == scaled_v_head.
+        //
+        // It follows that the adjusted r for capping q to q == b - 1 equals
+        // u_head[0] * b + u_head[1] - (b - 1) * scaled_v_head
+        // = scaled_v_head * b + u_head[1] - (b - 1) * scaled_v_head
+        // = scaled_v_head + u_head[1].
+        debug_assert!(q_high_is_zero.unwrap() != 0 || u_head[0] == self.scaled_v_head);
+        let ov = !q_high_is_zero;
+        let q = ov.select(q_low, !0);
+        let (r_carry_on_ov, r_on_ov) = ct_add_l_l(u_head[1], self.scaled_v_head);
+        let r = ov.select(r, r_on_ov);
+        debug_assert_eq!(r_carry_on_ov & !1, 0); // At most LSB is set
+        let r_carry = ov & LimbChoice::from(r_carry_on_ov);
 
-    // If q.high() is set, q needs to get capped to fit single limb
-    // and r adjusted accordingly.
-    //
-    // For determining the adjusted r, note that if q.high() is set,
-    // then then u_head[0] == v_head[0].
-    // To see this, observe that u_head[0] >= v_head[0] holds trivially.
-    //
-    // OTOH, the invariant throughout the caller's loop over j is that
-    // u[j+n:j] / v[n-1:0] < b, from which it follows that
-    // u_head[0] <= v_head[0]. Assume not, i.e.
-    // u_head[0] >= v_head[0] + 1. We have v < (v_head[0] + 1) * b^(n - 1).
-    // It would follow that
-    // u[j+n:j] >= (u_head[0] * b + u_head[1]) * b^(n - 1)
-    //          >= u_head[0] * b * b^(n - 1) >= (v_head[0] + 1) * b * b^(n - 1)
-    //          > v * b,
-    // a contradiction to the loop invariant.
-    //
-    // Thus, in summary, if q.high() is set, then u_head[0] == v_head[0].
-    //
-    // It follows that the adjusted r for capping q to q == b - 1 equals
-    // u_head[0] * b + u_head[1] - (b - 1) * v_head[0]
-    // = v_head[0] * b + u_head[1] - (b - 1) * v_head[0] = v_head[0] + u_head[1].
-    debug_assert!(q.high() == 0 || u_head[0] == scaled_v_head[0]);
-    debug_assert_eq!(q.high() & !1, 0); // At most LSB is set
-    let ov = LimbChoice::from(q.high());
-    let q = ov.select(q.low(), !0);
-    let (r_carry_on_ov, r_on_ov) = ct_add_l_l(u_head[1], scaled_v_head[0]);
-    let r = ov.select(r, r_on_ov);
-    debug_assert_eq!(r_carry_on_ov & !1, 0); // At most LSB is set
-    let r_carry = ov & LimbChoice::from(r_carry_on_ov);
+        // Now, as long as r does not overflow b, i.e. a LimbType,
+        // check whether q * v[n - 2] > b * r + u[j + n - 2].
+        // If so, decrement q and adjust r accordingly by adding v[n-1] back.
+        // Note that because v[n-1] is normalized to have its MSB set,
+        // r would overflow in the second iteration at latest.
+        // The second iteration is not necessary for correctness, but only serves
+        // optimization purposes: it would help to avoid the "add-back" step
+        // below in the majority of cases. However, for constant-time execution,
+        // the add-back must get executed anyways and thus, the second iteration
+        // of the "over-estimated" check here would be quite pointless. Skip it.
+        //
+        // If v_nlimbs < 2 and j == 0, u[j + n - 2] might not be defined. But in this
+        // case v[n-2] (found in scaled_v_head[1]) is zero anyway and the comparison
+        // test will always come out negative, so the caller may load arbitrary
+        // value into its corresponding location at q_head[2].
+        let qv_head_low: DoubleLimb = ct_mul_l_l(self.scaled_v_tail_head, q);
+        let over_estimated = !r_carry
+            & (ct_gt_l_l(qv_head_low.high(), r)
+                | (ct_eq_l_l(qv_head_low.high(), r) & ct_gt_l_l(qv_head_low.low(), u_head[2])));
+        q - over_estimated.select(0, 1)
+    }
 
-    // Now, as long as r does not overflow b, i.e. a LimbType,
-    // check whether q * v[n - 2] > b * r + u[j + n - 2].
-    // If so, decrement q and adjust r accordingly by adding v[n-1] back.
-    // Note that because v[n-1] is normalized to have its MSB set,
-    // r would overflow in the second iteration at latest.
-    // The second iteration is not necessary for correctness, but only serves
-    // optimization purposes: it would help to avoid the "add-back" step
-    // below in the majority of cases. However, for constant-time execution,
-    // the add-back must get executed anyways and thus, the second iteration
-    // of the "over-estimated" check here would be quite pointless. Skip it.
-    //
-    // If v_nlimbs < 2 and j == 0, u[j + n - 2] might not be defined. But in this
-    // case v[n-2] (found in scaled_v_head[1]) is zero anyway and the comparison
-    // test will always come out negative, so the caller may load arbitrary
-    // value into its corresponding location at q_head[2].
-    let qv_head_low: DoubleLimb = ct_mul_l_l(scaled_v_head[1], q);
-    let over_estimated = !r_carry
-        & (ct_gt_l_l(qv_head_low.high(), r)
-            | (ct_eq_l_l(qv_head_low.high(), r) & ct_gt_l_l(qv_head_low.low(), u_head[2])));
-    q - over_estimated.select(0, 1)
+    // Scale a multiprecision integer limb with carry application.
+    fn _scale_val(
+        val: LimbType,
+        scaling_shift: u32,
+        scaling_low_src_rshift: u32,
+        scaling_low_src_mask: LimbType,
+        carry: LimbType,
+    ) -> (LimbType, LimbType) {
+        debug_assert!(carry <= (1 << scaling_shift));
+        let (carry, scaled_val) = ct_add_l_l(val << scaling_shift, carry);
+        // If the addition wrapped around, it wrapped to zero: in this case
+        // the original carry had been == 1 << scaling_shift.
+        debug_assert!(carry == 0 || scaled_val == 0);
+        // Does no wrap: either scaling_low_src_rshift > 0 or the mask is zero.
+        let carry = ((val >> scaling_low_src_rshift) & scaling_low_src_mask) + carry;
+        debug_assert!(carry <= (1 << scaling_shift));
+        (carry, scaled_val)
+    }
+
+    fn scale_val(&self, val: LimbType, carry: LimbType) -> (LimbType, LimbType) {
+        Self::_scale_val(
+            val,
+            self.scaling_shift,
+            self.scaling_low_src_rshift,
+            self.scaling_low_src_mask,
+            carry,
+        )
+    }
+
+    fn scaled_v_val(&self, i: usize, carry: LimbType) -> (LimbType, LimbType) {
+        self.scale_val(self.v.load_l(i), carry)
+    }
+
+    fn unscale_val(&self, val: LimbType, last_higher_val: LimbType) -> LimbType {
+        let dst_high_lshift = self.scaling_low_src_rshift;
+        let dst_high_mask = self.scaling_low_src_mask;
+
+        let val_low = val >> self.scaling_shift;
+        let val_high = (last_higher_val & dst_high_mask) << dst_high_lshift;
+        val_high | val_low
+    }
+
+    fn add_scaled_v_val_cond(
+        &self,
+        op0: LimbType,
+        i: usize,
+        carry: LimbType,
+        cond: LimbChoice,
+    ) -> (LimbType, LimbType) {
+        let (carry0, scaled_v_val) = self.scaled_v_val(i, carry);
+        let carry0 = cond.select(0, carry0);
+        let scaled_v_val = cond.select(0, scaled_v_val);
+        let (carry1, result) = ct_add_l_l(op0, scaled_v_val);
+        let carry = carry0 + carry1;
+        (carry, result)
+    }
+
+    fn sub_scaled_qv_val(
+        &self,
+        op0: LimbType,
+        i: usize,
+        q: LimbType,
+        scaled_v_carry: LimbType,
+        borrow: LimbType,
+    ) -> (LimbType, LimbType, LimbType) {
+        let (scaled_v_carry, scaled_v_val) = self.scaled_v_val(i, scaled_v_carry);
+        let (borrow, result) = ct_mul_sub_l_l_l_b(op0, q, scaled_v_val, borrow);
+        (borrow, result, scaled_v_carry)
+    }
 }
 
 pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u_h: Option<&mut UT>,
     u_l: &mut UT,
-    v: &VT,
+    v: &CtMpDivisor<VT>,
     mut q_out: Option<&mut QT>,
 ) -> Result<(), CtDivMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer
     // Programming", vol 2.
-    //
-    // Find the index of the highest set limb in v. For divisors, constant time
-    // evaluation doesn't really matter, probably as far as the number of zero
-    // high bytes is concerned. Also, the long division algorithm's runtime
-    // depends highly on the divisor's length anyway.
-    let v_len = find_last_set_byte_mp(v);
-    if v_len == 0 {
-        return Err(CtDivMpError::DivisionByZero);
-    }
-    let v_nlimbs = ct_mp_nlimbs(v_len);
-    let v_high = v.load_l(v_nlimbs - 1);
 
     // If u_h is None, set it to an empty slice for code uniformity.
     let mut __u_h: [u8; 0] = [0; 0];
@@ -181,6 +246,9 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
 
     let u_len = u_l.len() + u_h.len();
     let u_nlimbs = ct_mp_nlimbs(u_len);
+
+    let v_len = v.v_len;
+    let v_nlimbs = ct_mp_nlimbs(v_len);
 
     if let Some(q_out) = &mut q_out {
         // Check that q_out has enough space for storing the maximum possible quotient.
@@ -220,21 +288,11 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
     let u_l = u_l.coerce_lifetime();
     let mut u_parts = CompositeLimbsBuffer::new([u_l, u_h, u_pad]);
 
-    // Normalize divisor's high limb.
-    let scaling = v_scaling(v_high);
-
-    // Read-only v won't get scaled in-place, but on the fly as needed. Calculate
-    // only its scaled two high limbs, which will be needed for making the q
-    // estimates.
-    let (scaled_v_high, scaled_v_tail_high) = v_head_scaled(scaling, v, v_nlimbs);
-    let scaled_v_head: [LimbType; 2] = [scaled_v_high, scaled_v_tail_high];
-    let normalized_scaled_v_high = CtDivDlLNormalizedDivisor::new(scaled_v_high);
-
     // Scale u.
     let mut carry = 0;
     for i in 0..u_nlimbs + 1 {
         let mut u_val = u_parts.load(i);
-        (carry, u_val) = ct_mul_add_l_l_l_c(0, u_val, scaling, carry);
+        (carry, u_val) = v.scale_val(u_val, carry);
         u_parts.store(i, u_val);
     }
     // The extra high limb in u_h_pad, initialized to zero, would have absorbed the
@@ -257,7 +315,7 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
             };
             let cur_u_head: [LimbType; 3] = [u_h, u_l, u_tail_high];
 
-            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
+            v.make_q_estimate(&cur_u_head)
         };
 
         // Subtract q * v from u at position j.
@@ -266,7 +324,7 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
         for i in 0..v_nlimbs {
             let mut u_val = u_parts.load(j + i);
             (borrow, u_val, scaled_v_carry) =
-                sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
             u_parts.store(j + i, u_val);
         }
         debug_assert_eq!(scaled_v_carry, 0);
@@ -287,10 +345,9 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
             }
         }
         let mut carry = 0;
-        let add_back_scaling = over_estimated.select(0, scaling);
         for i in 0..v_nlimbs {
             let mut u_val = u_parts.load(j + i);
-            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
             u_parts.store(j + i, u_val);
         }
         let u_val = u_parts.load(j + v_nlimbs);
@@ -304,16 +361,13 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
         debug_assert_eq!(u_parts.load(j), 0);
     }
     let mut j = v_nlimbs;
-    let scaling = CtDivDlLNormalizedDivisor::new(scaling);
     while j > 0 {
         j -= 1;
         let u_l = u_parts.load(j);
-        let (u, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
-        debug_assert_eq!(u.high(), 0);
-        u_parts.store(j, u.low());
-        u_h = r;
+        let u_val = v.unscale_val(u_l, u_h);
+        u_h = u_l;
+        u_parts.store(j, u_val);
     }
-    debug_assert_eq!(u_h, 0);
 
     Ok(())
 }
@@ -363,7 +417,8 @@ fn test_ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMutB
         } else {
             (None, rem.coerce_lifetime())
         };
-        ct_div_mp_mp(rem_h.as_mut(), &mut rem_l, v, Some(&mut q)).unwrap();
+        let divisor = CtMpDivisor::new(v).unwrap();
+        ct_div_mp_mp(rem_h.as_mut(), &mut rem_l, &divisor, Some(&mut q)).unwrap();
         drop(rem_h);
         drop(rem_l);
 
@@ -495,36 +550,30 @@ fn test_ct_div_ne_ne_ne() {
 pub fn ct_mod_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
     u_h: Option<&mut UT>,
     u_l: &mut UT,
-    v: &VT,
-) -> Result<(), CtDivMpError> {
+    v: &CtMpDivisor<VT>,
+) {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
-    ct_div_mp_mp::<_, _, MpNativeEndianMutByteSlice>(u_h, u_l, v, None)
+    // The division will not return an InsufficientQuotientSpace error, because
+    // there is none.
+    ct_div_mp_mp::<_, _, MpNativeEndianMutByteSlice>(u_h, u_l, v, None).unwrap()
 }
 
 pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u_pow2_exp: usize,
     r_out: &mut RT,
-    v: &VT,
+    v: &CtMpDivisor<VT>,
     mut q_out: Option<&mut QT>,
 ) -> Result<(), CtDivMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer
     // Programming", vol 2 for the special case of the dividend being a power of
     // two.
-    //
-    // Find the index of the highest set limb in v. For divisors, constant time
-    // evaluation doesn't really matter, probably as far as the number of zero
-    // high bytes is concerned. Also, the long division algorithm's runtime
-    // depends highly on the divisor's length anyway.
-    let v_len = find_last_set_byte_mp(v);
-    if v_len == 0 {
-        return Err(CtDivMpError::DivisionByZero);
-    }
-    let v_nlimbs = ct_mp_nlimbs(v_len);
-    let v_high = v.load_l(v_nlimbs - 1);
 
     // The virtual length of the base 2 power in bytes.
     let virtual_u_len = ((u_pow2_exp + 1) + 8 - 1) / 8;
     let virtual_u_nlimbs = ct_mp_nlimbs(virtual_u_len);
+
+    let v_len = v.v_len;
+    let v_nlimbs = ct_mp_nlimbs(v_len);
 
     if let Some(q_out) = &mut q_out {
         // Check that q_out has enough space for storing the maximum possible quotient.
@@ -560,25 +609,17 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
         q_out.clear_bytes_above(q_out_max_len);
     };
 
-    // Normalize divisor's high limb.
-    let scaling = v_scaling(v_high);
-
-    // Read-only v won't get scaled in-place, but on the fly as needed. Calculate
-    // only its scaled two high limbs, which will be needed for making the q
-    // estimates.
-    let (scaled_v_high, scaled_v_tail_high) = v_head_scaled(scaling, v, v_nlimbs);
-    let scaled_v_head: [LimbType; 2] = [scaled_v_high, scaled_v_tail_high];
-    let normalized_scaled_v_high = CtDivDlLNormalizedDivisor::new(scaled_v_high);
-
     // Scale u. Note that as being a power of two, only its (current) most
     // significant high limb is non-zero.
-    let scaled_u_high: DoubleLimb = ct_mul_l_l(u_high, scaling);
-    let mut r_out_head_shadow: [LimbType; 2] = [scaled_u_high.low(), scaled_u_high.high()];
+    let (scaled_u_head_carry, scaled_u_head_low) = v.scale_val(u_high, 0);
+    let (scaled_u_head_carry, scaled_u_head_high) = v.scale_val(0, scaled_u_head_carry);
+    debug_assert_eq!(scaled_u_head_carry, 0);
+    let mut r_out_head_shadow: [LimbType; 2] = [scaled_u_head_low, scaled_u_head_high];
 
     // Note that q_out_max_nlimbs as calculate above doesn't necessarily equal
     // u_nlimbs - v_nlimbs + 1, but might come out to be one less. It can be
     // shown that q_out_max_nlimbs = u_nlimbs - v_nlimbs implies that the
-    // scaling of u above would not have overflown into the scaled_u_high.high()
+    // scaling of u above would not have overflown into the scaled_u_head_high
     // now found in the r_out_head_shadow[] high limb at index 1.
     //
     // [To see this, write
@@ -619,7 +660,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
     //  guaranteed not to overflow into the next higher limb. Observe how this
     //  latter condition is equivalent to r_vl > r_ul, which, as shown above, is
     //  in turn equivalent to q_out_max_nlimbs taking the smaller of the two
-    //  possible values:   q_out_max_nlimbs = u_nlimbs - v_nlimbs.]
+    //  possible values: q_out_max_nlimbs = u_nlimbs - v_nlimbs.]
     //
     // This matters insofar, as the current setup of r_out_head_shadow[] is such
     // that the sliding window approach to the division from below would start
@@ -671,7 +712,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
             let cur_u_head: [LimbType; 3] =
                 [r_out_head_shadow[1], r_out_head_shadow[0], u_tail_high];
 
-            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
+            v.make_q_estimate(&cur_u_head)
         };
 
         // Virtually extend the v_nlimbs-limb sliding window by a zero on the right,
@@ -691,7 +732,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
                 let mut u_val = next_u_val;
                 next_u_val = r_out.load_l_full(i);
                 (borrow, u_val, scaled_v_carry) =
-                    sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                    v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
                 r_out.store_l_full(i, u_val);
                 i += 1;
             }
@@ -701,7 +742,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
             {
                 let mut u_val = next_u_val;
                 (borrow, u_val, scaled_v_carry) =
-                    sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                    v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
                 i += 1;
                 u_val
             }
@@ -720,7 +761,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
             let cur_u_val = r_out_head_shadow[0];
             r_out_head_shadow[0] = u_val;
             (borrow, u_val, scaled_v_carry) =
-                sub_scaled_qv_val(cur_u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                v.sub_scaled_qv_val(cur_u_val, i, q, scaled_v_carry, borrow);
             debug_assert_eq!(scaled_v_carry, 0);
             let cur_u_val = r_out_head_shadow[1];
             r_out_head_shadow[1] = u_val;
@@ -740,13 +781,12 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
                 return Err(CtDivMpError::InsufficientQuotientSpace);
             }
         }
-        let add_back_scaling = over_estimated.select(0, scaling);
         let mut carry = 0;
         let mut i = 0;
         // Update the tail maintained in r_out[v_nlimbs - 3:0], if any:
         while i + 2 < v_nlimbs {
             let mut u_val = r_out.load_l_full(i);
-            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
             r_out.store_l_full(i, u_val);
             i += 1;
         }
@@ -760,7 +800,7 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
         for k in 0..r_out_head_shadow_cur_sliding_window_overlap {
             let k = 2 - r_out_head_shadow_cur_sliding_window_overlap + k;
             let mut u_val = r_out_head_shadow[k];
-            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
             r_out_head_shadow[k] = u_val;
             i += 1;
         }
@@ -768,7 +808,6 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
     }
 
     // Finally, divide the resulting remainder in r_out by the scaling again.
-    let scaling = CtDivDlLNormalizedDivisor::new(scaling);
     let mut u_h = 0;
     // The two high limbs in r_out_head_shadow come first. Descale them and store
     // them into their corresponding locations in the returned r_out[]. Note
@@ -777,10 +816,9 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
     debug_assert!(v_nlimbs > 1 || r_out_head_shadow[0] == 0);
     for k in 0..v_nlimbs.min(2) {
         let u_l = r_out_head_shadow[2 - 1 - k];
-        let (u, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
-        debug_assert_eq!(u.high(), 0);
-        r_out.store_l(v_nlimbs - 1 - k, u.low());
-        u_h = r;
+        let u_val = v.unscale_val(u_l, u_h);
+        u_h = u_l;
+        r_out.store_l(v_nlimbs - 1 - k, u_val);
     }
 
     // Now do the remaining part in r_out[v_nlimbs - 3:0].
@@ -788,12 +826,10 @@ pub fn ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpInt
     while j > 2 {
         j -= 1;
         let u_l = r_out.load_l_full(j - 2);
-        let (u, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
-        debug_assert_eq!(u.high(), 0);
-        r_out.store_l_full(j - 2, u.low());
-        u_h = r;
+        let u_val = v.unscale_val(u_l, u_h);
+        u_h = u_l;
+        r_out.store_l_full(j - 2, u_val);
     }
-    debug_assert_eq!(u_h, 0);
 
     Ok(())
 }
@@ -815,7 +851,13 @@ fn test_ct_div_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntMutByteSlice, QT: MpIntMu
         let mut q = QT::from_bytes(&mut q).unwrap();
         let mut rem = vec![0xffu8; RT::limbs_align_len(v_len)];
         let mut rem = RT::from_bytes(&mut rem).unwrap();
-        ct_div_pow2_mp(u_pow2_exp as usize, &mut rem, v, Some(&mut q)).unwrap();
+        ct_div_pow2_mp(
+            u_pow2_exp as usize,
+            &mut rem,
+            &CtMpDivisor::new(v).unwrap(),
+            Some(&mut q),
+        )
+        .unwrap();
 
         // Multiply q by v again and add the remainder back, the result should match the
         // initial u. Reserve one extra limb, which is expected to come to zero.
@@ -896,7 +938,7 @@ fn test_ct_div_pow2_ne_ne_ne() {
 pub fn ct_mod_pow2_mp<RT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
     u_pow2_exp: usize,
     r_out: &mut RT,
-    v: &VT,
+    v: &CtMpDivisor<VT>,
 ) -> Result<(), CtDivMpError> {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
     ct_div_pow2_mp::<_, _, MpNativeEndianMutByteSlice>(u_pow2_exp, r_out, v, None)
@@ -910,7 +952,7 @@ pub fn ct_div_lshifted_mp_mp<
     u: &mut UT,
     u_in_len: usize,
     u_lshift_len: usize,
-    v: &VT,
+    v: &CtMpDivisor<VT>,
     mut q_out: Option<&mut QT>,
 ) -> Result<(), CtDivMpError> {
     // Division algorithm according to D. E. Knuth, "The Art of Computer
@@ -928,19 +970,11 @@ pub fn ct_div_lshifted_mp_mp<
     //   for each zero extension on the right and high limb correspondingly
     //   eliminated.
 
-    // Find the index of the highest set limb in v. For divisors, constant time
-    // evaluation doesn't really matter, probably as far as the number of zero
-    // high bytes is concerned. Also, the long division algorithm's runtime
-    // depends highly on the divisor's length anyway.
-    let v_len = find_last_set_byte_mp(v);
-    if v_len == 0 {
-        return Err(CtDivMpError::DivisionByZero);
-    }
-    let v_nlimbs = ct_mp_nlimbs(v_len);
-    let v_high = v.load_l(v_nlimbs - 1);
-
     debug_assert!(u_in_len <= u.len());
     let virtual_u_in_len = u_in_len + u_lshift_len;
+
+    let v_len = v.v_len;
+    let v_nlimbs = ct_mp_nlimbs(v_len);
 
     if let Some(q_out) = &mut q_out {
         // Check that q_out has enough space for storing the maximum possible quotient.
@@ -1005,7 +1039,7 @@ pub fn ct_div_lshifted_mp_mp<
     // - The next, more significant shadow limb in in u_head_high_shadow[1] will
     //   receive the bits shifted out from u[] on the left.
     // - The most significant shadow limb in u_head_high_shadow[2] will store the
-    //   overflow, if any, the scaling.
+    //   overflow, if any, of the scaling.
     let mut u_head_high_shadow: [LimbType; 3] = [0; 3];
     u_head_high_shadow[0] = ct_lshift_mp(u, 8 * u_lshift_head_len);
     // The (original) u length might not be aligned to the limb size. Move the high
@@ -1028,26 +1062,15 @@ pub fn ct_div_lshifted_mp_mp<
     //   the left and
     // - u_head_high_shadow[0] acts as a shadow for the potentially partial high
     //   limb of the shifted u[].
-
-    // Normalize divisor's high limb.
-    let scaling = v_scaling(v_high);
-
-    // Read-only v won't get scaled in-place, but on the fly as needed. Calculate
-    // only its scaled two high limbs, which will be needed for making the q
-    // estimates.
-    let (scaled_v_high, scaled_v_tail_high) = v_head_scaled(scaling, v, v_nlimbs);
-    let scaled_v_head: [LimbType; 2] = [scaled_v_high, scaled_v_tail_high];
-    let normalized_scaled_v_high = CtDivDlLNormalizedDivisor::new(scaled_v_high);
-
     // Scale u.
     let mut carry = 0;
     for i in 0..u_nlimbs - 1 {
         let mut u_val = u.load_l_full(i);
-        (carry, u_val) = ct_mul_add_l_l_l_c(0, u_val, scaling, carry);
+        (carry, u_val) = v.scale_val(u_val, carry);
         u.store_l_full(i, u_val);
     }
     for u_val in u_head_high_shadow.iter_mut().take(3 - 1) {
-        (carry, *u_val) = ct_mul_add_l_l_l_c(0, *u_val, scaling, carry);
+        (carry, *u_val) = v.scale_val(*u_val, carry);
     }
     u_head_high_shadow[2] = carry;
 
@@ -1076,7 +1099,7 @@ pub fn ct_div_lshifted_mp_mp<
                 i -= 1;
                 cur_u_head[3 - i - 1] = u.load_l_full(v_nlimbs + j + i - 2);
             }
-            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
+            v.make_q_estimate(&cur_u_head)
         };
 
         // Subtract q * v at limb position j upwards in u[].
@@ -1086,14 +1109,14 @@ pub fn ct_div_lshifted_mp_mp<
         while i < v_nlimbs && j + i < u_nlimbs - 1 {
             let mut u_val = u.load_l_full(j + i);
             (borrow, u_val, scaled_v_carry) =
-                sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
             u.store_l_full(j + i, u_val);
             i += 1;
         }
         while i < v_nlimbs {
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
             (borrow, u_val, scaled_v_carry) =
-                sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
             i += 1;
         }
@@ -1122,18 +1145,17 @@ pub fn ct_div_lshifted_mp_mp<
                 return Err(CtDivMpError::InsufficientQuotientSpace);
             }
         }
-        let add_back_scaling = over_estimated.select(0, scaling);
         let mut carry = 0;
         let mut i = 0;
         while i < v_nlimbs && j + i < u_nlimbs - 1 {
             let mut u_val = u.load_l_full(j + i);
-            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
             u.store_l_full(j + i, u_val);
             i += 1;
         }
         while i < v_nlimbs {
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
-            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
             i += 1;
         }
@@ -1194,7 +1216,7 @@ pub fn ct_div_lshifted_mp_mp<
                   // and j == 0, undefined.
             };
 
-            q_estimate(&cur_u_head, &scaled_v_head, &normalized_scaled_v_high)
+            v.make_q_estimate(&cur_u_head)
         };
 
         // Virtually shift u one limb to the left, add q * v and drop the (now zero)
@@ -1207,7 +1229,7 @@ pub fn ct_div_lshifted_mp_mp<
             let mut u_val = next_u_val;
             next_u_val = u.load_l_full(i);
             (borrow, u_val, scaled_v_carry) =
-                sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
             u.store_l_full(i, u_val);
         }
         // u[v_nlimbs - 1] is maintained in the u_high_shadow shadow, handle it
@@ -1217,7 +1239,7 @@ pub fn ct_div_lshifted_mp_mp<
             let mut u_val = next_u_val;
             next_u_val = u_high_shadow;
             (borrow, u_val, scaled_v_carry) =
-                sub_scaled_qv_val(u_val, i, q, scaling, v, scaled_v_carry, borrow);
+                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
             debug_assert_eq!(scaled_v_carry, 0);
             u_high_shadow = u_val;
         }
@@ -1236,11 +1258,10 @@ pub fn ct_div_lshifted_mp_mp<
             }
         }
 
-        let add_back_scaling = over_estimated.select(0, scaling);
         let mut carry = 0;
         for i in 0..v_nlimbs - 1 {
             let mut u_val = u.load_l_full(i);
-            (carry, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
             u.store_l_full(i, u_val);
         }
         // u[v_nlimbs - 1] is maintained in the u_high_shadow shadow, handle it
@@ -1248,34 +1269,30 @@ pub fn ct_div_lshifted_mp_mp<
         {
             let i = v_nlimbs - 1;
             let mut u_val = u_high_shadow;
-            (_, u_val) = add_scaled_v_val(u_val, i, add_back_scaling, v, carry);
+            (_, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
             u_high_shadow = u_val;
         }
     }
 
     // Finally, divide the resulting remainder in u by the scaling again.
-    let scaling = CtDivDlLNormalizedDivisor::new(scaling);
     let mut u_h = 0;
     // The high limb maintained at u_high_shadow comes first. Descale and store in
     // its final location.
     {
         let u_l = u_high_shadow;
-        let (u_val, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
-        debug_assert_eq!(u_val.high(), 0);
-        u.store_l(v_nlimbs - 1, u_val.low());
-        u_h = r;
+        let u_val = v.unscale_val(u_l, u_h);
+        u_h = u_l;
+        u.store_l(v_nlimbs - 1, u_val);
     }
     // Now do the remaining limbs in u[v_nlimbs - 2:0].
     let mut j = v_nlimbs - 1;
     while j > 0 {
         j -= 1;
         let u_l = u.load_l_full(j);
-        let (u_val, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &scaling);
-        debug_assert_eq!(u_val.high(), 0);
-        u.store_l(j, u_val.low());
-        u_h = r;
+        let u_val = v.unscale_val(u_l, u_h);
+        u_h = u_l;
+        u.store_l(j, u_val);
     }
-    debug_assert_eq!(u_h, 0);
 
     Ok(())
 }
@@ -1294,7 +1311,6 @@ fn test_ct_div_lshifted_mp_mp<
     ) {
         use super::add_impl::ct_add_mp_mp;
         use super::cmp_impl::ct_eq_mp_mp;
-        use super::limb::ct_lsb_mask_l;
         use super::mul_impl::ct_mul_trunc_mp_mp;
         use super::shift_impl::ct_rshift_mp;
 
@@ -1306,7 +1322,14 @@ fn test_ct_div_lshifted_mp_mp<
         let mut rem = vec![0u8; u.len()];
         let mut rem = UT::from_bytes(&mut rem).unwrap();
         rem.copy_from(u);
-        ct_div_lshifted_mp_mp(&mut rem, u_in_len, u_lshift_len, v, Some(&mut q)).unwrap();
+        ct_div_lshifted_mp_mp(
+            &mut rem,
+            u_in_len,
+            u_lshift_len,
+            &CtMpDivisor::new(v).unwrap(),
+            Some(&mut q),
+        )
+        .unwrap();
 
         // Multiply q by v again and add the remainder back, the result should match the
         // initial u. Reserve one extra limb, which is expected to come to zero.
@@ -1398,7 +1421,7 @@ pub fn ct_mod_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
     u: &mut UT,
     u_in_len: usize,
     u_lshift_len: usize,
-    v: &VT,
+    v: &CtMpDivisor<VT>,
 ) -> Result<(), CtDivMpError> {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
     ct_div_lshifted_mp_mp::<_, _, MpNativeEndianMutByteSlice>(u, u_in_len, u_lshift_len, v, None)
@@ -1408,20 +1431,16 @@ pub fn ct_mod_lshifted_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon>(
 // divisisor.
 pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     u: &UT,
-    v: LimbType,
+    v: &CtLDivisor,
     mut q_out: Option<&mut QT>,
 ) -> Result<LimbType, CtDivMpError> {
-    if v == 0 {
-        return Err(CtDivMpError::DivisionByZero);
-    }
-
     let u_nlimbs = ct_mp_nlimbs(u.len());
     if u_nlimbs == 0 {
         return Ok(0);
     }
 
     if let Some(q_out) = &mut q_out {
-        let v_len = ct_find_last_set_byte_l(v);
+        let v_len = ct_find_last_set_byte_l(v.get_v());
         if q_out.len() + v_len < u.len() + 1 {
             return Err(CtDivMpError::InsufficientQuotientSpace);
         }
@@ -1433,17 +1452,15 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
         q_out.clear_bytes_above(q_out_len);
     }
 
-    let normalized_v = CtDivDlLNormalizedDivisor::new(v);
     let mut u_h = 0;
     let mut j = u_nlimbs;
     while j > 0 {
         j -= 1;
         let u_l = u.load_l(j);
-        let (q_val, r) = ct_div_dl_l(&DoubleLimb::new(u_h, u_l), &normalized_v);
-        debug_assert_eq!(q_val.high(), 0);
+        let (q_val, r) = v.ct_do_div(&DoubleLimb::new(u_h, u_l));
 
         if let Some(q_out) = &mut q_out {
-            q_out.store_l(j, q_val.low())
+            q_out.store_l(j, q_val)
         }
         u_h = r;
     }
@@ -1451,10 +1468,8 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     Ok(u_h)
 }
 
-pub fn ct_mod_mp_l<UT: MpIntByteSliceCommon>(
-    u: &UT,
-    v: LimbType,
-) -> Result<LimbType, CtDivMpError> {
+pub fn ct_mod_mp_l<UT: MpIntByteSliceCommon>(u: &UT, v: &CtLDivisor) -> LimbType {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
-    ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(u, v, None)
+    // No quotient output means no InsufficientQuotientSpace error.
+    ct_div_mp_l::<_, MpNativeEndianMutByteSlice>(u, v, None).unwrap()
 }

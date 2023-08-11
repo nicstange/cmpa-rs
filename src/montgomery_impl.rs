@@ -1,6 +1,6 @@
 use super::add_impl::ct_sub_cond_mp_mp;
 use super::cmp_impl::{ct_geq_mp_mp, ct_lt_mp_mp};
-use super::div_impl::{ct_mod_lshifted_mp_mp, ct_mod_pow2_mp, CtDivMpError};
+use super::div_impl::{ct_mod_lshifted_mp_mp, ct_mod_pow2_mp, CtDivMpError, CtMpDivisor};
 use super::limb::{
     ct_add_l_l, ct_inv_mod_l, ct_lsb_mask_l, ct_mul_add_l_l_l_c, LimbChoice, LimbType, LIMB_BITS,
 };
@@ -232,7 +232,7 @@ pub fn ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
 
 #[cfg(test)]
 fn test_ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
-    use super::div_impl::ct_mod_mp_mp;
+    use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
     use super::limb::LIMB_BYTES;
 
     for i in 0..64 {
@@ -261,7 +261,7 @@ fn test_ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
                     t.store_l(1, t_high);
 
                     // All montgomery operations are defined mod n, compute t mod n
-                    ct_mod_mp_mp(None, &mut t, &n).unwrap();
+                    ct_mod_mp_mp(None, &mut t, &CtMpDivisor::new(&n).unwrap());
                     let t_low = t.load_l(0);
                     let t_high = t.load_l(1);
 
@@ -471,7 +471,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
     T1: MpIntMutByteSlice,
     NT: MpIntMutByteSlice,
 >() {
-    use super::div_impl::ct_mod_mp_mp;
+    use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommonPriv as _, MpIntMutByteSlicePriv as _};
     use super::mul_impl::ct_mul_trunc_mp_mp;
@@ -505,7 +505,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                 let mut r_mod_n: [u8; 3 * LIMB_BYTES] = [0; 3 * LIMB_BYTES];
                 let mut r_mod_n = RT::from_bytes(r_mod_n.as_mut_slice()).unwrap();
                 r_mod_n.store_l_full(ct_montgomery_radix_shift_mp_nlimbs(n_len), 1);
-                ct_mod_mp_mp(None, &mut r_mod_n, &n).unwrap();
+                ct_mod_mp_mp(None, &mut r_mod_n, &CtMpDivisor::new(&n).unwrap());
                 let (_, r_mod_n) = r_mod_n.split_at(n.len());
 
                 for k in 0..4 {
@@ -519,7 +519,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                         a.store_l(0, a_low);
                         a.store_l(1, a_high);
                         // All montgomery operations are defined mod n, compute a mod n
-                        ct_mod_mp_mp(None, &mut a, &n).unwrap();
+                        ct_mod_mp_mp(None, &mut a, &CtMpDivisor::new(&n).unwrap());
                         for s in 0..4 {
                             let b_high = MERSENNE_PRIME_13
                                 .wrapping_mul((262175 as LimbType).wrapping_mul(s));
@@ -532,7 +532,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                 b.store_l(0, b_low);
                                 b.store_l(1, b_high);
                                 // All montgomery operations are defined mod n, compute b mod n
-                                ct_mod_mp_mp(None, &mut b, &n).unwrap();
+                                ct_mod_mp_mp(None, &mut b, &CtMpDivisor::new(&n).unwrap());
 
                                 for op_len in [0, 1 * LIMB_BYTES, n_len] {
                                     let (_, a) = a.split_at(op_len);
@@ -574,7 +574,11 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                     // the conventional product by r^-1 mod n, which is
                                     // not known without implementing Euklid's algorithm.
                                     ct_mul_trunc_mp_mp(&mut result, n.len(), &r_mod_n);
-                                    ct_mod_mp_mp(None, &mut result, &n).unwrap();
+                                    ct_mod_mp_mp(
+                                        None,
+                                        &mut result,
+                                        &CtMpDivisor::new(&n).unwrap(),
+                                    );
                                     drop(result);
 
                                     let mut _expected: [u8; 4 * LIMB_BYTES] = [0; 4 * LIMB_BYTES];
@@ -582,7 +586,11 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                         RT::from_bytes(_expected.as_mut_slice()).unwrap();
                                     expected.copy_from(&a);
                                     ct_mul_trunc_mp_mp(&mut expected, op_len, &b);
-                                    ct_mod_mp_mp(None, &mut expected, &n).unwrap();
+                                    ct_mod_mp_mp(
+                                        None,
+                                        &mut expected,
+                                        &CtMpDivisor::new(&n).unwrap(),
+                                    );
                                     drop(expected);
 
                                     assert_eq!(_result, _expected);
@@ -650,7 +658,8 @@ pub fn ct_to_montgomery_form_direct_mp<TT: MpIntMutByteSlice, NT: MpIntByteSlice
 ) -> Result<(), CtDivMpError> {
     debug_assert!(t.nlimbs() >= n.nlimbs());
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
-    ct_mod_lshifted_mp_mp(t, t.len(), radix_shift_len, n)
+    let n = CtMpDivisor::new(n).map_err(|_| CtDivMpError::DivisionByZero)?;
+    ct_mod_lshifted_mp_mp(t, t.len(), radix_shift_len, &n)
 }
 
 pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
@@ -659,7 +668,8 @@ pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpIntMutByteSlice, NT: MpIntByteSlice
 ) -> Result<(), CtDivMpError> {
     debug_assert!(ct_mp_nlimbs(radix2_mod_n_out.len()) >= ct_mp_nlimbs(n.len()));
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
-    ct_mod_pow2_mp::<_, _>(2 * 8 * radix_shift_len, radix2_mod_n_out, n)
+    let n = CtMpDivisor::new(n).map_err(|_| CtDivMpError::DivisionByZero)?;
+    ct_mod_pow2_mp::<_, _>(2 * 8 * radix_shift_len, radix2_mod_n_out, &n)
 }
 
 pub fn ct_to_montgomery_form_mp<
@@ -684,7 +694,7 @@ fn test_ct_to_montgomery_form_mp<
     RX2T: MpIntMutByteSlice,
 >() {
     use super::cmp_impl::ct_eq_mp_mp;
-    use super::div_impl::ct_mod_mp_mp;
+    use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpIntMutByteSlicePriv as _;
 
@@ -726,7 +736,7 @@ fn test_ct_to_montgomery_form_mp<
                         a.store_l(0, a_low);
                         a.store_l(1, a_high);
                         // All montgomery operations are defined mod n, compute a mod n
-                        ct_mod_mp_mp(None, &mut a, &n).unwrap();
+                        ct_mod_mp_mp(None, &mut a, &CtMpDivisor::new(&n).unwrap());
                         let (_, mut a) = a.split_at(TT::limbs_align_len(n_len));
 
                         let mut result: [u8; 2 * LIMB_BYTES] = [0xff; 2 * LIMB_BYTES];
@@ -914,7 +924,7 @@ fn test_ct_exp_mod_odd_mp_mp<
         exponent: &'a ET,
     ) {
         use super::cmp_impl::ct_eq_mp_mp;
-        use super::div_impl::ct_mod_mp_mp;
+        use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
         use super::mul_impl::{ct_mul_trunc_mp_mp, ct_square_trunc_mp};
 
         let n_len = n.len();
@@ -923,7 +933,7 @@ fn test_ct_exp_mod_odd_mp_mp<
         let mut op0_mod_n = vec![0u8; op0_mod_n_aligned_len];
         let mut op0_mod_n = T0::from_bytes(&mut op0_mod_n).unwrap();
         op0_mod_n.copy_from(op0);
-        ct_mod_mp_mp(None, &mut op0_mod_n, n).unwrap();
+        ct_mod_mp_mp(None, &mut op0_mod_n, &CtMpDivisor::new(n).unwrap());
 
         let mut op0_scratch = vec![0u8; T0::limbs_align_len(n_len)];
         let mut op0_scratch = T0::from_bytes(&mut op0_scratch).unwrap();
@@ -948,13 +958,12 @@ fn test_ct_exp_mod_odd_mp_mp<
         expected.store_l(0, 1);
         for i in 0..8 * exponent.len() {
             ct_square_trunc_mp(&mut expected, n_len);
-            ct_mod_mp_mp(None, &mut expected, n).unwrap();
+            ct_mod_mp_mp(None, &mut expected, &CtMpDivisor::new(n).unwrap());
             if exponent.test_bit(8 * exponent.len() - i - 1).unwrap() != 0 {
                 ct_mul_trunc_mp_mp(&mut expected, n_len, &op0_mod_n);
-                ct_mod_mp_mp(None, &mut expected, n).unwrap();
+                ct_mod_mp_mp(None, &mut expected, &CtMpDivisor::new(n).unwrap());
             }
         }
-        println!("result={:x}", result);
         assert_ne!(ct_eq_mp_mp(&result, &expected).unwrap(), 0);
     }
 
