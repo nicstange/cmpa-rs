@@ -1,6 +1,6 @@
 use super::limb::{
     ct_add_l_l, ct_eq_l_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_gt_l_l,
-    ct_lsb_mask_l, ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtLDivisor, CtLDivisorPrivate,
+    ct_lsb_mask_l, ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtLDivisor, LDivisorPrivate,
     DoubleLimb, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
 };
 use super::limbs_buffer::{
@@ -95,7 +95,7 @@ impl<'a, VT: MpIntByteSliceCommon> CtMpDivisor<'a, VT> {
         debug_assert!(u_high < self.scaled_v_head);
         let (q_low, r) = self
             .scaled_v_head_divisor
-            .ct_do_div(&DoubleLimb::new(u_high, u_head[1]));
+            .do_div(&DoubleLimb::new(u_high, u_head[1]));
 
         // If !q_high_is_zero, q needs to get capped to fit single limb and r adjusted
         // accordingly.
@@ -1491,7 +1491,7 @@ pub fn ct_div_mp_l<UT: MpIntByteSliceCommon, QT: MpIntMutByteSlice>(
     while j > 0 {
         j -= 1;
         let u_l = u.load_l(j);
-        let (q_val, r) = v.ct_do_div(&DoubleLimb::new(u_h, u_l));
+        let (q_val, r) = v.do_div(&DoubleLimb::new(u_h, u_l));
 
         if let Some(q_out) = &mut q_out {
             q_out.store_l(j, q_val)

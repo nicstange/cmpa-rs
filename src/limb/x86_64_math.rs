@@ -3,9 +3,6 @@
 use super::{DoubleLimb, LimbType};
 use core::arch::asm;
 
-#[cfg(feature = "zeroize")]
-use zeroize::Zeroize;
-
 pub fn ct_is_nonzero_l(v: LimbType) -> LimbType {
     let result: LimbType;
     unsafe {
@@ -82,35 +79,36 @@ pub fn ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
     DoubleLimb::new(h, l)
 }
 
-#[cfg_attr(feature = "zeroize", derive(Zeroize))]
-pub struct CtDivDlLNormalizedDivisor {
+pub struct NonCtLDivisor {
     v: LimbType,
 }
 
-impl CtDivDlLNormalizedDivisor {
-    pub fn new(v: LimbType) -> Self {
-        Self { v }
+impl NonCtLDivisor {
+    pub fn new(v: LimbType) -> Result<Self, super::NonCtLDivisorError> {
+        if v == 0 {
+            return Err(super::NonCtLDivisorError::DivisorIsZero);
+        }
+        Ok(Self { v })
     }
 }
 
-pub fn ct_div_dl_l(u: &DoubleLimb, v: &CtDivDlLNormalizedDivisor) -> (DoubleLimb, LimbType) {
-    let q_high;
-    let q_low;
-    let r;
-
-    unsafe {
-        asm!(
-            "xor rdx, rdx\n\
-             div {v:r};\n\
-             xchg {u_low_in_q_high_out}, rax;\n\
-             div {v};\n\
-             ",
-            u_low_in_q_high_out = inout(reg) u.low() => q_high,
-            v = in(reg) v.v,
-            inout("ax") u.high() => q_low,
-            out("dx") r
-        );
+impl super::LDivisorPrivate for NonCtLDivisor {
+    fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
+        let q: LimbType;
+        let r: LimbType;
+        unsafe {
+            asm!(
+                "div {v}\n",
+                inout("ax") u.low() => q,
+                inout("dx") u.high() => r,
+                v = in(reg) self.v,
+                options(pure, nomem, nostack)
+            );
+            (q, r)
+        }
     }
 
-    (DoubleLimb::new(q_high, q_low), r)
+    fn get_v(&self) -> LimbType {
+        self.v
+    }
 }

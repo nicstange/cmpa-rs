@@ -561,15 +561,35 @@ impl CtLDivisor {
         }
         q
     }
+
+    pub fn nonct_new(v: LimbType) -> Result<Self, CtLDivisorError> {
+        if v == 0 {
+            return Err(CtLDivisorError::DivisorIsZero);
+        }
+        let v_width = ct_find_last_set_bit_l(v) as u32;
+        let m = Self::nonct_compute_m(v, v_width);
+        Ok(Self { m, v, v_width })
+    }
+
+    /// Compute the multiplier for a given divisor in _non-constant time_.
+    ///
+    /// Compute
+    /// *(2<sup>[`LIMB_BITS`] + `v_width`</sup> - 1) / `v` -
+    /// 2<sup>[`LIMB_BITS`]</sup>*
+    fn nonct_compute_m(v: LimbType, v_width: u32) -> LimbType {
+        NonCtLDivisor::new(v).unwrap().do_div(
+            &DoubleLimb::new(ct_lsb_mask_l(v_width) - v, !0)
+        ).0
+    }
 }
 
-pub trait CtLDivisorPrivate {
-    fn ct_do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType);
+pub trait LDivisorPrivate {
+    fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType);
     fn get_v(&self) -> LimbType;
 }
 
-impl CtLDivisorPrivate for CtLDivisor {
-    fn ct_do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
+impl LDivisorPrivate for CtLDivisor {
+    fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
         let l = self.v_width;
         debug_assert!(l > 0 && l <= LIMB_BITS);
         // The dividend u is divided in three parts:
@@ -644,8 +664,13 @@ impl CtLDivisorPrivate for CtLDivisor {
 #[test]
 fn test_ct_l_divisor() {
     fn div_and_check(u: DoubleLimb, v: LimbType) {
+        let nonct_v = CtLDivisor::nonct_new(v).unwrap();
         let v = CtLDivisor::new(v).unwrap();
-        let (q, r) = v.ct_do_div(&u);
+        assert_eq!(v.m, nonct_v.m);
+        assert_eq!(v.v_width, nonct_v.v_width);
+        assert_eq!(v.v, nonct_v.v);
+
+        let (q, r) = v.do_div(&u);
 
         // Multiply q by v again and add the remainder back, the result should match the
         // initial u.
@@ -682,246 +707,189 @@ fn test_ct_l_divisor() {
     }
 }
 
-/// A normalized divisor for input to [`generic_ct_div_dl_l()`].
-///
-/// In order to avoid scaling the same divisor all over again in loop invoking
-/// [`generic_ct_div_dl_l()`], the latter takes an already scaled divisor as
-/// input. This allows for reusing the result of the scaling operation.
-#[cfg_attr(feature = "zeroize", derive(Zeroize))]
-#[allow(unused)]
-pub struct GenericCtDivDlLNormalizedDivisor {
-    scaling: LimbType,
-    normalized_v: LimbType,
-    shifted_v: LimbChoice,
+#[derive(Debug)]
+pub enum NonCtLDivisorError {
+    DivisorIsZero
 }
 
-impl GenericCtDivDlLNormalizedDivisor {
-    /// Normalize a divisor for subsequent use with [`ct_div_dl_l()`].
+#[allow(unused)]
+struct GenericNonCtLDivisor {
+    v: LimbType,
+    scaling_shift: u32,
+    scaling_low_src_rshift: u32,
+    scaling_low_src_mask: LimbType,
+}
+
+impl GenericNonCtLDivisor {
+    /// Normalize a divisor.
     ///
-    /// Runs in constant time.
+    /// _Does not run in constant-time_, it invokes the CPU's division
+    /// instruction.
     ///
     /// # Arguments
     ///
-    /// * `v` - the unscaled, but non-zero divisor to normalize.
-    pub fn new(v: LimbType) -> Self {
-        debug_assert!(v != 0);
-        // If the upper half is zero, shift v by half limb. This is accounted for by
-        // shifting u accordingly in generic_ct_div_dl_l() and allows for
-        // constant-time division computation, independent of the value of v.
-        let v_h = v >> HALF_LIMB_BITS;
-        let shifted_v = ct_eq_l_l(v_h, 0);
-        let v = shifted_v.select(v, v << HALF_LIMB_BITS);
-        let v_h = black_box_l(v >> HALF_LIMB_BITS);
-        let scaling = black_box_l(1 << HALF_LIMB_BITS) / (v_h + 1);
-        let normalized_v = scaling * v;
-        Self {
-            scaling,
-            normalized_v,
-            shifted_v,
+    /// * `v` - The unscaled, but non-zero divisor to normalize.
+    fn new(v: LimbType) -> Result<Self, NonCtLDivisorError> {
+        if v == 0 {
+            return Err(NonCtLDivisorError::DivisorIsZero);
         }
+
+        // Shift distance to normalize v such that its MSB is set.
+        let scaling_shift = v.leading_zeros();
+        let scaling_low_src_rshift = (LIMB_BITS - scaling_shift) % LIMB_BITS;
+        let scaling_low_src_mask = ct_lsb_mask_l(scaling_shift);
+
+        Ok(Self { v, scaling_shift, scaling_low_src_rshift, scaling_low_src_mask })
     }
 }
 
-/// Divide a double limb by a limb.
+impl LDivisorPrivate for GenericNonCtLDivisor {
+    fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
+        // Division algorithm according to D. E. Knuth, "The Art of Computer
+        // Programming", vol 2 for the special case of a double limb dividend
+        // interpreted as four half limbs.
+
+        let v = self.v << self.scaling_shift;
+        let v_hl_h = v >> HALF_LIMB_BITS;
+        let v_hl_l = v & HALF_LIMB_MASK;
+
+        // Scale u. The quotient is known to fit a limb, so
+        // no non-zero bits will be shifted out.
+        let mut u_h = (u.high() << self.scaling_shift)
+            | ((u.low() >> self.scaling_low_src_rshift) & self.scaling_low_src_mask);
+        debug_assert_eq!(u_h >> self.scaling_shift, u.high());
+        let mut u_l = u.low() << self.scaling_shift;
+
+        let mut q: LimbType = 0;
+        for _j in [1, 0] {
+            // Loop invariant, with n == 2 denoting the number of half limbs in v.
+            // - u[n + j] is in the high half limb of u_h
+            // - u[n + j - 1] is in the low half limb of u_h
+            // - u[n + j - 2] is in the high half limb of u_l
+            // - u[n + j - 3], if any,  is in the low half limb of u_l
+
+            // Estimate q.
+            let mut cur_q_hl = {
+                // q = u[n + j:n + j - 1] / v[n - 1].
+                let q = u_h / v_hl_h;
+
+                // Check whether q fits a half limb and cap it otherwise.
+                let q = q.min(HALF_LIMB_MASK);
+                let r = u_h - q * v_hl_h;
+
+                // As long as r does not overflow b, i.e. half a LimbType, check whether
+                // q * v[n - 2] > b * r + u[j + n - 2]. If so, decrement q and adjust r
+                // accordingly by adding v[n-1] back.
+                // Note that because v[n-1] is normalized to have its MSB set, r would overflow
+                // in the second iteration at latest.  The second iteration is
+                // not necessary for correctness, but only serves optimization
+                // purposes: it would help to avoid the "add-back" step below in
+                // the majority of cases. However, for the small v fitting a limb, the add-back
+                // step is not really expensive, so the second iteration of the
+                // "over-estimated" check here would be quite pointless. Skip
+                // it.
+                let r_ov = r >> HALF_LIMB_BITS != 0;
+                if !r_ov && q * v_hl_l > (r << HALF_LIMB_BITS) | (u_l >> HALF_LIMB_BITS) {
+                    q - 1
+                } else {
+                    q
+                }
+            };
+
+            // Subtract q_val * v from u[n + j:j] = u[n + j:n + j - 2].
+            // To simplify the computations, shift u[] by half a limb to the left first
+            // (which is also needed at some point to uphold the loop invariant anyway).
+            let u2 = u_h >> HALF_LIMB_BITS;
+            let u1 = (u_h << HALF_LIMB_BITS) | u_l >> HALF_LIMB_BITS;
+            let u0 = u_l << HALF_LIMB_BITS;
+            let (borrow, mut u1) = ct_mul_sub_l_l_l_b(u1, cur_q_hl, v, 0);
+            let (borrow, mut u2) = ct_sub_l_l(u2, borrow);
+            // If borrow is set, q had been overestimated, decrement it and
+            // add one v back to the remainder in this case.
+            if borrow != 0 {
+                cur_q_hl -= 1;
+                let carry;
+                (carry, u1) = ct_add_l_l(u1, v);
+                (_, u2) = ct_add_l_l(u2, carry);
+            }
+            debug_assert_eq!(u2, 0);
+
+            u_h = u1;
+            u_l = u0;
+
+            // Finally update q.
+            q = (q << HALF_LIMB_BITS) | cur_q_hl
+        }
+
+        // The scaled remainder is in u_h now. Undo the scaling.
+        debug_assert_eq!(u_l, 0);
+        (q, u_h >> self.scaling_shift)
+    }
+
+    fn get_v(&self) -> LimbType {
+        self.v
+    }
+}
+
+#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
+#[doc(hidden)]
+use self::GenericNonCtLDivisor as ArchNonCtLDivisor;
+
+#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
+#[doc(hidden)]
+use x86_64_math::NonCtLDivisor as ArchNonCtLDivisor;
+
+/// A normalized divisor.
 ///
-/// This routine is intended as a supporting primitive for the multiprecision
-/// integer division implementation. The result will be returned as a pair of
-/// quotient and remainder.
+pub struct NonCtLDivisor {
+    arch: ArchNonCtLDivisor,
+}
+
+impl NonCtLDivisor {
+    /// Normalize a divisor.
+    ///
+    /// _Does not run in constant-time_, it invokes the CPU's division
+    /// instruction.
+    ///
+    /// # Arguments
+    ///
+    /// * `v` - The unscaled, but non-zero divisor to normalize.
+    pub fn new(v: LimbType) -> Result<Self, NonCtLDivisorError> {
+        Ok(Self {
+            arch: ArchNonCtLDivisor::new(v)?,
+        })
+    }
+}
+
+impl LDivisorPrivate for NonCtLDivisor {
+    fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
+        self.arch.do_div(u)
+    }
+
+    fn get_v(&self) -> LimbType {
+        self.arch.get_v()
+    }
+}
+
+/// Division of a [`DoubleLimb`] by a [`LimbType`].
 ///
-/// Runs in constant time.
 ///
 /// # Arguments
 ///
 /// * `u` - The [`DoubleLimb`] dividend.
-/// * `v` - The [`GenericCtDivDlLNormalizedDivisor`] divisor.
-///
-/// # Note
-///
-/// This software implementation of double limb division relies only on single
-/// precision [`LimbType`] division operations mapping to constant-time CPU
-/// instructions and will be _much_ slower than the native double word division
-/// instructions available on some architectures like e.g. the `div` instruction
-/// on x86.
-#[allow(unused)]
-pub fn generic_ct_div_dl_l(
-    u: &DoubleLimb,
-    v: &GenericCtDivDlLNormalizedDivisor,
-) -> (DoubleLimb, LimbType) {
-    // Division algorithm according to D. E. Knuth, "The Art of Computer
-    // Programming", vol 2 for the special case of a double limb dividend
-    // interpreted as four half limbs.
-    //
-    // The local u and temporary q's are stored as an array of LimbType words, in
-    // little endian order, interpreted as a multiprecision integer of half
-    // limbs. Define some helpers for accessiong the individual half limbs,
-    // indexed from least to most significant as usual.
-    fn le_limbs_half_limb_index(i: usize) -> (usize, u32) {
-        let half_limb_shift = if i % 2 != 0 { HALF_LIMB_BITS } else { 0 };
-        (i / 2, half_limb_shift)
-    }
-
-    fn _le_limbs_load_half_limb(
-        limbs: &[LimbType],
-        (limb_index, half_limb_shift): (usize, u32),
-    ) -> LimbType {
-        black_box_l((limbs[limb_index] >> half_limb_shift) & HALF_LIMB_MASK)
-    }
-
-    fn le_limbs_load_half_limb(limbs: &[LimbType], half_limb_index: usize) -> LimbType {
-        _le_limbs_load_half_limb(limbs, le_limbs_half_limb_index(half_limb_index))
-    }
-
-    fn _le_limbs_store_half_limb(
-        limbs: &mut [LimbType],
-        (limb_index, half_limb_shift): (usize, u32),
-        value: LimbType,
-    ) {
-        let mask = HALF_LIMB_MASK << half_limb_shift;
-        limbs[limb_index] = black_box_l(value << half_limb_shift | limbs[limb_index] & !mask);
-    }
-
-    fn le_limbs_store_half_limb(limbs: &mut [LimbType], half_limb_index: usize, value: LimbType) {
-        _le_limbs_store_half_limb(limbs, le_limbs_half_limb_index(half_limb_index), value)
-    }
-
-    // u as a sequence of half words in little endian order. Allocate one extra half
-    // word to accomodate for the scaling and another one to shift in case v had
-    // been shifted.
-    let mut u: [LimbType; 3] = [u.low(), u.high(), 0];
-    // Conditionally shift u by one half limb in order to align with the shifting of
-    // the normalized v, if any.
-    for i in [2, 1] {
-        let shifted_u_val = u[i] << HALF_LIMB_BITS | u[i - 1] >> HALF_LIMB_BITS;
-        u[i] = v.shifted_v.select(u[i], shifted_u_val);
-    }
-    u[0] = v.shifted_v.select(u[0], u[0] << HALF_LIMB_BITS);
-    // Scale u by the divisor normalization scaling.
-    let mut carry = 0;
-    for i in 0..6 {
-        let (limb_index, half_limb_shift) = le_limbs_half_limb_index(i);
-        let u_val = _le_limbs_load_half_limb(u.as_slice(), (limb_index, half_limb_shift));
-        let u_val = v.scaling * u_val;
-        let u_val = carry + u_val;
-        carry = black_box_l(u_val >> HALF_LIMB_BITS);
-        let u_val = u_val & HALF_LIMB_MASK;
-        _le_limbs_store_half_limb(u.as_mut_slice(), (limb_index, half_limb_shift), u_val)
-    }
-    debug_assert_eq!(carry, 0);
-
-    let (v_h, v_l) = ct_l_to_hls(v.normalized_v);
-    let mut qs: [LimbType; 2] = [0; 2];
-    for j in [3, 2, 1, 0] {
-        let q = {
-            // Retrieve the current most significant double half limb, i.e. a limb in width.
-            let u_cur_dhl_h = le_limbs_load_half_limb(u.as_slice(), 2 + j);
-            let u_cur_dhl_l = le_limbs_load_half_limb(u.as_slice(), 2 + j - 1);
-            let u_cur_dhl = u_cur_dhl_h << HALF_LIMB_BITS | u_cur_dhl_l;
-
-            // Estimate q.
-            let q = u_cur_dhl / v_h;
-
-            // Check whether q fits a half limb and cap it otherwise.
-            let ov = LimbChoice::from(q >> HALF_LIMB_BITS);
-            let q = ov.select(q, HALF_LIMB_MASK);
-            let r = u_cur_dhl - q * v_h;
-            let r_carry = LimbChoice::from(r >> HALF_LIMB_BITS);
-
-            // As long as r does not overflow b, i.e. a LimbType,
-            // check whether q * v[n - 2] > b * r + u[j + n - 2].
-            // If so, decrement q and adjust r accordingly by adding v[n-1] back.
-            // Note that because v[n-1] is normalized to have its MSB set,
-            // r would overflow in the second iteration at latest.
-            // The second iteration is not necessary for correctness, but only serves
-            // optimization purposes: it would help to avoid the "add-back" step
-            // below in the majority of cases. However, for constant-time execution,
-            // the add-back must get executed anyways and thus, the second iteration
-            // of the "over-estimated" check here would be quite pointless. Skip it.
-            let u_tail_high = le_limbs_load_half_limb(u.as_slice(), 2 + j - 2);
-            let qv_tail_high = q * v_l;
-            let over_estimated =
-                !r_carry & ct_gt_l_l(qv_tail_high, r << HALF_LIMB_BITS | u_tail_high);
-            q - over_estimated.select(0, 1)
-        };
-
-        // Subtract q * v at from u at position j.
-        let qv = ct_mul_l_l(q, v.normalized_v);
-        debug_assert!(qv.high() < ct_lsb_mask_l(HALF_LIMB_BITS));
-        let mut borrow = 0;
-        for k in 0..3 {
-            let qv_val = qv.get_half_limb(k);
-            let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
-            let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
-            let u_val = u_val.wrapping_sub(borrow);
-            let u_val = u_val.wrapping_sub(qv_val);
-            borrow = core::hint::black_box(u_val >> (LIMB_BITS - 1));
-            let u_val = u_val & HALF_LIMB_MASK;
-            _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
-        }
-        for k in 3..6 - j {
-            let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
-            let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
-            let u_val = u_val.wrapping_sub(borrow);
-            borrow = black_box_l(u_val >> (LIMB_BITS - 1));
-            let u_val = u_val & HALF_LIMB_MASK;
-            _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
-        }
-
-        // If q had been overestimated, decrement q and add one v back to u.
-        let over_estimated = LimbChoice::from(borrow);
-        let mut carry = 0;
-        let q = q - over_estimated.select(0, 1);
-        le_limbs_store_half_limb(qs.as_mut_slice(), j, q);
-        for (k, v_val) in [(0, v_l), (1, v_h)] {
-            let v_val = over_estimated.select(0, v_val);
-            let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
-            let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
-            let u_val = u_val.wrapping_add(carry);
-            let u_val = u_val.wrapping_add(v_val);
-            carry = black_box_l(u_val >> HALF_LIMB_BITS);
-            let u_val = u_val & HALF_LIMB_MASK;
-            _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
-        }
-        for k in 2..6 - j {
-            let (u_limb_index, u_half_limb_shift) = le_limbs_half_limb_index(j + k);
-            let u_val = _le_limbs_load_half_limb(u.as_slice(), (u_limb_index, u_half_limb_shift));
-            let u_val = u_val.wrapping_add(carry);
-            carry = black_box_l(u_val >> HALF_LIMB_BITS);
-            let u_val = u_val & HALF_LIMB_MASK;
-            _le_limbs_store_half_limb(u.as_mut_slice(), (u_limb_index, u_half_limb_shift), u_val);
-        }
-    }
-
-    // Conditionally shift u back by one half limb in order to undo the shifting to
-    // align with v.
-    for i in [0, 1] {
-        let shifted_u_val = u[i] >> HALF_LIMB_BITS | (u[i + 1] & HALF_LIMB_MASK) << HALF_LIMB_BITS;
-        u[i] = v.shifted_v.select(u[i], shifted_u_val);
-    }
-    // Divide u by the scaling.
-    debug_assert_eq!(u[2], 0);
-    debug_assert_eq!(u[1], 0);
-    debug_assert_eq!(u[0] % v.scaling, 0);
-    u[0] /= v.scaling;
-
-    (DoubleLimb::new(qs[1], qs[0]), u[0])
+/// * `v` - The [`NonCtLDivisor`] divisor.
+pub fn nonct_div_dl_l(u: &DoubleLimb, v: &NonCtLDivisor) -> (DoubleLimb, LimbType) {
+    let (q_h, r_h) = v.do_div(&DoubleLimb::new(0, u.high()));
+    let (q_l, r_l) = v.do_div(&DoubleLimb::new(r_h, u.low()));
+    (DoubleLimb::new(q_h, q_l), r_l)
 }
 
-#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::generic_ct_div_dl_l as ct_div_dl_l;
-#[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::GenericCtDivDlLNormalizedDivisor as CtDivDlLNormalizedDivisor;
-
-#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_div_dl_l;
-#[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::CtDivDlLNormalizedDivisor;
-
 #[test]
-fn test_ct_div_dl_l() {
+fn test_nonct_div_dl_l() {
     fn div_and_check(u: DoubleLimb, v: LimbType) {
-        let normalized_v = CtDivDlLNormalizedDivisor::new(v);
+        let normalized_v = NonCtLDivisor::new(v).unwrap();
 
-        let (q, r) = ct_div_dl_l(&u.clone(), &normalized_v);
+        let (q, r) = nonct_div_dl_l(&u.clone(), &normalized_v);
 
         // Multiply q by v again and add the remainder back, the result should match the
         // initial u.
