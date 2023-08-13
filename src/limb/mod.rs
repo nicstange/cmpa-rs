@@ -9,25 +9,32 @@ use zeroize::Zeroize;
 
 /// The basic unit used by the multiprecision integer arithmetic implementation.
 ///
-/// # Notes
+/// The [`LimbType`] is mostly an internal implementation detail and users must
+/// make no assumption about it representation, the only guarantee is that
+/// it's a type alias to one of Rust's native unsigned integer types.
+///
+/// # Notes on constant-time
 ///
 /// The following arithmetic on a [`LimbType`] is assumed to be constant-time:
 /// - Binary operations: `not`, `or`, `and`, `xor`.
 /// - Wrapping addition and subtraction of two [`LimbType`] words.
 /// - Multiplication of two [`LimbType`] words where the result also fits a
 ///   [`LimbType`].
-/// - Division of one [`LimbType`] by another.
 ///
 /// Wider [`LimbType`] type defines would improve multiprecision arithmetic
 /// performance, but it must be made sure that all of the operations from above
 /// map to (constant-time) CPU instructions and are not implemented by e.g. some
-/// architecture support runtime library. For now, the smallest
-/// common denominator of `u32` is chosen.
+/// architecture support runtime library. In the generic case, the
+/// (supposedly) smallest common denominator of `u32` is chosen, but it might be
+/// overriden for specific architectures.
+pub type LimbType = CfgLimbType;
 
 #[cfg(not(target_arch = "x86_64"))]
-pub type LimbType = u32;
+#[doc(hidden)]
+type CfgLimbType = u32;
 #[cfg(target_arch = "x86_64")]
-pub type LimbType = u64;
+#[doc(hidden)]
+type CfgLimbType = u64;
 
 /// The bit width of a [`LimbType`].
 pub const LIMB_BITS: u32 = LimbType::BITS;
@@ -42,7 +49,55 @@ const HALF_LIMB_MASK: LimbType = ct_lsb_mask_l(HALF_LIMB_BITS);
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
 mod x86_64_math;
 
-// core::hint::black_box() is inefficient: it writes and reads from memory.
+/// Prevent the compiler from making any assumptions on a [`LimbType`]'s value.
+///
+/// Optimizing compilers are quite smart in deducing a value's possible set of
+/// values at certain points in the code and subsequently take advantage of that
+/// knowledge to apply optimizing code transformations. The problem with that is
+/// that the resulting code may look surprisingly different from the original
+/// and may even contain conditional branches, even though the original
+/// input had been authored as "branchless". This would invalidate any
+/// assumptions crucial for constant-time execution, of course.
+/// `black_box_l()` is an identity function on a [`LimbType`] that forces
+/// the compiler to forget any knowledge about the value it has accumulated at
+/// the point of invocation.
+///
+///
+/// # Relation to Rust's built-in [`core::hint::black_box()`]
+///
+/// First, the documentation about Rust's [`core::hint::black_box()`] is fairly
+/// conservative about the guarantees it provides: it only works on a
+/// "best-effort" basis, making it unsuitable for any "cryptographic or security
+/// purposes". This alone would render it useless for the purposes here,
+/// but lacking any more robust way to prevent the compiler from applying
+/// certain optimizations, "best-effort" is the best that can hoped for anyway.
+///
+/// That being said, given the limited guarantees Rust's
+/// [`core::hint::black_box()`] provides, it's relatively expensive:
+/// - As of writing, it moves the value through the stack, probably because it
+///   is generic on the blackboxed type and must support arbitrary type sizes.
+/// - It prevents optimizing unused values away entirely. Aiming primarily at
+///   benchmarking usecases, this is excatly what's expected from it, but
+///   inhibiting this kind of dead-code elimination is not needed at all for
+///   maintaining constant-time guarantees.
+///
+/// On the other hand, the Rust Reference about inline assembly requires that
+/// (quote)
+/// > The compiler cannot assume that the instructions in the asm are the ones
+/// > that will actually end up executed.
+/// > - This effectively means that the compiler must treat the `asm!` as a
+/// > black box and only take the interface specification into account, not the
+/// > instructions themselves.
+/// > - Runtime code patching is allowed, via target-specific mechanisms.
+/// This should be sufficient to implement an almost zero-cost, robust black box
+/// for [`LimbType`] values fitting the architecture's register width. The only
+/// potential extra cost is an additional register allocation for the blackboxed
+/// value:
+/// - If the blackboxed value is a constant, it might have get emitted as an
+///   immediate value operand to some CPU instruction otherwise.
+/// - If the CPU architecture supports memory operands for some instructions,
+///   blackboxed values which could have been used as such one now need to get
+///   loaded into a register first.
 #[inline(always)]
 pub fn black_box_l(v: LimbType) -> LimbType {
     let result: LimbType;
@@ -52,12 +107,32 @@ pub fn black_box_l(v: LimbType) -> LimbType {
     result
 }
 
+/// Condition value representation supporting branchless programming patterns.
+///
+/// This is very similar -- and in fact heavily inspired by -- the `subtle`
+/// crates's `subtle::Choice`, but less generic in that it applies to
+/// [`LimbType`] values only: A [`LimbChoice`] is constructed only from a
+/// [`LimbType`] condition value equal to either `0` or `1` and can subsequently
+/// only be used to conditionally select between two [`LimbType`] value choices.
+///
+/// Compare this to `subtle::Choice`, which can be constructed only from `u8`
+/// and select between any type of values implementing the
+/// `subtle::ConditionallySelectable` trait.
+///
+/// By limiting the [`LimbChoice`] to the case of [`LimbType`] relevant here
+/// only, certain usage code sites can be written in a slightly less verbose
+/// manner and also enables tuning of the implementation to this specific type.
 #[derive(Clone, Copy, Debug)]
 pub struct LimbChoice {
     mask: LimbType,
 }
 
 impl LimbChoice {
+    /// Wrap a condition [`LimbType`] integer value in a [`LimbChoice`].
+    ///
+    /// # Arguments:
+    ///
+    /// * `cond` - The condition calue to represent, must be `0` or `1`.
     pub const fn new(cond: LimbType) -> Self {
         debug_assert!(cond == 0 || cond == 1);
         Self {
@@ -65,14 +140,42 @@ impl LimbChoice {
         }
     }
 
+    /// Unwrap the [`LimbChoice`]'s associated condition value.
+    ///
+    /// Returns the condition value of the [`LimbChoice`] instance
+    /// as a [`LimbType`] value, either `0` or `1`.
     pub fn unwrap(&self) -> LimbType {
         black_box_l(self.mask & 1)
     }
 
+    /// Branchless selection between two [`LimbType`] values based on condition.
+    ///
+    /// Selects between one of two given [`LimbType`] value alternatives, `v0`
+    /// and `v1`, based on the condition value represented by the
+    /// [`LimbChoice`] instance and returns it.
+    ///
+    /// # Arguments:
+    ///
+    /// * `v0` - The value to be returned if the [`LimbChoice`] represents a
+    ///   `false` condition.
+    /// * `v1` - The value to be returned if the [`LimbChoice`] represents a
+    ///   `true` condition.
     pub const fn select(&self, v0: LimbType, v1: LimbType) -> LimbType {
         v0 ^ (self.mask & (v0 ^ v1))
     }
 
+    /// Branchless selection between two `usize` values based on condition.
+    ///
+    /// Selects between one of two given `usize` value alternatives, `v0`
+    /// and `v1`, based on the condition value represented by the
+    /// [`LimbChoice`] instance and returns it.
+    ///
+    /// # Arguments:
+    ///
+    /// * `v0` - The value to be returned if the [`LimbChoice`] represents a
+    ///   `false` condition.
+    /// * `v1` - The value to be returned if the [`LimbChoice`] represents a
+    ///   `true` condition.
     pub fn select_usize(&self, v0: usize, v1: usize) -> usize {
         let cond = self.unwrap() as usize;
         let mask = (0_usize).wrapping_sub(cond);
@@ -80,12 +183,18 @@ impl LimbChoice {
     }
 }
 
+/// Convert from a [`LimbType`] condition value representation to
+/// [`LimbChoice`].
+///
+/// The [`LimbType`] condition value begin converted must be equal to either of
+/// `0` and `1`.
 impl convert::From<LimbType> for LimbChoice {
     fn from(value: LimbType) -> Self {
         Self::new(value)
     }
 }
 
+/// Logical negation of a condition represented by a [`LimbChoice`].
 impl ops::Not for LimbChoice {
     type Output = Self;
 
@@ -94,6 +203,7 @@ impl ops::Not for LimbChoice {
     }
 }
 
+/// Logical `&&` of two conditions represented by a [`LimbChoice`] each.
 impl ops::BitAnd for LimbChoice {
     type Output = Self;
 
@@ -104,12 +214,15 @@ impl ops::BitAnd for LimbChoice {
     }
 }
 
+/// Logical `&&` with assignment of two conditions represented by a
+/// [`LimbChoice`] each.
 impl ops::BitAndAssign for LimbChoice {
     fn bitand_assign(&mut self, rhs: Self) {
         self.mask &= rhs.mask
     }
 }
 
+/// Logical `||` of two conditions represented by a [`LimbChoice`] each.
 impl ops::BitOr for LimbChoice {
     type Output = Self;
 
@@ -120,6 +233,8 @@ impl ops::BitOr for LimbChoice {
     }
 }
 
+/// Logical `||` with assignment of two conditions represented by a
+/// [`LimbChoice`] each.
 impl ops::BitOrAssign for LimbChoice {
     fn bitor_assign(&mut self, rhs: Self) {
         self.mask |= rhs.mask
@@ -138,65 +253,229 @@ impl Default for LimbChoice {
 #[cfg(feature = "zeroize")]
 impl zeroize::DefaultIsZeroes for LimbChoice {}
 
+/// Portable implementation of [`ct_is_nonzero_l()`].
+///
+/// Generic, CPU architecture independent implementation of
+/// [`ct_is_nonzero_l()`]. Tuned alternative implementations might be provided
+/// for specific architectures, if supported and enabled.
 #[allow(unused)]
-pub fn generic_ct_is_nonzero_l(v: LimbType) -> LimbType {
+fn generic_ct_is_nonzero_l(v: LimbType) -> LimbType {
     // This trick is from subtle::*::ct_eq():
     // if v is non-zero, then v or -v or both have the high bit set.
     black_box_l((v | v.wrapping_neg()) >> (LIMB_BITS - 1))
 }
 
 #[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::generic_ct_is_nonzero_l as ct_is_nonzero_l;
+#[doc(hidden)]
+use self::generic_ct_is_nonzero_l as arch_ct_is_nonzero_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_is_nonzero_l;
+#[doc(hidden)]
+use x86_64_math::ct_is_nonzero_l as arch_ct_is_nonzero_l;
 
+/// Constant-time test if a [`LimbType`] value is non-zero.
+///
+/// Test whether the given `v` is non-zero and return either a `0` or a `1`
+/// accordingly. Note that the returned [`LimbType`] value can get readily
+/// converted into a [`LimbChoice`] representation for further use.
+///
+/// Runs in constant time, independent of the argument value.
+///
+/// # Arguments:
+///
+/// * `v` - The value to test.
+pub fn ct_is_nonzero_l(v: LimbType) -> LimbType {
+    arch_ct_is_nonzero_l(v)
+}
+
+/// Portable implementation of [`ct_is_zero_l()`].
+///
+/// Generic, CPU architecture independent implementation of [`ct_is_zero_l()`].
+/// Tuned alternative implementations might be provided for specific
+/// architectures, if supported and enabled.
 #[allow(unused)]
-pub fn generic_ct_is_zero_l(v: LimbType) -> LimbType {
+fn generic_ct_is_zero_l(v: LimbType) -> LimbType {
     (1 as LimbType) ^ ct_is_nonzero_l(v)
 }
 
 #[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::generic_ct_is_zero_l as ct_is_zero_l;
+#[doc(hidden)]
+use self::generic_ct_is_zero_l as arch_ct_is_zero_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_is_zero_l;
+#[doc(hidden)]
+use x86_64_math::ct_is_zero_l as arch_ct_is_zero_l;
 
+/// Constant-time test if a [`LimbType`] value is zero.
+///
+/// Test whether the given `v` is zero and return either a `0` or a `1`
+/// accordingly. Note that the returned [`LimbType`] value can get readily
+/// converted into a [`LimbChoice`] representation for further use.
+///
+/// Runs in constant time, independent of the argument value.
+///
+/// # Arguments:
+///
+/// * `v` - The value to test.
+pub fn ct_is_zero_l(v: LimbType) -> LimbType {
+    arch_ct_is_zero_l(v)
+}
+
+/// Constant-time comparison of two [`LimbType`] values for `==`.
+///
+/// Compare `v0` and `v1` for `==` and return a [`LimbChoice`] representing the
+/// outcome.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_eq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     LimbChoice::from(ct_is_zero_l(v0 ^ v1))
 }
 
+/// Constant-time comparison of two [`LimbType`] values for `!=`.
+///
+/// Compare `v0` and `v1` for `!=` and return a [`LimbChoice`] representing the
+/// outcome.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_neq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     !ct_eq_l_l(v0, v1)
 }
 
+/// Simultaneously compare two [`LimbType`] values for `<` and `==` at once in
+/// constant time.
+///
+/// Compare `v0` and `v1` for both, `<` and `==` at once, but return the
+/// respective results separately as a pair of [`LimbType`]s:
+/// - The returned pair's first value will be `1` if `v0` < `v1`, zero
+///   otherwise.
+/// - The returned pair's second value will be `1` if `v0` == `v1`, zero
+///   otherwise.
+/// Note that both of the pair's values can get readily converted into a
+/// [`LimbChoice`] each.  This "fused" primitive is primarily intended for to
+/// support the implementation of constant-time multiprecision integer
+/// comparisons and helps to avoid running two independent comparisons for `<`
+/// and `==` separately each.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_lt_or_eq_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     let (borrow, diff) = ct_sub_l_l(v0, v1);
     debug_assert!(diff != 0 || borrow == 0);
     (borrow, ct_is_zero_l(diff))
 }
 
+/// Constant-time comparison of two [`LimbType`] values for `<`.
+///
+/// Compare `v0` and `v1` for `<` and return a [`LimbChoice`] representing the
+/// outcome.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_lt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     let (borrow, _) = ct_sub_l_l(v0, v1);
     LimbChoice::from(borrow)
 }
 
+/// Constant-time comparison of two [`LimbType`] values for `<=`.
+///
+/// Compare `v0` and `v1` for `<=` and return a [`LimbChoice`] representing the
+/// outcome.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_leq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     !ct_lt_l_l(v1, v0)
 }
 
+/// Simultaneously compare two [`LimbType`] values for `>` and `==` at once in
+/// constant time.
+///
+/// Compare `v0` and `v1` for both, `>` and `==` at once, but return the
+/// respective results separately as a pair of [`LimbType`]s:
+/// - The returned pair's first value will be `1` if `v0` > `v1`, zero
+///   otherwise.
+/// - The returned pair's second value will be `1` if `v0` == `v1`, zero
+///   otherwise.
+/// Note that both of the pair's values can get readily converted into a
+/// [`LimbChoice`] each.  This "fused" primitive is primarily intended for to
+/// support the implementation of constant-time multiprecision integer
+/// comparisons and helps to avoid running two independent comparisons for `>`
+/// and `==` separately each.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_gt_or_eq_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     ct_lt_or_eq_l_l(v1, v0)
 }
 
+/// Constant-time comparison of two [`LimbType`] values for `>`.
+///
+/// Compare `v0` and `v1` for `>` and return a [`LimbChoice`] representing the
+/// outcome.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_gt_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     ct_lt_l_l(v1, v0)
 }
 
+/// Constant-time comparison of two [`LimbType`] values for `>=`.
+///
+/// Compare `v0` and `v1` for `>=` and return a [`LimbChoice`] representing the
+/// outcome.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first value to compare.
+/// * `v1` - The second value to compare.
 pub fn ct_geq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     ct_leq_l_l(v1, v0)
 }
 
+/// Construct a [`LimbType`] with specified number of least significant bits set
+/// in constant time.
+///
+/// Construct a [`LimbType`] value with the `nbits` lower bits set and the rest
+/// clear.
+///
+/// Runs in constant time, independent of the argument value.
+///
+/// # Arguments:
+///
+/// * `nbits` - The number of least significant bits to set in the result. Must
+///   be in the range from `0` to the [`LimbType`] width (inclusive).
 pub const fn ct_lsb_mask_l(nbits: u32) -> LimbType {
     debug_assert!(nbits <= LIMB_BITS);
     // The standard way for generating a mask with nbits of the lower bits set is
@@ -225,7 +504,7 @@ fn test_ct_lsb_mask_l() {
 
 /// Split a limb into upper and lower half limbs.
 ///
-/// Returns a pair of upper and lower half limb, in this order.
+/// Returns a pair of upper and lower half limbs, in this order.
 ///
 /// Runs in constant time.
 ///
@@ -251,18 +530,13 @@ fn ct_hls_to_l(vh: LimbType, vl: LimbType) -> LimbType {
     vh << HALF_LIMB_BITS | vl
 }
 
-/// Add two limbs.
+/// Portable implementation of [`ct_add_l_l()`].
 ///
-/// Returns a pair of carry and the [`LimbType::BITS`] lower bits of the sum.
-///
-/// Runs in constant time.
-///
-/// # Arguments:
-///
-/// * `v0` - first operand
-/// * `v1` - second operand
+/// Generic, CPU architecture independent implementation of [`ct_add_l_l()`].
+/// Tuned alternative implementations might be provided for specific
+/// architectures, if supported and enabled.
 #[allow(unused)]
-pub fn generic_ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+fn generic_ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     // Don't rely on overflowing_add() for determining the carry -- that would
     // almost certainly branch and not be constant-time.
     let v0 = black_box_l(v0);
@@ -273,10 +547,27 @@ pub fn generic_ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
 }
 
 #[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::generic_ct_add_l_l as ct_add_l_l;
+#[doc(hidden)]
+use self::generic_ct_add_l_l as arch_ct_add_l_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_add_l_l;
+#[doc(hidden)]
+use x86_64_math::ct_add_l_l as arch_ct_add_l_l;
+
+/// Constant-time addition of two [`LimbType`] values.
+///
+/// Computes the sum of `v0 + v1` and returns it as a a pair of carry, either
+/// `0` or `1`, and the resulting [`LimbType`] value, in this order.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first operand.
+/// * `v1` - The second operand
+pub fn ct_add_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+    arch_ct_add_l_l(v0, v1)
+}
 
 #[test]
 fn test_ct_add_l_l() {
@@ -295,6 +586,22 @@ fn test_ct_add_l_l() {
     assert_eq!(ct_add_l_l(!0, !0), (1, !0 - 1));
 }
 
+/// Constant-time addition of two [`LimbType`] values with carry propagation.
+///
+/// Computes the sum of `v0 + v1 + carry` and returns it as a a pair of carry,
+/// either `0` or `1`, and the resulting [`LimbType`] value, in this order.
+/// The intended use is addition with carry propagation in a multiprecision
+/// integer.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first operand.
+/// * `v1` - The second operand
+/// * `carry` - The carry from a preceeding limb addition at the next lower
+///   position in a multiprecision integer. Must be equal to either of `0` and
+///   `1`.
 pub fn ct_add_l_l_c(v0: LimbType, v1: LimbType, carry: LimbType) -> (LimbType, LimbType) {
     debug_assert!(carry <= 1);
     let (carry0, r) = ct_add_l_l(v0, carry);
@@ -304,19 +611,13 @@ pub fn ct_add_l_l_c(v0: LimbType, v1: LimbType, carry: LimbType) -> (LimbType, L
     (carry, r)
 }
 
-/// Subtract two limbs.
+/// Portable implementation of [`ct_sub_l_l()`].
 ///
-/// Returns a pair of borrow and the [`LimbType::BITS`] lower bits of the
-/// difference.
-///
-/// Runs in constant time.
-///
-/// # Arguments:
-///
-/// * `v0` - first operand
-/// * `v1` - second operand
+/// Generic, CPU architecture independent implementation of [`ct_sub_l_l()`].
+/// Tuned alternative implementations might be provided for specific
+/// architectures, if supported and enabled.
 #[allow(unused)]
-pub fn generic_ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+fn generic_ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
     // Don't rely on overflowing_sub() for determining the borrow -- that would
     // almost certainly branch and not be constant-time.
     let v0 = black_box_l(v0);
@@ -327,10 +628,27 @@ pub fn generic_ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
 }
 
 #[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::generic_ct_sub_l_l as ct_sub_l_l;
+#[doc(hidden)]
+use self::generic_ct_sub_l_l as arch_ct_sub_l_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_sub_l_l;
+#[doc(hidden)]
+use x86_64_math::ct_sub_l_l as arch_ct_sub_l_l;
+
+/// Constant-time subtraction of two [`LimbType`] values.
+///
+/// Computes the difference of `v0 - v1` and returns it as a a pair of borrow,
+/// either `0` or `1`, and the resulting [`LimbType`] value, in this order.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first, "minuend" operand.
+/// * `v1` - The second, "subtrahend" operand
+pub fn ct_sub_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
+    arch_ct_sub_l_l(v0, v1)
+}
 
 #[test]
 fn test_ct_sub_l_l() {
@@ -351,6 +669,22 @@ fn test_ct_sub_l_l() {
     );
 }
 
+/// Constant-time subtaction of two [`LimbType`] values with borrow propagation.
+///
+/// Computes the difference of `v0 - v1 - borrow` and returns it as a a pair of
+/// borrow, either `0` or `1`, and the resulting [`LimbType`] value, in this
+/// order.  The intended use is subtraction with borrow propagation in a
+/// multiprecision integer.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first, "minuend" operand.
+/// * `v1` - The second, "subtrahend" operand
+/// * `borrow` - The carry from a preceeding limb subtraction at the next lower
+///   position in a multiprecision integer. Must be equal to either of `0` and
+///   `1`.
 pub fn ct_sub_l_l_b(v0: LimbType, v1: LimbType, borrow: LimbType) -> (LimbType, LimbType) {
     debug_assert!(borrow <= 1);
     let (borrow0, r) = ct_sub_l_l(v0, borrow);
@@ -360,38 +694,52 @@ pub fn ct_sub_l_l_b(v0: LimbType, v1: LimbType, borrow: LimbType) -> (LimbType, 
     (borrow, r)
 }
 
-/// A pair of [`LimbType`]s interpreted as a double precision integer.
+/// A pair of [`LimbType`] values interpreted as a double precision integer.
 ///
-/// Used internally for the result of [`LimbType`] multiplications and also for
-/// the implementation of multiprecision integer division.
+/// This is being used internally in the context of [`LimbType`] multiplications
+/// and double precision divisions, both of which are needed for the respective
+/// multiprecision implementations.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize))]
 pub struct DoubleLimb {
+    /// Double precision integer in "native endian" layout: the less significant
+    /// [`LimbType`] is at index zero.
     v: [LimbType; 2],
 }
 
 impl DoubleLimb {
+    /// Construct a [`DoubleLimb`] integer from the high and low [`LimbType`]
+    /// halves.
+    ///
+    /// # Arguments:
+    ///
+    /// * `h` - The most sigificant [`LimbType`] half of the resulting
+    ///   [`DoubleLimb`].
+    /// * `l` - The least sigificant [`LimbType`] half of the resulting
+    ///   [`DoubleLimb`].
     pub fn new(h: LimbType, l: LimbType) -> Self {
         Self { v: [l, h] }
     }
 
+    /// Read a [`DoubleLimb`]'s most sigificant [`LimbType`] half.
     pub fn high(&self) -> LimbType {
         self.v[1]
     }
 
+    /// Read a [`DoubleLimb`]'s least sigificant [`LimbType`] half.
     pub fn low(&self) -> LimbType {
         self.v[0]
     }
 
-    /// Extract a half limb from a double limb.
+    /// Extract a half limb from a [`DoubleLimb`].
     ///
     /// Interpret the [`DoubleLimb`] as an integer composed of four half limbs
     /// and extract the one at at a given position.
     ///
-    /// # Arguments
+    /// # Arguments:
     ///
-    /// * `i` - index of the half limb to extract, the half limbs are ordered by
-    ///   increasing significance.
+    /// * `i` - The index of the half limb to extract, the half limbs are
+    ///   ordered by increasing significance. Must be in the range `0 <= i < 4`.
     fn get_half_limb(&self, i: usize) -> LimbType {
         if i & 1 != 0 {
             black_box_l(self.v[i / 2] >> HALF_LIMB_BITS)
@@ -401,18 +749,13 @@ impl DoubleLimb {
     }
 }
 
-/// Mutiply two limbs in constant time.
+/// Portable implementation of [`ct_mul_l_l()`].
 ///
-/// Returns the result a double precision [`DoubleLimb`].
-///
-/// Runs in constant time.
-///
-/// # Arguments:
-///
-/// * `v0` - first operand
-/// * `v1` - second operand
+/// Generic, CPU architecture independent implementation of [`ct_mul_l_l()`].
+/// Tuned alternative implementations might be provided for specific
+/// architectures, if supported and enabled.
 #[allow(unused)]
-pub fn generic_ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
+fn generic_ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
     let (v0h, v0l) = ct_l_to_hls(v0);
     let (v1h, v1l) = ct_l_to_hls(v1);
 
@@ -443,10 +786,27 @@ pub fn generic_ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
 }
 
 #[cfg(not(all(feature = "enable_arch_math_asm", target_arch = "x86_64")))]
-pub use self::generic_ct_mul_l_l as ct_mul_l_l;
+#[doc(hidden)]
+use self::generic_ct_mul_l_l as arch_ct_mul_l_l;
 
 #[cfg(all(feature = "enable_arch_math_asm", target_arch = "x86_64"))]
-pub use x86_64_math::ct_mul_l_l;
+#[doc(hidden)]
+use x86_64_math::ct_mul_l_l as arch_ct_mul_l_l;
+
+/// Constant-time multiplication of two [`LimbType`] values.
+///
+/// Computes the product of `v0 * v1` and returns the resulting
+/// double precision integer as a [`DoubleLimb`].
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v0` - The first operand.
+/// * `v1` - The second operand
+pub fn ct_mul_l_l(v0: LimbType, v1: LimbType) -> DoubleLimb {
+    arch_ct_mul_l_l(v0, v1)
+}
 
 #[test]
 fn test_ct_mul_l_l() {
@@ -475,6 +835,31 @@ fn test_ct_mul_l_l() {
     assert_eq!(p.high(), !1);
 }
 
+/// Constant-time multiply-add for [`LimbType`] operands with carry propagation.
+///
+/// Computes `op0 + op01 * op10 + carry` and returns the double precision
+/// integer as a pair of [`LimbType`] values, with the most significant, i.e.
+/// the new carry value, first. Note that unlike it is the case for simple
+/// additions, the carries can not be just either `0` or `1`, but any possible
+/// value in the [`LimbType`] range.
+///
+/// The intended use is the implementation of multiplication related
+/// multiprecision integer arithmetic, where the final result is typically
+/// accumulated (`op0`) from several [`LimbType`]-by-multiprecision-integer
+/// (`op01` for the [`LimbType`] operand, `op10` and the `carry` for iterating
+/// over the multiprecision integer operand) multiplications.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `op0` - The value to accumulate to, it will get added to the result.
+/// * `op01` - The first operand to the multiplication.
+/// * `op10` - The second operand to the multiplication.
+/// * `carry` - The carry from a preceeding limb multiplication, i.e. from
+///   another [`ct_mul_add_l_l_l_c()`] invocation, at the next lower position in
+///   a multiprecision integer. It will be added to the final result and can be
+///   any possible value in the [`LimbType`] range.
 pub fn ct_mul_add_l_l_l_c(
     op0: LimbType,
     op10: LimbType,
@@ -496,6 +881,31 @@ pub fn ct_mul_add_l_l_l_c(
     (carry, result)
 }
 
+/// Constant-time multiply-subtract for [`LimbType`] operands with borrow
+/// propagation.
+///
+/// Computes `op0 - op01 * op10 - carry` and returns the double precision
+/// integer as a pair of [`LimbType`] values, with the most significant, i.e.
+/// the new borrow value, first. Note that unlike it is the case for simple
+/// subtractions, the borrows can not be just either `0` or `1`, but any
+/// possible value in the [`LimbType`] range.
+///
+/// The intended use is the implementation of multiprecision division, where
+/// the multiprecision integer divisor needs to get scaled by a [`LimbType`]
+/// value and subtracted from the intermediate remainder upon over-estimation of
+/// the quotient.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `op0` - The value to subtract from.
+/// * `op01` - The first operand to the multiplication.
+/// * `op10` - The second operand to the multiplication.
+/// * `borrow` - The borrow from a preceeding limb multiplication, i.e. from
+///   another [`ct_mul_sub_l_l_l_b()`] invocation, at the next lower position in
+///   a multiprecision integer. It will be subtracted from the final result and
+///   can be any possible value in the [`LimbType`] range.
 pub fn ct_mul_sub_l_l_l_b(
     op0: LimbType,
     op10: LimbType,
@@ -517,18 +927,75 @@ pub fn ct_mul_sub_l_l_l_b(
     (borrow, result)
 }
 
+/// Constant-time [`LimbType`] divisor.
+///
+/// [`CtLDivisor`] provides a constant-time implementation of the basic
+/// [`DoubleLimb`] by [`LimbType`] division primitive relied upon by the higher
+/// level division related algorithms such
+/// as [`ct_div_mp_mp()`](super::div_impl::ct_div_mp_mp),
+/// [`ct_div_mp_l()`](super::div_impl::ct_div_mp_l) and many more.
+///
+/// Intended to serve as a basic primitive, only cases where the quotient is
+/// known a priori to fit a [`LimbType`] are supported. To prevent accidental
+/// misuse by external users, the actual division functionality it exposed only
+/// through a private trait, [`LDivisorPrivate`]. That is, external users are
+/// only supposed to instantiate [`CtLDivisor`], but not to use it directly.
+///
+/// In order to not having to invoke the CPU's division instructions,
+/// which are _not_ constant-time in general, it follows the approach from
+/// > [GRAN_MONT94](https://doi.org/10.1145/773473.178249)
+/// > "Division by Invariant Integers using Multiplication",
+/// > Torbjörn Granlund, Peter L. Montgomery,
+/// > ACM SIGPLAN Notices,  Volume 29, Issue 6, June 1994, pp 61–72, section 8.
+///
+/// This method does involve a certain amount of divisor value dependent
+/// one-time computations at instantiation, namely the division of a certain
+/// double limb value by the divisor to determine the associated
+/// runtime-constant multiplier value. There are two constructors provided:
+/// - A constant-time constructor, [`CtLDivisor::new()`], which implements said
+///   division by bitwise long division taking [`LimbType::BITS`] iterations,
+///   and involving only subtractions and some binary logic.
+/// - A less expensive, but **non**-constant-time alternative,
+///   [`CtLDivisor::nonct_new()`], for cases where the divisor value is not
+///   sensitive.
+/// Note that for multiprecision divisions, the difference probably won't matter
+/// much most of the time, relative to the cost of the multiprecision integer
+/// division operation itself, which has a quadratic runtime. However,
+/// whenever the divisor value is not sensitive it is certainly favorable
+/// to avoid the unnecessary cost and use the [`CtLDivisor::nonct_new()`]
+/// constructor variant.
 pub struct CtLDivisor {
+    /// The multiplier associated with the divisor `v`.
     m: LimbType,
+    /// The divisor value.
     v: LimbType,
+    /// The number of least significant bits set in `v`.
     v_width: u32,
 }
 
+/// Error type returned by [`CtLDivisor::new()`].
 #[derive(Debug)]
 pub enum CtLDivisorError {
+    /// Attempt to instantiate a [`CtLDivisor`] from a zero divisor value.
     DivisorIsZero,
 }
 
 impl CtLDivisor {
+    /// Constant-time instantiation of a [`CtLDivisor`] from a [`LimbType`]
+    /// divisor value.
+    ///
+    /// Instantiation of a [`CtLDivisor`] has a non-trivial cost, because it
+    /// involves some precomputational division, whose constant-time
+    /// implementation takes [`LimbType::BITS`] iterations. Consider reusing
+    /// instances whenever feasible and also, if the divisor value is
+    /// not sensitive, [`CtLDivisor::nonct_new()`] might be a good alternative.
+    /// C.f. the rationale at the `struct`-level [`CtLDivisor`] documentation.
+    ///
+    /// Runs in constant time, independent of the argument value.
+    ///
+    /// # Arguments:
+    ///
+    /// * `v` - The divisor value.
     pub fn new(v: LimbType) -> Result<Self, CtLDivisorError> {
         if ct_is_zero_l(v) != 0 {
             return Err(CtLDivisorError::DivisorIsZero);
@@ -539,6 +1006,18 @@ impl CtLDivisor {
         Ok(Self { m, v, v_width })
     }
 
+    /// Compute the multiplier associated with a given divisor in constant time.
+    ///
+    /// Compute
+    /// *(2<sup>[`LIMB_BITS`] + `v_width`</sup> - 1) / `v` -
+    /// 2<sup>[`LIMB_BITS`]</sup>*
+    ///
+    /// Runs in constant time, independent of the argument value.
+    ///
+    /// # Arguments:
+    ///
+    /// * `v` - The divisor value.
+    /// * `v_width` - The number of least significant bits set in `v`.
     fn ct_compute_m(v: LimbType, v_width: u32) -> LimbType {
         debug_assert!(v_width > 0);
         // Align the nominator and denominator all the way to the left. Then run a
@@ -562,6 +1041,16 @@ impl CtLDivisor {
         q
     }
 
+    /// **Non**-constant-time instantiation of a [`CtLDivisor`] from a
+    /// [`LimbType`] divisor value.
+    ///
+    /// Does **not** run in constant time, it invokes the CPU's division
+    /// instruction. Must **not** be used if the divisor value `v` is sensitive.
+    /// Refer to [`CtLDivisor::new()`] in this case.
+    ///
+    /// # Arguments
+    ///
+    /// * `v` - The divisor value.
     pub fn nonct_new(v: LimbType) -> Result<Self, CtLDivisorError> {
         if v == 0 {
             return Err(CtLDivisorError::DivisorIsZero);
@@ -571,24 +1060,56 @@ impl CtLDivisor {
         Ok(Self { m, v, v_width })
     }
 
-    /// Compute the multiplier for a given divisor in _non-constant time_.
+    /// Compute the multiplier for a given divisor in **non**-constant time.
     ///
     /// Compute
     /// *(2<sup>[`LIMB_BITS`] + `v_width`</sup> - 1) / `v` -
-    /// 2<sup>[`LIMB_BITS`]</sup>*
+    ///
+    /// Does **not** run in constant time, it invokes the CPU's division
+    /// instruction. Must **not** be used if the divisor value `v` is sensitive.
+    ///
+    /// # Arguments:
+    ///
+    /// * `v` - The divisor value.
+    /// * `v_width` - The number of least significant bits set in `v`.
     fn nonct_compute_m(v: LimbType, v_width: u32) -> LimbType {
-        NonCtLDivisor::new(v).unwrap().do_div(
-            &DoubleLimb::new(ct_lsb_mask_l(v_width) - v, !0)
-        ).0
+        NonCtLDivisor::new(v)
+            .unwrap()
+            .do_div(&DoubleLimb::new(ct_lsb_mask_l(v_width) - v, !0))
+            .0
     }
 }
 
+/// Private interface of [`DoubleLimb`] by [`LimbType`] divisor implementations.
+///
+/// The basic [`DoubleLimb`] by [`LimbType`] division primitive needed by higher
+/// level divison related algorithms is only required to support cases where the
+/// quotient is known a priori to fit a [`LimbType`]. The respective divisor
+/// implementations, [`CtLDivisor`] and [`NonCtLDivisor`], restrict themselves
+/// to this special case accordingly in order to save some superfluous work in
+/// performance critical code paths.
+///
+/// In order to prevent accidental misuse by external users, the actual division
+/// functionality is begin exposed only through the private [`LDivisorPrivate`]
+/// interface.
 pub trait LDivisorPrivate {
+    /// Divide a [`DoubleLimb`] value by the represented [`LimbType`] divisor.
+    ///
+    /// The dividend value **must** be limited to a range such that the
+    /// resulting quotient will always fit a [`LimbType`]. Otherwise,
+    /// **behaviour is undefined**!
+    ///
+    /// # Arguments:
+    ///
+    /// * `u` - The dividend value.
     fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType);
+
+    /// Accessor to the represented [`LimbType`] divisor value.
     fn get_v(&self) -> LimbType;
 }
 
 impl LDivisorPrivate for CtLDivisor {
+    /// Constant-time implementation of [`LDivisorPrivate::do_div()`]
     fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
         let l = self.v_width;
         debug_assert!(l > 0 && l <= LIMB_BITS);
@@ -596,8 +1117,8 @@ impl LDivisorPrivate for CtLDivisor {
         // - u0: The l - 1 least significant bits.
         // - u1: The single bit at position l - 1.
         // - u2: The remaining most significant bits. Because the quotient fits a limb
-        //       by assumption, this fits a limb as well. In fact, it is smaller
-        //       than LimbType::MAX.
+        //   by assumption, this fits a limb as well. In fact, it is smaller than
+        //   LimbType::MAX.
         //
         // Shift in two steps to avoid undefined behaviour.
         let u2 = (u.low() >> (l - 1)) >> 1;
@@ -612,9 +1133,9 @@ impl LDivisorPrivate for CtLDivisor {
         let v_norm = self.v << (LIMB_BITS - l);
         debug_assert_eq!(v_norm >> (LIMB_BITS - 1), 1);
         // u1 is equal to the high bit in u10. The high bit in v_norm is always set.
-        // So, if u1 is set, adding the two will (virtually) overflow into 2^(LIMB_BITS).
-        // Dismissing this carry is equivalent to a subtracting 2^(LIMB_BITS).
-        // So, n_adj will equal
+        // So, if u1 is set, adding the two will (virtually) overflow into
+        // 2^(LIMB_BITS). Dismissing this carry is equivalent to a subtracting
+        // 2^(LIMB_BITS). So, n_adj will equal
         // u10 + u1 * v_norm
         // = u1 * 2^(LIMB_BITS - 1) + u0 * (LIMB_BITS - l) + u1 * v_norm
         // = u1 * (2^(LIMB_BITS - 1) + v_norm) + u0 * ...
@@ -629,7 +1150,6 @@ impl LDivisorPrivate for CtLDivisor {
         let (carry, _) = ct_add_l_l(p.low(), n_adj);
         let (carry, q1) = ct_add_l_l_c(u2, p.high(), carry);
         debug_assert_eq!(carry, 0);
-
 
         // Compute the remainder u - (q1  + 1) * v.
         // u - q1 * v is known to be in the range [0, 2 * v), subtracting
@@ -707,11 +1227,17 @@ fn test_ct_l_divisor() {
     }
 }
 
+/// Error type returned by [`NonCtLDivisor::new()`].
 #[derive(Debug)]
 pub enum NonCtLDivisorError {
-    DivisorIsZero
+    DivisorIsZero,
 }
 
+/// Portable implementation of [`NonCtLDivisor`].
+///
+/// Generic, CPU architecture independent implementation of [`NonCtLDivisor`].
+/// Tuned alternative implementations might be provided for specific
+/// architectures, if supported and enabled.
 #[allow(unused)]
 struct GenericNonCtLDivisor {
     v: LimbType,
@@ -721,14 +1247,15 @@ struct GenericNonCtLDivisor {
 }
 
 impl GenericNonCtLDivisor {
-    /// Normalize a divisor.
+    /// **Non**-constant-time instantiation of a [`GenericNonCtLDivisor`] from a
+    /// [`LimbType`] divisor value.
     ///
-    /// _Does not run in constant-time_, it invokes the CPU's division
-    /// instruction.
+    /// Not intended to be used directly, but only through the [`NonCtLDivisor`]
+    /// configuration abstraction, please refer to [`NonCtLDivisor::new()`].
     ///
-    /// # Arguments
+    /// # Arguments:
     ///
-    /// * `v` - The unscaled, but non-zero divisor to normalize.
+    /// * `v` - The divisor value.
     fn new(v: LimbType) -> Result<Self, NonCtLDivisorError> {
         if v == 0 {
             return Err(NonCtLDivisorError::DivisorIsZero);
@@ -739,7 +1266,12 @@ impl GenericNonCtLDivisor {
         let scaling_low_src_rshift = (LIMB_BITS - scaling_shift) % LIMB_BITS;
         let scaling_low_src_mask = ct_lsb_mask_l(scaling_shift);
 
-        Ok(Self { v, scaling_shift, scaling_low_src_rshift, scaling_low_src_mask })
+        Ok(Self {
+            v,
+            scaling_shift,
+            scaling_low_src_rshift,
+            scaling_low_src_mask,
+        })
     }
 }
 
@@ -839,21 +1371,35 @@ use self::GenericNonCtLDivisor as ArchNonCtLDivisor;
 #[doc(hidden)]
 use x86_64_math::NonCtLDivisor as ArchNonCtLDivisor;
 
-/// A normalized divisor.
+/// **Non**-constant-time [`LimbType`] divisor.
 ///
+/// [`NonCtLDivisor`] provides a **non**-constant-time implementation of the
+/// basic [`DoubleLimb`] by [`LimbType`] division primitive. The main purpose is
+/// to enable more efficient, but non-constant-time construction of
+/// [`CtLDivisor`] instances where the divisor value is not sensitive. It must
+/// **not** get used if either the divisor value or any of the dividends
+/// subsequently to be divided is sensitive.
+///
+/// Just as it's the case for [`CtLDivisor`] only the very basic [`DoubleLimb`]
+/// by [`LimbType`] division primitive, where the quotient is known a priori to
+/// fit a [`LimbType`], is supported. To prevent accidental misuse by external
+/// users, the actual division functionality it similarly exposed only through a
+/// private trait, [`LDivisorPrivate`].
 pub struct NonCtLDivisor {
     arch: ArchNonCtLDivisor,
 }
 
 impl NonCtLDivisor {
-    /// Normalize a divisor.
+    /// **Non**-constant-time instantiation of a [`NonCtLDivisor`] from a
+    /// [`LimbType`] divisor value.
     ///
-    /// _Does not run in constant-time_, it invokes the CPU's division
-    /// instruction.
+    /// Does **not** run in constant time, it invokes the CPU's division
+    /// instruction. Must **not** be used if the divisor value `v` is
+    /// sensitive.
     ///
     /// # Arguments
     ///
-    /// * `v` - The unscaled, but non-zero divisor to normalize.
+    /// * `v` - The divisor value.
     pub fn new(v: LimbType) -> Result<Self, NonCtLDivisorError> {
         Ok(Self {
             arch: ArchNonCtLDivisor::new(v)?,
@@ -862,6 +1408,7 @@ impl NonCtLDivisor {
 }
 
 impl LDivisorPrivate for NonCtLDivisor {
+    /// **Non**-constant-time implementation of [`LDivisorPrivate::do_div()`]
     fn do_div(&self, u: &DoubleLimb) -> (LimbType, LimbType) {
         self.arch.do_div(u)
     }
@@ -871,8 +1418,13 @@ impl LDivisorPrivate for NonCtLDivisor {
     }
 }
 
-/// Division of a [`DoubleLimb`] by a [`LimbType`].
+/// **Non**-constant-time division of a [`DoubleLimb`] by a [`LimbType`].
 ///
+/// Double precsision integer division implementation. The result will be
+/// returned as a pair of quotient and remainder.
+///
+/// Does **not** run in constant time, it invokes the CPU's division
+/// instruction. Must **not** be used if either of the operands is sensitive.
 ///
 /// # Arguments
 ///
@@ -928,6 +1480,24 @@ fn test_nonct_div_dl_l() {
     }
 }
 
+/// Constant-time inversion of a [`LimbType`] modulo two to the power of
+/// [`LimbType::BITS`].
+///
+/// Use Hensel lifting to compute
+/// *`v`<sup>-1</sup> mod 2<sup>[`LimbType::BITS`]</sup>*,
+/// i.e. such that
+/// *`v` * `v`<sup>-1</sup> mod 2<sup>[`LimbType::BITS`]</sup> = 1*.
+///
+/// This is intended as a supporting routine for the word-by-word Montgomery
+/// reductions. It is a fairly cheap operation, as it's running time is
+/// *~log<sub>2</sub>([`LimbType::BITS`])*, that is 5 for a 32 bit [`LimbType`]
+/// width, 6 for a 64 bit one.
+///
+/// Runs in constant time, independent of the argument values.
+///
+/// # Arguments:
+///
+/// * `v` - The [`LimbType`] integer value to invert.
 pub fn ct_inv_mod_l(v: LimbType) -> LimbType {
     // Apply Hensel's lifting lemma for v * x - 1 to lift the trivial root
     // (i.e. inverse of v) mod 2^1 to a root mod 2^LIMB_BITS. Successive steps
@@ -960,7 +1530,20 @@ fn test_ct_inv_mod_l() {
     assert_eq!(v.wrapping_mul(ct_inv_mod_l(v)), 1);
 }
 
-// Position of MSB + 1, if any, zero otherwise.
+/// Find a [`LimbType`]'s most significant set bit in constant time.
+///
+/// Return the position past the most significant set bit in `v`, if any,
+/// zero otherwise. That is, return the effective width of the value in `v`.
+///
+/// Runs in constant time, independent of the argument value.
+///
+/// The running time is
+/// *~log<sub>2</sub>([`LimbType::BITS`])*, that is 5 for a 32 bit [`LimbType`]
+/// width, 6 for a 64 bit one.
+///
+/// # Arguments:
+///
+/// * `v` - The [`LimbType`] integer value whose most significant bit to find.
 pub fn ct_find_last_set_bit_l(mut v: LimbType) -> usize {
     let mut bits = LIMB_BITS as LimbType;
     assert!(bits != 0);
@@ -993,11 +1576,35 @@ fn test_ct_find_last_set_bit_l() {
     }
 }
 
+/// Find a [`LimbType`]'s most significant non-zero byte in constant time.
+///
+/// Return the position past the most significant non-zero byte in `v` in units
+/// of bytes, if any, zero otherwise.
+///
+/// Runs in constant time, independent of the argument value.
+///
+/// # Arguments:
+///
+/// * `v` - The [`LimbType`] integer value whose most significant non-zero byte
+///   to find.
 pub fn ct_find_last_set_byte_l(v: LimbType) -> usize {
     (ct_find_last_set_bit_l(v) + 8 - 1) / 8
 }
 
-// Position of LSB, if any, LIMB_BITS otherwise.
+/// Find a [`LimbType`]'s least significant set bit in constant time.
+///
+/// Return the position of the least significant set bit in `v`, if any,
+/// [`LimbType::BITS`] otherwise.
+///
+/// Runs in constant time, independent of the argument value.
+///
+/// The running time is
+/// *~log<sub>2</sub>([`LimbType::BITS`])*, that is 5 for a 32 bit [`LimbType`]
+/// width, 6 for a 64 bit one.
+///
+/// # Arguments:
+///
+/// * `v` - The [`LimbType`] integer value whose leas significant bit to find.
 pub fn ct_find_first_set_bit_l(mut v: LimbType) -> usize {
     let mut bits = LIMB_BITS as LimbType;
     assert!(bits != 0);
@@ -1032,6 +1639,17 @@ fn test_ct_find_first_set_bit_l() {
     }
 }
 
+/// Constant-time arithmetic right shift of a [`LimbType`].
+///
+/// Right shift `v` by `rshift` bits arithmetically, i.e. fill vacant bit
+/// positions with the sign bit (interpreting the unsigned [`LimbType`] as a
+/// signed integer in two's complement).
+///
+/// # Arguments:
+///
+/// * `v` - The [`LimbType`] value to shift.
+/// * `rshift` - The shift distance. Must be between zero and [`LimbType::BITS`]
+///   (inclusive).
 pub fn ct_arithmetic_rshift_l(v: LimbType, rshift: LimbType) -> LimbType {
     let rshift_nz_mask = LimbChoice::from(ct_is_nonzero_l(rshift)).select(0, !0);
     let sign_extend = (0 as LimbType).wrapping_sub(v >> (LIMB_BITS - 1));
@@ -1076,4 +1694,17 @@ fn test_ct_arithmetic_shift_l() {
     );
 
     assert_eq!(ct_arithmetic_rshift_l(!0 ^ 1, LIMB_BITS as LimbType), !0);
+}
+
+/// Constant-time negate a [`LimbType`] in two's complement representation.
+///
+///
+/// Negate the unsigned [`LimbType`] in two's complement representation, i.e.
+/// modulo *2<sup>[`LimbType::BITS`]</sup>*.
+///
+/// # Arguments:
+///
+/// * `v` - The [`LimbType`] value to negate.
+pub fn ct_negate_l(v: LimbType) -> LimbType {
+    (!v).wrapping_add(1)
 }
