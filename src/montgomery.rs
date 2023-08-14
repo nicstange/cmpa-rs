@@ -1,8 +1,10 @@
-use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, ct_l_to_subtle_choice};
+use crate::div_impl::mp_ct_div_lshifted_mp_mp;
+
+use super::limb::{LimbType, LIMB_BITS, ct_add_l_l, ct_mul_add_l_l_l_c, LIMB_BYTES, ct_l_to_subtle_choice};
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _, MPIntByteSliceCommon, mp_ct_limbs_align_len, mp_ct_nlimbs};
 use super::cmp_impl::mp_ct_geq_mp_mp;
 use super::add_impl::mp_ct_sub_cond_mp_mp;
-use super::div_impl::mp_ct_div_mp_mp;
+use super::div_impl::{mp_ct_div_mp_mp, mp_ct_div_pow2_mp, MpCtDivisionError};
 use subtle::{self, ConditionallySelectable as _};
 use zeroize::Zeroize;
 
@@ -12,28 +14,6 @@ pub fn mp_ct_montgomery_radix_shift_len(n_len: usize) -> usize {
 
 pub fn mp_ct_montgomery_radix_shift_nlimbs(n_len: usize) -> usize {
     mp_ct_nlimbs(n_len)
-}
-
-pub fn mp_ct_to_montgomery_form<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
-    t: &mut TT, scratch: &mut [u8], n: &NT
-) {
-    debug_assert!(t.len() >= n.len());
-    let radix_shift_len = mp_ct_montgomery_radix_shift_len(n.len());
-    debug_assert!(scratch.len() >= radix_shift_len);
-    let (scratch, _) = scratch.split_at_mut(radix_shift_len);
-    let mut t_low = TT::from_bytes(scratch).unwrap();
-    t_low.zeroize_bytes_above(0);
-    let mut t_high = t.coerce_lifetime();
-    mp_ct_div_mp_mp::<_, _, TT>(Some(&mut t_high), &mut t_low, n, None).unwrap();
-    drop(t_high);
-    drop(t_low);
-
-    for i in 0..t.nlimbs() {
-        debug_assert_eq!(t.load_l(i), 0);
-    }
-    let mut t_low = TT::from_bytes(scratch).unwrap();
-    let (_, t_low) = t_low.split_at(n.len());
-    t.copy_from(&t_low);
 }
 
 pub fn mp_ct_montgomery_n0_inv_mod_l<'a, NT: MPIntByteSliceCommon>(n: &NT) -> LimbType {
@@ -196,7 +176,7 @@ fn test_mp_ct_montgomery_redc<TT: MPIntMutByteSlice, NT: MPIntMutByteSlice>() {
 
                     // To Montgomery form: t * R mod n
                     let mut scratch: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-                    mp_ct_to_montgomery_form(&mut t, &mut scratch, &n);
+                    mp_ct_to_montgomery_form_direct(&mut t, &n).unwrap();
 
                     // And back to normal: (t * R mod n) / R mod n
                     mp_ct_montgomery_redc(&mut t, &n, n0_inv);
@@ -533,8 +513,8 @@ fn test_mp_ct_montgomery_mul_mod_cond_be_be_be_be() {
     use super::limbs_buffer::MPBigEndianMutByteSlice;
     test_mp_ct_montgomery_mul_mod_cond::<MPBigEndianMutByteSlice,
                                          MPBigEndianMutByteSlice,
-                                         MPBigEndianMutByteSlice,MPBigEndianMutByteSlice
-                                         >()
+                                         MPBigEndianMutByteSlice,
+                                         MPBigEndianMutByteSlice>()
 }
 
 #[test]
@@ -542,8 +522,8 @@ fn test_mp_ct_montgomery_mul_mod_cond_le_le_le_le() {
     use super::limbs_buffer::MPLittleEndianMutByteSlice;
     test_mp_ct_montgomery_mul_mod_cond::<MPLittleEndianMutByteSlice,
                                          MPLittleEndianMutByteSlice,
-                                         MPLittleEndianMutByteSlice,MPLittleEndianMutByteSlice
-                                         >()
+                                         MPLittleEndianMutByteSlice,
+                                         MPLittleEndianMutByteSlice>()
 }
 
 #[test]
@@ -551,6 +531,112 @@ fn test_mp_ct_montgomery_mul_mod_cond_ne_ne_ne_ne() {
     use super::limbs_buffer::MPNativeEndianMutByteSlice;
     test_mp_ct_montgomery_mul_mod_cond::<MPNativeEndianMutByteSlice,
                                          MPNativeEndianMutByteSlice,
-                                         MPNativeEndianMutByteSlice,MPNativeEndianMutByteSlice
-                                         >()
+                                         MPNativeEndianMutByteSlice,
+                                         MPNativeEndianMutByteSlice>()
+}
+
+pub fn mp_ct_to_montgomery_form_direct<TT: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+    t: &mut TT, n: &NT
+) -> Result<(), MpCtDivisionError> {
+    debug_assert!(t.nlimbs() >= n.nlimbs());
+    let radix_shift_len = mp_ct_montgomery_radix_shift_len(n.len());
+    mp_ct_div_lshifted_mp_mp::<_, _, TT>(t, t.len(), radix_shift_len, n, None)
+}
+
+pub fn mp_ct_montgomery_radix2_mod_n<RX2T: MPIntMutByteSlice, NT: MPIntByteSliceCommon>(
+    radix2_mod_n_out: &mut RX2T, n: &NT
+) -> Result<(), MpCtDivisionError> {
+    debug_assert!(mp_ct_nlimbs(radix2_mod_n_out.len()) >= mp_ct_nlimbs(n.len()));
+    let radix_shift_len = mp_ct_montgomery_radix_shift_len(n.len());
+    mp_ct_div_pow2_mp::<_, _, RX2T>(2 * 8 * radix_shift_len, radix2_mod_n_out, n, None)
+}
+
+pub fn mp_ct_to_montgomery_form<MGT: MPIntMutByteSlice, TT: MPIntByteSliceCommon, NT: MPIntByteSliceCommon, RX2T: MPIntByteSliceCommon> (
+    mg_t_out: &mut MGT, t: &TT, n: &NT, n0_inv_mod_l: LimbType, radix2_mod_n: &RX2T
+) {
+    mp_ct_montgomery_mul_mod_cond(mg_t_out, t, radix2_mod_n, n, n0_inv_mod_l, subtle::Choice::from(1));
+}
+
+
+#[cfg(test)]
+fn test_mp_ct_to_montgomery_form<TT: MPIntMutByteSlice, NT: MPIntMutByteSlice, RX2T: MPIntMutByteSlice>() {
+    use super::limbs_buffer::MPIntMutByteSlicePriv as _;
+    use super::cmp_impl::mp_ct_eq_mp_mp;
+
+    for i in 0..16 {
+        const MERSENNE_PRIME_13: LimbType = 8191 as LimbType;
+        let n_high = MERSENNE_PRIME_13.wrapping_mul((65543 as LimbType).wrapping_mul(i));
+        for j in 0..16 {
+            const MERSENNE_PRIME_17: LimbType = 131071 as LimbType;
+            let n_low = MERSENNE_PRIME_17.wrapping_mul((4095 as LimbType).wrapping_mul(j));
+            // Force n_low odd.
+            let n_low = n_low | 1;
+            let mut n: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+            let mut n = NT::from_bytes(n.as_mut_slice()).unwrap();
+            n.store_l(0, n_low);
+            n.store_l(1, n_high);
+            let n_lengths = if !NT::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
+                    [LIMB_BYTES, 2 * LIMB_BYTES]
+                } else {
+                    [2 * LIMB_BYTES - 1, 2 * LIMB_BYTES]
+                };
+
+            for n_len in n_lengths {
+                let (_, n) = n.split_at(n_len);
+                let n0_inv = mp_ct_montgomery_n0_inv_mod_l(&n);
+
+                let mut radix2_mod_n: [u8; 2 * LIMB_BYTES] = [0xffu8; 2 * LIMB_BYTES];
+                let mut radix2_mod_n = RX2T::from_bytes(radix2_mod_n.as_mut_slice()).unwrap();
+                let (_, mut radix2_mod_n) = radix2_mod_n.split_at(RX2T::limbs_align_len(n_len));
+                mp_ct_montgomery_radix2_mod_n(&mut radix2_mod_n, &n).unwrap();
+
+                for k in 0..4 {
+                    let a_high = MERSENNE_PRIME_17.wrapping_mul((16383 as LimbType).wrapping_mul(k));
+                    for l in 0..4 {
+                        let a_low = MERSENNE_PRIME_13.wrapping_mul((262175 as LimbType).wrapping_mul(l));
+                        let mut a: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
+                        let mut a = TT::from_bytes(a.as_mut_slice()).unwrap();
+                        a.store_l(0, a_low);
+                        a.store_l(1, a_high);
+                        // All montgomery operations are defined mod n, compute a mod n
+                        mp_ct_div_mp_mp::<_, _, TT::SelfT<'_>>(None, &mut a, &n, None).unwrap();
+                        let (_, mut a) = a.split_at(TT::limbs_align_len(n_len));
+
+                        let mut result: [u8; 2 * LIMB_BYTES] = [0xff; 2 * LIMB_BYTES];
+                        let mut result = TT::from_bytes(result.as_mut_slice()).unwrap();
+                        let (_, mut result) = result.split_at(TT::limbs_align_len(n_len));
+                        let (_, mut result) = result.split_at(TT::limbs_align_len(n_len));
+                        mp_ct_to_montgomery_form(&mut result, &a, &n, n0_inv, &radix2_mod_n);
+
+                        mp_ct_to_montgomery_form_direct(&mut a, &n).unwrap();
+                        assert_eq!(mp_ct_eq_mp_mp(&result, &a).unwrap_u8(), 1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_mp_ct_to_montgomery_form_be_be_be() {
+    use super::limbs_buffer::MPBigEndianMutByteSlice;
+    test_mp_ct_to_montgomery_form::<MPBigEndianMutByteSlice,
+                                         MPBigEndianMutByteSlice,
+                                         MPBigEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_ct_to_montgomery_form_le_le_le() {
+    use super::limbs_buffer::MPLittleEndianMutByteSlice;
+    test_mp_ct_to_montgomery_form::<MPLittleEndianMutByteSlice,
+                                         MPLittleEndianMutByteSlice,
+                                         MPLittleEndianMutByteSlice>()
+}
+
+#[test]
+fn test_mp_ct_to_montgomery_form_ne_ne_ne() {
+    use super::limbs_buffer::MPNativeEndianMutByteSlice;
+    test_mp_ct_to_montgomery_form::<MPNativeEndianMutByteSlice,
+                                         MPNativeEndianMutByteSlice,
+                                         MPNativeEndianMutByteSlice>()
 }
