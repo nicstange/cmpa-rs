@@ -409,31 +409,6 @@ pub fn ct_leq_l_l(v0: LimbType, v1: LimbType) -> LimbChoice {
     !ct_lt_l_l(v1, v0)
 }
 
-/// Simultaneously compare two [`LimbType`] values for `>` and `==` at once in
-/// constant time.
-///
-/// Compare `v0` and `v1` for both, `>` and `==` at once, but return the
-/// respective results separately as a pair of [`LimbType`]s:
-/// - The returned pair's first value will be `1` if `v0` > `v1`, zero
-///   otherwise.
-/// - The returned pair's second value will be `1` if `v0` == `v1`, zero
-///   otherwise.
-/// Note that both of the pair's values can get readily converted into a
-/// [`LimbChoice`] each.  This "fused" primitive is primarily intended for to
-/// support the implementation of constant-time multiprecision integer
-/// comparisons and helps to avoid running two independent comparisons for `>`
-/// and `==` separately each.
-///
-/// Runs in constant time, independent of the argument values.
-///
-/// # Arguments:
-///
-/// * `v0` - The first value to compare.
-/// * `v1` - The second value to compare.
-pub fn ct_gt_or_eq_l_l(v0: LimbType, v1: LimbType) -> (LimbType, LimbType) {
-    ct_lt_or_eq_l_l(v1, v0)
-}
-
 /// Constant-time comparison of two [`LimbType`] values for `>`.
 ///
 /// Compare `v0` and `v1` for `>` and return a [`LimbChoice`] representing the
@@ -516,18 +491,6 @@ fn ct_l_to_hls(v: LimbType) -> (LimbType, LimbType) {
         black_box_l(v >> HALF_LIMB_BITS),
         black_box_l(v & HALF_LIMB_MASK),
     )
-}
-
-/// Construct a limb from upper and lower half limbs in constant time.
-///
-/// Runs in constant time.
-///
-/// # Arguments
-///
-/// * `vh` - the upper half limb.
-/// * `vl` - the upper half limb.
-fn ct_hls_to_l(vh: LimbType, vl: LimbType) -> LimbType {
-    vh << HALF_LIMB_BITS | vl
 }
 
 /// Portable implementation of [`ct_add_l_l()`].
@@ -729,23 +692,6 @@ impl DoubleLimb {
     /// Read a [`DoubleLimb`]'s least sigificant [`LimbType`] half.
     pub fn low(&self) -> LimbType {
         self.v[0]
-    }
-
-    /// Extract a half limb from a [`DoubleLimb`].
-    ///
-    /// Interpret the [`DoubleLimb`] as an integer composed of four half limbs
-    /// and extract the one at at a given position.
-    ///
-    /// # Arguments:
-    ///
-    /// * `i` - The index of the half limb to extract, the half limbs are
-    ///   ordered by increasing significance. Must be in the range `0 <= i < 4`.
-    fn get_half_limb(&self, i: usize) -> LimbType {
-        if i & 1 != 0 {
-            black_box_l(self.v[i / 2] >> HALF_LIMB_BITS)
-        } else {
-            black_box_l(self.v[i / 2] & HALF_LIMB_MASK)
-        }
     }
 }
 
@@ -1256,6 +1202,7 @@ impl GenericNonCtLDivisor {
     /// # Arguments:
     ///
     /// * `v` - The divisor value.
+    #[allow(unused)]
     fn new(v: LimbType) -> Result<Self, NonCtLDivisorError> {
         if v == 0 {
             return Err(NonCtLDivisorError::DivisorIsZero);
@@ -1430,7 +1377,8 @@ impl LDivisorPrivate for NonCtLDivisor {
 ///
 /// * `u` - The [`DoubleLimb`] dividend.
 /// * `v` - The [`NonCtLDivisor`] divisor.
-pub fn nonct_div_dl_l(u: &DoubleLimb, v: &NonCtLDivisor) -> (DoubleLimb, LimbType) {
+#[cfg(test)]
+fn nonct_div_dl_l(u: &DoubleLimb, v: &NonCtLDivisor) -> (DoubleLimb, LimbType) {
     let (q_h, r_h) = v.do_div(&DoubleLimb::new(0, u.high()));
     let (q_l, r_l) = v.do_div(&DoubleLimb::new(r_h, u.low()));
     (DoubleLimb::new(q_h, q_l), r_l)
