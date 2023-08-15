@@ -25,10 +25,6 @@ pub fn ct_eq_usize_usize(v0: usize, v1: usize) -> LimbChoice {
     LimbChoice::from(ct_is_zero_usize(v0 ^ v1))
 }
 
-pub fn ct_neq_usize_usize(v0: usize, v1: usize) -> LimbChoice {
-    !ct_eq_usize_usize(v0, v1)
-}
-
 fn ct_sub_usize_usize(v0: usize, v1: usize) -> (usize, usize) {
     // Don't rely on overflowing_sub() for determining the borrow -- that would
     // almost certainly branch and not be constant-time.
