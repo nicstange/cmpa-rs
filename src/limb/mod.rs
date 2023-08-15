@@ -5,7 +5,7 @@ use core::convert;
 use core::mem;
 use core::ops;
 #[cfg(feature = "zeroize")]
-use zeroize::Zeroize;
+use zeroize;
 
 /// The basic unit used by the multiprecision integer arithmetic implementation.
 ///
@@ -663,7 +663,6 @@ pub fn ct_sub_l_l_b(v0: LimbType, v1: LimbType, borrow: LimbType) -> (LimbType, 
 /// and double precision divisions, both of which are needed for the respective
 /// multiprecision implementations.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[cfg_attr(feature = "zeroize", derive(Zeroize))]
 pub struct DoubleLimb {
     /// Double precision integer in "native endian" layout: the less significant
     /// [`LimbType`] is at index zero.
