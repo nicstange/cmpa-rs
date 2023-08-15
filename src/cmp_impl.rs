@@ -1,6 +1,6 @@
 //! Implementation of multiprecision integer comparison primitives.
 
-use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b, LimbType, ct_lt_or_eq_l_l};
+use super::limb::{LimbChoice, ct_eq_l_l, ct_neq_l_l, ct_lt_l_l, ct_is_zero_l, ct_is_nonzero_l, ct_sub_l_l, black_box_l, ct_sub_l_l_b, LimbType, ct_lt_or_eq_l_l, ct_le_l_l};
 use super::limbs_buffer::MPIntByteSliceCommon;
 #[cfg(test)]
 use super::limbs_buffer::{MPIntMutByteSlice, MPIntMutByteSlicePriv as _};
@@ -326,4 +326,18 @@ pub fn mp_ct_is_one_mp<T0: MPIntByteSliceCommon>(op0: &T0) -> LimbChoice {
     LimbChoice::from(ct_is_zero_l(tail_is_not_one | head_is_nz))
 }
 
+pub fn mp_ct_leq_mp_l<T0: MPIntByteSliceCommon>(op0: &T0, op1: LimbType) -> LimbChoice {
+    if op0.is_empty() {
+        return LimbChoice::from(1);
+    }
 
+    let l0_is_leq = ct_le_l_l(op0.load_l(0), op1);
+
+    let mut head_is_nz: LimbType = 0;
+    for i in 1..op0.nlimbs() {
+        let op0_val = op0.load_l(i);
+        head_is_nz |= op0_val;
+    }
+
+    l0_is_leq & LimbChoice::from(ct_is_zero_l(head_is_nz))
+}
