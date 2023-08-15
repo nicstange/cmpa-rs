@@ -235,7 +235,7 @@ pub fn ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
 
 #[cfg(test)]
 fn test_ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
-    use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
+    use super::div_impl::ct_mod_mp_mp;
     use super::limb::LIMB_BYTES;
 
     for i in 0..64 {
@@ -474,7 +474,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
     T1: MpIntMutByteSlice,
     NT: MpIntMutByteSlice,
 >() {
-    use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
+    use super::div_impl::ct_mod_mp_mp;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommonPriv as _, MpIntMutByteSlicePriv as _};
     use super::mul_impl::ct_mul_trunc_mp_mp;
@@ -711,7 +711,7 @@ fn test_ct_to_montgomery_form_mp<
     RX2T: MpIntMutByteSlice,
 >() {
     use super::cmp_impl::ct_eq_mp_mp;
-    use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
+    use super::div_impl::ct_mod_mp_mp;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpIntMutByteSlicePriv as _;
 
@@ -941,7 +941,7 @@ fn test_ct_exp_mod_odd_mp_mp<
         exponent: &'a ET,
     ) {
         use super::cmp_impl::ct_eq_mp_mp;
-        use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
+        use super::div_impl::ct_mod_mp_mp;
         use super::mul_impl::{ct_mul_trunc_mp_mp, ct_square_trunc_mp};
 
         let n_len = n.len();
