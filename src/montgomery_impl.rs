@@ -269,7 +269,6 @@ fn test_ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
                     let t_high = t.load_l(1);
 
                     // To Montgomery form: t * R mod n
-                    let mut scratch: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
                     ct_to_montgomery_form_direct_mp(&mut t, &n).unwrap();
 
                     // And back to normal: (t * R mod n) / R mod n
