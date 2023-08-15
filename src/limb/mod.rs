@@ -241,17 +241,14 @@ impl ops::BitOrAssign for LimbChoice {
     }
 }
 
-/// Prerequisite trait for the [`zeroize::DefaultIsZeroes`] marker trait.
+/// [`zeroize::Zeroize`] implementations so that external types containing it
+/// can easily be made to implement this trait as well.
 #[cfg(feature = "zeroize")]
-impl Default for LimbChoice {
-    fn default() -> Self {
-        Self::from(0)
+impl zeroize::Zeroize for LimbChoice {
+    fn zeroize(&mut self) {
+        self.mask.zeroize()
     }
 }
-
-/// Marker trait enabling a generic [`zeroize::Zeroize`] trait implementation.
-#[cfg(feature = "zeroize")]
-impl zeroize::DefaultIsZeroes for LimbChoice {}
 
 /// Portable implementation of [`ct_is_nonzero_l()`].
 ///
