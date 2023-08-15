@@ -1,9 +1,7 @@
-use crate::euclid::mp_ct_gcd;
-use crate::mp_ct_is_one_mp;
-
-use super::limb::{LIMB_BITS, LimbChoice, ct_is_zero_l, ct_sub_l_l_b};
+use super::limb::{LimbType, LIMB_BITS, LimbChoice, ct_is_zero_l, ct_sub_l_l_b, ct_lt_l_l, ct_ge_l_l, ct_eq_l_l};
 use super::limbs_buffer::{MPIntByteSliceCommon, MPBigEndianByteSlice, MPNativeEndianMutByteSlice, MPIntMutByteSlice, MPIntByteSlice as _, mp_ct_find_first_set_bit_mp};
-use super::cmp_impl::mp_ct_lt_mp_mp;
+use super::cmp_impl::{mp_ct_lt_mp_mp, mp_ct_leq_mp_l, mp_ct_is_one_mp};
+use super::euclid::mp_ct_gcd;
 use super::montgomery::{ct_montgomery_neg_n0_inv_mod_l, mp_ct_montgomery_mul_mod, mp_ct_montgomery_mul_mod_cond};
 use super::usize_ct_cmp::{ct_eq_usize_usize, ct_lt_usize_usize};
 use super::hexstr;
@@ -407,3 +405,403 @@ fn test_mp_ct_prime_test_miller_rabin_ne_ne_ne() {
                                                 MPNativeEndianMutByteSlice,
                                                 MPNativeEndianMutByteSlice>()
 }
+
+// Prime candidate generation. The general method follows the "wheel sieve" approach: start out from
+// a multiple of a primorial (a product of the first few N primes) as a base and add offsets not
+// divisible by any of the factors to it. The larger the primorial, the better in terms of
+// preselection effectiveness, because all potential candidates divisible by any of its factors are
+// filtered. On the other hand, the list of offsets (not divisible by any of the primorial's
+// factors) grows ~linearly with the primorial's magnitude and for practical reasons, we cannot
+// store a number of precomputed offsets proportional to, say 2^64. Choose a two-level approach
+// instead. At level 0, there will be a generator using a very small primorial, 2 * 3 * 5 == 30,
+// whose sole purpose is to generate offset candidates for the "real", next level1 primorial, which
+// will be chosen such that it still fits a limb.
+
+const FIRST_PRIMES: [u8; 15] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47];
+
+fn ct_find_first_ge_than(v: &[u8], val: u8) -> usize {
+    debug_assert!(*v.iter().last().unwrap() >= val);
+
+    // Binary search. Be careful to always keep the left and right
+    // halves equal in length for constant-time.
+    let mut lb = 0;
+    let mut ub = v.len();
+    let mut r = ub - lb;
+    while r > 1 {
+        // m points past the mid element if r is odd, inbetween the two
+        // mid elements otherwise.
+        let m = lb + (r + 1) / 2;
+        let pivot_is_lt = ct_lt_l_l(v[m - 1] as LimbType, val as LimbType);
+        // Keep the halves balanced for constant-time. If r is odd and
+        // the right half is taken, extend it at its front by the pivot
+        // element, even though it's not needed for the correctness of
+        // the search.
+        let r_odd = r & 1;
+        debug_assert_eq!(ub - m + r_odd , m - lb);
+        lb = pivot_is_lt.select_usize(lb, m - r_odd);
+        ub = pivot_is_lt.select_usize(m, ub);
+        r = ub - lb;
+    }
+
+    lb
+}
+
+#[test]
+fn test_ct_find_first_ge_than() {
+    for val in FIRST_PRIMES.iter() {
+        let i = ct_find_first_ge_than(&FIRST_PRIMES, *val);
+        assert_eq!(FIRST_PRIMES[i], *val);
+    }
+
+    for i in 0..FIRST_PRIMES.len() - 1 {
+        let val = FIRST_PRIMES[i] + 1;
+        let j = ct_find_first_ge_than(&FIRST_PRIMES, val);
+        assert_eq!(i + 1, j);
+    }
+}
+
+// Non-constant-time but constant-context variant of the ct_find_first_ge_than() binary search.
+const fn cnst_find_first_ge_than(v: &[u8], val: u8) -> usize {
+    debug_assert!(!v.is_empty());
+    debug_assert!(v[v.len() - 1] >= val);
+
+    // Binary search.
+    let mut lb = 0;
+    let mut ub = v.len();
+    let mut r = ub - lb;
+    while r > 1 {
+        // m points past the mid element if r is odd, inbetween the two
+        // mid elements otherwise.
+        let m = lb + (r + 1) / 2;
+        if v[m - 1] < val {
+            lb = m;
+        } else {
+            ub = m;
+        }
+        r = ub - lb;
+    }
+
+    lb
+}
+
+#[test]
+fn test_cnst_find_first_ge_than() {
+    for val in FIRST_PRIMES.iter() {
+        let i = cnst_find_first_ge_than(&FIRST_PRIMES, *val);
+        assert_eq!(FIRST_PRIMES[i], *val);
+    }
+
+    for i in 0..FIRST_PRIMES.len() - 1 {
+        let val = FIRST_PRIMES[i] + 1;
+        let j = cnst_find_first_ge_than(&FIRST_PRIMES, val);
+        assert_eq!(i + 1, j);
+    }
+}
+
+// Maximum number of primorial factors such that the result is <= max.
+const fn first_primes_primorial_nfactors_for_max(max: u64) -> usize {
+    let mut prod: u64 = 1;
+    let mut n = 0;
+    while n < FIRST_PRIMES.len() {
+        let next_p = FIRST_PRIMES[n] as u64;
+        if max / next_p < prod {
+            break;
+        }
+        prod *= next_p;
+        n += 1;
+    }
+
+    n
+}
+
+const fn first_primes_primorial(n: usize) -> LimbType {
+    debug_assert!(n <= first_primes_primorial_nfactors_for_max(u64::MAX));
+    let mut prod: LimbType = 1;
+    let mut i = 0;
+    while i < n {
+        prod *= FIRST_PRIMES[i] as LimbType;
+        i += 1;
+    }
+    prod
+}
+
+struct PrimeWheelSieveLvl0 {
+    next_index: usize,
+    last_offset: u8,
+    next_offset_delta: u8,
+}
+
+impl PrimeWheelSieveLvl0 {
+    // The primorial of the first 4 primes would still fit an u8. However, by sticking to the first
+    // three factors only, the list of wheel offsets is _much_ smaller.
+    const PRIMORIAL_NFACTORS: usize = 3;
+    const PRIMORIAL: u8 = first_primes_primorial(Self::PRIMORIAL_NFACTORS) as u8;
+
+    const fn assert_all_offsets_are_first_primes() {
+        // The next prime not a factor of the level 0 primorial squared is >= the primorial. It
+        // follows that all numbers less than the primorial have a square root < that next prime. It
+        // follows in turn that any composite number < the primorial has factors only < that next
+        // prime, i.e. exactly the factors of the primorial. For the wheel sieve in general, the set
+        // of offsets is defined to be the set of numbers < the primorial, that have no factor in
+        // common with it. By the preceeding, these cannot be composite, i.e. must be prime.
+        assert!(
+            (
+                FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64
+                    * FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64
+            ) > Self::PRIMORIAL as u64
+        );
+    }
+
+    const NOFFSETS: usize = {
+        Self::assert_all_offsets_are_first_primes();
+        cnst_find_first_ge_than(&FIRST_PRIMES, Self::PRIMORIAL)
+            - Self::PRIMORIAL_NFACTORS + 1
+    };
+
+    const OFFSETS: [u8; Self::NOFFSETS] = [1, 7, 11, 13, 17, 19, 23, 29];
+    const MAX_OFFSET: u8 = Self::OFFSETS[Self::NOFFSETS - 1];
+
+    const fn offset_delta_at_wrap() -> u8 {
+        Self::PRIMORIAL - Self::MAX_OFFSET
+    }
+
+    fn start_geq_than(lower_bound: LimbType) -> Self {
+        // Take the lower bound modulo the primorial to get a lower bound
+        // on the first offset.
+        let offset_lower_bound = (lower_bound % Self::PRIMORIAL as LimbType) as u8;
+
+        // Lookup the first wheel offset >= the lower bound.
+        // The wheel's last offset is always equal to the primorial minus 1,
+        // so the search is well-defined.
+        debug_assert_eq!(
+            Self::OFFSETS[Self::NOFFSETS - 1],
+            Self::PRIMORIAL - 1
+        );
+        let offset_index = ct_find_first_ge_than(&Self::OFFSETS, offset_lower_bound);
+        // By initializing last_offset to offset_lower_bound, the first produced
+        // delta will advance the input lower_bound to the first offset.
+        Self { next_index: offset_index, last_offset: offset_lower_bound, next_offset_delta: 0 }
+    }
+
+    fn produce_next_delta(&mut self) -> u8 {
+        let next_offset = Self::OFFSETS[self.next_index];
+        let delta = next_offset + self.next_offset_delta - self.last_offset;
+        self.advance();
+        delta
+    }
+
+    fn advance(&mut self) {
+        let last_index = self.next_index;
+        self.next_index += 1;
+        let wrapped = ct_eq_usize_usize(self.next_index, Self::NOFFSETS);
+        self.next_index = wrapped.select_usize(self.next_index, 0);
+        self.last_offset = wrapped.select(Self::OFFSETS[last_index] as LimbType, 0) as u8;
+        self.next_offset_delta = wrapped.select(0, Self::offset_delta_at_wrap() as LimbType) as u8;
+    }
+}
+
+#[test]
+fn test_prime_wheel_sieve_lvl0() {
+    fn advance_candidate(candidate: &mut LimbType, wheel: &mut PrimeWheelSieveLvl0) {
+        let candidate_is_zero = *candidate == 0;
+        let delta = wheel.produce_next_delta();
+        for j in 0..delta {
+            *candidate += 1;
+            if candidate_is_zero && j == 0 {
+                continue;
+            }
+            let mut is_not_coprime = false;
+            for k in 0..PrimeWheelSieveLvl0::PRIMORIAL_NFACTORS {
+                let factor = FIRST_PRIMES[k] as LimbType;
+                let rem = *candidate % factor;
+                if rem == 0 {
+                    is_not_coprime = true;
+                    break;
+                }
+            }
+            if j + 1 != delta {
+                assert_eq!(is_not_coprime, true);
+            } else {
+                assert_eq!(is_not_coprime, false);
+            }
+        }
+    }
+
+    let mut candidate = 0;
+    let mut wheel = PrimeWheelSieveLvl0::start_geq_than(candidate);
+    advance_candidate(&mut candidate, &mut wheel);
+    assert_eq!(candidate, 1);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate= 1;
+    let mut wheel = PrimeWheelSieveLvl0::start_geq_than(candidate);
+    advance_candidate(&mut candidate, &mut wheel);
+    assert_eq!(candidate, 1);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate = 2;
+    let mut wheel = PrimeWheelSieveLvl0::start_geq_than(candidate);
+    advance_candidate(&mut candidate, &mut wheel);
+    assert_eq!(candidate, 7);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate = PrimeWheelSieveLvl0::PRIMORIAL as LimbType - 2;
+    let mut wheel = PrimeWheelSieveLvl0::start_geq_than(candidate);
+    advance_candidate(&mut candidate, &mut wheel);
+    assert_eq!(candidate, PrimeWheelSieveLvl0::PRIMORIAL as LimbType - 1);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate = PrimeWheelSieveLvl0::PRIMORIAL as LimbType - 1;
+    let mut wheel = PrimeWheelSieveLvl0::start_geq_than(candidate);
+    advance_candidate(&mut candidate, &mut wheel);
+    assert_eq!(candidate, PrimeWheelSieveLvl0::PRIMORIAL as LimbType - 1);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate = PrimeWheelSieveLvl0::PRIMORIAL as LimbType;
+    let mut wheel = PrimeWheelSieveLvl0::start_geq_than(candidate);
+    advance_candidate(&mut candidate, &mut wheel);
+    assert_eq!(candidate, PrimeWheelSieveLvl0::PRIMORIAL as LimbType + 1);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+}
+
+pub struct PrimeWheelSieveLvl1 {
+    lvl0_wheel: PrimeWheelSieveLvl0,
+    last_offset: LimbType,
+    last_offset_delta: u8,
+}
+
+impl PrimeWheelSieveLvl1 {
+    const PRIMORIAL_NFACTORS: usize = first_primes_primorial_nfactors_for_max(!(0 as LimbType));
+    const PRIMORIAL: LimbType = first_primes_primorial(Self::PRIMORIAL_NFACTORS);
+
+    pub fn start_geq_than<LBT: MPIntByteSliceCommon>(lower_bound: &LBT) -> Self {
+        let offset_lower_bound = lower_bound.load_l(0) % Self::PRIMORIAL;
+        // If the lower bound is <= 1, skip the 1 generated by the level 0.
+        // It only got the potential for causing confusion or subtle corner cases.
+        // It's important to account for that internal increment when producing
+        // the first offset delta to the outside, so remember it in last_offset_delta.
+        let lower_bound_leq_one = mp_ct_leq_mp_l(lower_bound, 1);
+        let last_offset_delta = lower_bound_leq_one.select(0, (2 as LimbType).wrapping_sub(offset_lower_bound));
+        let offset_lower_bound = offset_lower_bound + last_offset_delta;
+        // Remember that increment and adjust for it when emitting the first produced
+        // offset delta.
+        Self {
+            lvl0_wheel: PrimeWheelSieveLvl0::start_geq_than(offset_lower_bound),
+            last_offset: offset_lower_bound,
+            last_offset_delta: last_offset_delta as u8
+        }
+    }
+
+    pub fn produce_next_delta(&mut self) -> LimbType {
+        let mut next_offset = self.last_offset;
+        let mut next_offset_delta = 0;
+        let mut last_offset = self.last_offset;
+        loop {
+            let lvl0_delta = self.lvl0_wheel.produce_next_delta();
+            // The addition does not wrap: next_offset < Self::PRIMORIAL and Self::PRIMORIAL has
+            // been chosen such that there's enough room until LimbType::MAX to accomodate the
+            // largest delta value the level 0 wheel could ever produce.
+            next_offset += lvl0_delta as LimbType;
+            let wrapped = ct_ge_l_l(next_offset, Self::PRIMORIAL);
+            next_offset = wrapped.select(next_offset, next_offset.wrapping_sub(Self::PRIMORIAL));
+            last_offset = wrapped.select(last_offset, 0);
+            next_offset_delta = wrapped.select(0, Self::PRIMORIAL - self.last_offset);
+
+            let mut is_not_coprime = LimbChoice::from(0);
+            for i in PrimeWheelSieveLvl0::PRIMORIAL_NFACTORS..Self::PRIMORIAL_NFACTORS {
+                let factor = FIRST_PRIMES[i] as LimbType;
+                let rem = next_offset % factor;
+                is_not_coprime |= ct_eq_l_l(rem, 0);
+            }
+            if is_not_coprime.unwrap() != 0 {
+                continue;
+            }
+            break;
+        };
+
+        let last_offset_delta = self.last_offset_delta;
+        self.last_offset_delta = 0;
+        self.last_offset = next_offset;
+        next_offset + next_offset_delta - (last_offset - last_offset_delta as LimbType)
+    }
+}
+
+#[test]
+fn test_prime_wheel_sieve_lvl1() {
+    use super::limb::LIMB_BYTES;
+    use super::add_impl::mp_ct_add_mp_l;
+    use super::cmp_impl::mp_ct_is_zero_mp;
+    use super::div_impl::mp_ct_div_mp_l;
+
+    fn advance_candidate(candidate: &mut MPNativeEndianMutByteSlice, wheel: &mut PrimeWheelSieveLvl1) {
+        let candidate_is_zero = mp_ct_is_zero_mp(candidate).unwrap() != 0;
+        let delta = wheel.produce_next_delta();
+        for j in 0..delta {
+            mp_ct_add_mp_l(candidate, 1);
+            if candidate_is_zero && j == 0 {
+                continue;
+            }
+            let mut is_not_coprime = false;
+            for k in 0..PrimeWheelSieveLvl1::PRIMORIAL_NFACTORS {
+                let factor = FIRST_PRIMES[k] as LimbType;
+                let rem = mp_ct_div_mp_l::<_, MPNativeEndianMutByteSlice>(candidate, factor, None).unwrap();
+                if rem == 0 {
+                    is_not_coprime = true;
+                    break;
+                }
+            }
+            if j + 1 != delta {
+                assert_eq!(is_not_coprime, true);
+            } else {
+                assert_eq!(is_not_coprime, false);
+            }
+        }
+    }
+
+    let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
+    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
+    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    candidate.store_l(0, 1);
+    let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
+    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    candidate.store_l(0, 2);
+    let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+
+    let mut candidate: [u8; 2 * LIMB_BYTES] = [0u8; 2 * LIMB_BYTES];
+    let mut candidate = MPNativeEndianMutByteSlice::from_bytes(&mut candidate).unwrap();
+    candidate.store_l(0, PrimeWheelSieveLvl1::PRIMORIAL - 2);
+    let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
+    advance_candidate(&mut candidate, &mut wheel);
+    assert_eq!(candidate.load_l(0), PrimeWheelSieveLvl1::PRIMORIAL - 1);
+    for _i in 0..1024 {
+        advance_candidate(&mut candidate, &mut wheel);
+    }
+}
+
+pub use PrimeWheelSieveLvl1 as PrimeWheelSieve;
