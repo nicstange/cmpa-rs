@@ -991,7 +991,9 @@ pub trait MpIntByteSliceCommon: MpIntByteSliceCommonPriv + fmt::LowerHex {
 
     fn test_bit(&self, pos: usize) -> LimbChoice {
         let limb_index = pos / LIMB_BITS as usize;
-        debug_assert!(limb_index < self.nlimbs());
+        if limb_index >= self.nlimbs() {
+            return LimbChoice::from(0);
+        }
         let pos_in_limb = pos % LIMB_BITS as usize;
         let l = self.load_l(limb_index);
         LimbChoice::from((l >> pos_in_limb) & 1)
