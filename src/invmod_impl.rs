@@ -12,6 +12,7 @@ use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
 
 // max_pow2_exp: non-sensitive upper bound (inclusive) on pow2_exp, for CT.
 // If pow2_exp == 0, the result is all zero.
+// If op0 == 0, the result is all zero.
 fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
     result: &mut RT,
     op0: &T0,
@@ -202,6 +203,10 @@ fn test_ct_inv_mod_pow2_ne_ne() {
 
 #[derive(Debug)]
 pub enum CtInvModMpMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InsufficientScratchSpace,
+    InconsistentInputOperandLength,
     OperandsNotCoprime,
 }
 
@@ -212,27 +217,34 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     n: &mut NT,
     scratch: [&mut [u8]; 4],
 ) -> Result<(), CtInvModMpMpError> {
-    assert!(!n.is_empty());
-    assert_eq!(op0.nlimbs(), n.nlimbs());
+    if n.is_empty() {
+        return Err(CtInvModMpMpError::InvalidModulus);
+    }
+    if !n.len_is_compatible_with(op0.len()) {
+        return Err(CtInvModMpMpError::InsufficientResultSpace);
+    } else if !op0.len_is_compatible_with(n.len()) {
+        return Err(CtInvModMpMpError::InconsistentInputOperandLength);
+    }
 
     // Verify if both, op0 and n, have factors of two in common and
     // return an error if so.
     if ct_is_nonzero_l(!op0.load_l(0) & !n.load_l(0) & 1) != 0 {
         return Err(CtInvModMpMpError::OperandsNotCoprime);
     }
+    let n_aligned_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
+    for s in scratch.iter() {
+        if s.len() < n_aligned_len {
+            return Err(CtInvModMpMpError::InsufficientScratchSpace);
+        }
+    }
 
     let [scratch0, scratch1, scratch2, scratch3] = scratch;
-    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
-    assert!(scratch0.len() >= scratch_len);
-    let (scratch0, _) = &mut scratch0.split_at_mut(scratch_len);
+    let (scratch0, _) = &mut scratch0.split_at_mut(n_aligned_len);
     let mut scratch0 = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
-    assert!(scratch1.len() >= scratch_len);
-    let (scratch1, _) = &mut scratch1.split_at_mut(scratch_len);
+    let (scratch1, _) = &mut scratch1.split_at_mut(n_aligned_len);
     let mut scratch1 = MpNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
-    assert!(scratch2.len() >= scratch_len);
-    let (scratch2, _) = &mut scratch2.split_at_mut(scratch_len);
-    assert!(scratch3.len() >= scratch_len);
-    let (scratch3, _) = &mut scratch3.split_at_mut(scratch_len);
+    let (scratch2, _) = &mut scratch2.split_at_mut(n_aligned_len);
+    let (scratch3, _) = &mut scratch3.split_at_mut(n_aligned_len);
 
     // The Extended Euclidean Algorithm (as it is implemented) only works for odd n.
     // 1.) Factor out powers of two to obtain n = n_{*} * 2^e.
@@ -248,6 +260,9 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     // efficiently, in time logarithmic in (the upper bound on) e, via Hensel
     // lifting.
     let (n_is_nonzero, n_pow2_exp) = ct_find_first_set_bit_mp(n);
+    if n_is_nonzero.unwrap() == 0 {
+        return Err(CtInvModMpMpError::InvalidModulus);
+    }
     assert!(n_is_nonzero.unwrap() != 0);
     ct_rshift_mp(n, n_pow2_exp);
     let max_n_pow2_exp = 8 * n.len() - 1;
@@ -259,10 +274,36 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     // Compute scratch1 = op0^{-1} mod n_{*}. Will destroy the value in op0.
     match ct_inv_mod_odd_mp_mp(&mut scratch1, op0, n, [scratch2, scratch3]) {
         Ok(_) => (),
-        Err(CtInvModOddMpMpError::OperandsNotCoprime) => {
+        Err(e) => {
             // Undo the rshift on n for good measure.
             ct_lshift_mp(n, n_pow2_exp);
-            return Err(CtInvModMpMpError::OperandsNotCoprime);
+            let e = match e {
+                CtInvModOddMpMpError::InvalidModulus => {
+                    // Cannot happen, the modulus had been checked for being non-zero
+                    // and made odd. But play safe.
+                    debug_assert!(false);
+                    CtInvModMpMpError::InvalidModulus
+                }
+                CtInvModOddMpMpError::OperandsNotCoprime => CtInvModMpMpError::OperandsNotCoprime,
+                CtInvModOddMpMpError::InsufficientResultSpace => {
+                    // Cannot happen, the result destination is a scratch buffer, and that one's
+                    // length had been validated above. But play safe.
+                    debug_assert!(false);
+                    CtInvModMpMpError::InsufficientScratchSpace
+                }
+                CtInvModOddMpMpError::InsufficientScratchSpace => {
+                    // Cannot happen, the scratch buffer lengths' had been
+                    // validated above. But play safe.
+                    debug_assert!(false);
+                    CtInvModMpMpError::InsufficientScratchSpace
+                }
+                CtInvModOddMpMpError::InconsistentInputOperandLength => {
+                    // Cannot happen, the lengths of op0 and n had been checked for being compatible
+                    // above. But play safe.
+                    CtInvModMpMpError::InconsistentInputOperandLength
+                }
+            };
+            return Err(e);
         }
     };
 
@@ -278,12 +319,12 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
 
     // Compute scratch0 =
     // (op0^{-1} mod 2^e) - (op0^{-1} mod n_{*}) * (n_{*}^{-1} mod 2^e).
-    ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, &scratch1);
+    ct_mul_trunc_mp_mp(&mut scratch0, n_aligned_len, &scratch1);
     // And take the product modulo 2^e
     ct_clear_bits_above_mp(&mut scratch0, n_pow2_exp);
 
     // Multiply by n_{*} and add to op0 to obtain the final result.
-    ct_mul_trunc_mp_mp(&mut scratch0, scratch_len, n);
+    ct_mul_trunc_mp_mp(&mut scratch0, n_aligned_len, n);
     let carry = ct_add_mp_mp(op0, &scratch0);
     assert_eq!(carry, 0);
 
@@ -312,6 +353,7 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
         let mut op0_inv_mod_n = vec![0u8; T0::limbs_align_len(n.len())];
         let mut op0_inv_mod_n = T0::from_bytes(&mut op0_inv_mod_n).unwrap();
         op0_inv_mod_n.copy_from(op0);
+        ct_mod_mp_mp(None, &mut op0_inv_mod_n, &CtMpDivisor::new(n).unwrap());
 
         let scratch = [
             scratch0.as_mut_slice(),
@@ -320,7 +362,6 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
             scratch3.as_mut_slice(),
         ];
         ct_inv_mod_mp_mp(&mut op0_inv_mod_n, n, scratch).unwrap();
-
         // If n == 1, the multiplicative group does not exist and the result is fixed to
         // zero.
         if ct_is_one_mp(n).unwrap() != 0 {

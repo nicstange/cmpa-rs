@@ -5,11 +5,12 @@ use super::div_impl::{
     CtMpDivisorError,
 };
 use super::limb::{
-    ct_add_l_l, ct_inv_mod_l, ct_lsb_mask_l, ct_mul_add_l_l_l_c, LimbChoice, LimbType, LIMB_BITS,
+    ct_add_l_l, ct_eq_l_l, ct_inv_mod_l, ct_lsb_mask_l, ct_mul_add_l_l_l_c, LimbChoice, LimbType,
+    LIMB_BITS,
 };
 use super::limbs_buffer::{
-    ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntMutByteSlice,
-    MpNativeEndianMutByteSlice,
+    ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _,
+    MpIntMutByteSlice, MpNativeEndianMutByteSlice,
 };
 
 fn ct_montgomery_radix_shift_len(n_len: usize) -> usize {
@@ -20,11 +21,23 @@ fn ct_montgomery_radix_shift_mp_nlimbs(n_len: usize) -> usize {
     ct_mp_nlimbs(n_len)
 }
 
-pub fn ct_montgomery_neg_n0_inv_mod_l_mp<NT: MpIntByteSliceCommon>(n: &NT) -> LimbType {
-    debug_assert!(!n.is_empty());
+#[derive(Debug)]
+pub enum CtMontgomeryNegN0InvModLMpError {
+    InvalidModulus,
+}
+
+pub fn ct_montgomery_neg_n0_inv_mod_l_mp<NT: MpIntByteSliceCommon>(
+    n: &NT,
+) -> Result<LimbType, CtMontgomeryNegN0InvModLMpError> {
+    if n.is_empty() {
+        return Err(CtMontgomeryNegN0InvModLMpError::InvalidModulus);
+    }
     let n0 = n.load_l(0);
+    if ct_eq_l_l(n0 & 1, 0).unwrap() != 0 {
+        return Err(CtMontgomeryNegN0InvModLMpError::InvalidModulus);
+    }
     let n0_inv_mod_l = ct_inv_mod_l(n0);
-    (!n0_inv_mod_l).wrapping_add(1)
+    Ok((!n0_inv_mod_l).wrapping_add(1))
 }
 
 #[test]
@@ -43,7 +56,7 @@ fn test_ct_montgomery_neg_n0_inv_mod_l_mp() {
             let mut n0_buf: [u8; LIMB_BYTES] = [0; LIMB_BYTES];
             let mut n = MpBigEndianMutByteSlice::from_bytes(n0_buf.as_mut_slice()).unwrap();
             n.store_l(0, n0);
-            let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n);
+            let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n).unwrap();
             assert_eq!(n0.wrapping_mul(neg_n0_inv), !0);
         }
     }
@@ -167,17 +180,33 @@ impl CtMontgomeryRedcKernel {
     }
 }
 
+#[derive(Debug)]
+pub enum CtMontgomeryRedcMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InputValueOutOfRange,
+}
+
 pub fn ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
     t: &mut TT,
     n: &NT,
     neg_n0_inv_mod_l: LimbType,
-) {
-    debug_assert!(!n.is_empty());
-    debug_assert!(t.len() >= n.len());
-    debug_assert!(t.len() <= 2 * n.len());
+) -> Result<(), CtMontgomeryRedcMpError> {
+    if n.is_empty() {
+        return Err(CtMontgomeryRedcMpError::InvalidModulus);
+    }
+    let n0_val = n.load_l(0);
+    if ct_eq_l_l(n0_val & 1, 0).unwrap() != 0 {
+        return Err(CtMontgomeryRedcMpError::InvalidModulus);
+    }
+    if !n.len_is_compatible_with(t.len()) {
+        return Err(CtMontgomeryRedcMpError::InsufficientResultSpace);
+    }
+    if !t.len_is_compatible_with(2 * n.len()) {
+        return Err(CtMontgomeryRedcMpError::InputValueOutOfRange);
+    }
     let t_nlimbs = t.nlimbs();
     let n_nlimbs = n.nlimbs();
-    let n0_val = n.load_l(0);
     debug_assert!(n0_val.wrapping_mul(neg_n0_inv_mod_l) == !0);
 
     let mut reduced_t_carry = 0;
@@ -231,6 +260,7 @@ pub fn ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
 
     ct_sub_cond_mp_mp(t, n, LimbChoice::from(reduced_t_carry) | ct_geq_mp_mp(t, n));
     debug_assert!(ct_geq_mp_mp(t, n).unwrap() == 0);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -250,7 +280,7 @@ fn test_ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
             let mut n = NT::from_bytes(n.as_mut_slice()).unwrap();
             n.store_l(0, n_low);
             n.store_l(1, n_high);
-            let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n);
+            let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n).unwrap();
 
             for k in 0..8 {
                 let t_high = MERSENNE_PRIME_17.wrapping_mul((8191 as LimbType).wrapping_mul(k));
@@ -272,7 +302,7 @@ fn test_ct_montgomery_redc_mp<TT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
                     ct_to_montgomery_form_direct_mp(&mut t, &n).unwrap();
 
                     // And back to normal: (t * R mod n) / R mod n
-                    ct_montgomery_redc_mp(&mut t, &n, neg_n0_inv);
+                    ct_montgomery_redc_mp(&mut t, &n, neg_n0_inv).unwrap();
                     assert_eq!(t.load_l(0), t_low);
                     assert_eq!(t.load_l(1), t_high);
                 }
@@ -299,6 +329,13 @@ fn test_ct_montgomery_redc_ne_ne() {
     test_ct_montgomery_redc_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
+#[derive(Debug)]
+pub enum CtMontgomeryMulModCondMpMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InconsistentInputOperandLength,
+}
+
 pub fn ct_montgomery_mul_mod_cond_mp_mp<
     RT: MpIntMutByteSlice,
     T0: MpIntByteSliceCommon,
@@ -311,23 +348,38 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
     n: &NT,
     neg_n0_inv_mod_l: LimbType,
     cond: LimbChoice,
-) {
+) -> Result<(), CtMontgomeryMulModCondMpMpError> {
     // This is an implementation of the "Finely Integrated Operand Scanning (FIOS)
     // Method" approach to fused multiplication and Montgomery reduction, as
     // described in "Analyzing and Comparing Montgomery Multiplication
     // Algorithm", IEEE Micro, 16(3):26-33, June 1996.
-    debug_assert!(!n.is_empty());
-    debug_assert_eq!(result.nlimbs(), n.nlimbs());
+    if n.is_empty() {
+        return Err(CtMontgomeryMulModCondMpMpError::InvalidModulus);
+    }
+    let n0_val = n.load_l(0);
+    if ct_eq_l_l(n0_val & 1, 0).unwrap() != 0 {
+        return Err(CtMontgomeryMulModCondMpMpError::InvalidModulus);
+    }
+    if !n.len_is_compatible_with(result.len()) {
+        return Err(CtMontgomeryMulModCondMpMpError::InsufficientResultSpace);
+    }
+    debug_assert!(n.nlimbs() <= result.nlimbs());
+    if !op0.len_is_compatible_with(n.len()) || !op1.len_is_compatible_with(n.len()) {
+        return Err(CtMontgomeryMulModCondMpMpError::InconsistentInputOperandLength);
+    }
     debug_assert!(op0.nlimbs() <= n.nlimbs());
+    debug_assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
     debug_assert!(op1.nlimbs() <= n.nlimbs());
+    debug_assert!(ct_lt_mp_mp(op1, n).unwrap() != 0);
 
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     let n_nlimbs = n.nlimbs();
-    let n0_val = n.load_l(0);
     debug_assert!(n0_val.wrapping_mul(neg_n0_inv_mod_l) == !0);
 
     result.clear_bytes_above(0);
+    let mut result = result.shrink_to(n.len());
+    debug_assert_eq!(result.nlimbs(), n.nlimbs());
     let mut result_carry = 0;
     // result's high limb might be a partial one, do not update directly in the
     // course of reducing in order to avoid overflowing it. Use a shadow
@@ -458,12 +510,10 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
     result_high_shadow &= result_high_shadow_mask;
     result.store_l(n_nlimbs - 1, result_high_shadow);
 
-    ct_sub_cond_mp_mp(
-        result,
-        n,
-        LimbChoice::from(result_carry) | ct_geq_mp_mp(result, n),
-    );
-    debug_assert!(ct_geq_mp_mp(result, n).unwrap() == 0);
+    let result_geq_n = LimbChoice::from(result_carry) | ct_geq_mp_mp(&result, n);
+    ct_sub_cond_mp_mp(&mut result, n, result_geq_n);
+    debug_assert!(ct_geq_mp_mp(&result, n).unwrap() == 0);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -501,7 +551,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
             };
             for n_len in n_lengths {
                 let (_, n) = n.split_at(n_len);
-                let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n);
+                let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n).unwrap();
 
                 // r_mod_n = 2^(2 * LIMB_BITS) % n.
                 let mut r_mod_n: [u8; 3 * LIMB_BYTES] = [0; 3 * LIMB_BYTES];
@@ -551,7 +601,8 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                         &n,
                                         neg_n0_inv,
                                         LimbChoice::from(0),
-                                    );
+                                    )
+                                    .unwrap();
                                     let a_nlimbs = a.nlimbs();
                                     for i in 0..a_nlimbs {
                                         assert_eq!(mg_mul_result.load_l(i), a.load_l(i));
@@ -567,7 +618,8 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                         &n,
                                         neg_n0_inv,
                                         LimbChoice::from(1),
-                                    );
+                                    )
+                                    .unwrap();
                                     drop(mg_mul_result);
 
                                     // For testing against the expected result computed using the
@@ -635,6 +687,8 @@ fn test_ct_montgomery_mul_mod_cond_ne_ne_ne_ne() {
     >()
 }
 
+pub type CtMontgomeryMulModMpMpError = CtMontgomeryMulModCondMpMpError;
+
 pub fn ct_montgomery_mul_mod_mp_mp<
     RT: MpIntMutByteSlice,
     T0: MpIntByteSliceCommon,
@@ -646,61 +700,131 @@ pub fn ct_montgomery_mul_mod_mp_mp<
     op1: &T1,
     n: &NT,
     neg_n0_inv_mod_l: LimbType,
-) {
+) -> Result<(), CtMontgomeryMulModMpMpError> {
     ct_montgomery_mul_mod_cond_mp_mp(result, op0, op1, n, neg_n0_inv_mod_l, LimbChoice::from(1))
 }
 
 #[derive(Debug)]
 pub enum CtMontgomeryTransformationError {
     InvalidModulus,
-    InsufficientDestinationSpace,
+    InsufficientResultSpace,
 }
 
 pub fn ct_to_montgomery_form_direct_mp<TT: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
     t: &mut TT,
     n: &NT,
 ) -> Result<(), CtMontgomeryTransformationError> {
+    if n.test_bit(0).unwrap() == 0 {
+        return Err(CtMontgomeryTransformationError::InvalidModulus);
+    }
+    if !n.len_is_compatible_with(t.len()) {
+        return Err(CtMontgomeryTransformationError::InsufficientResultSpace);
+    }
     debug_assert!(t.nlimbs() >= n.nlimbs());
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
     let n = CtMpDivisor::new(n).map_err(|e| match e {
-        CtMpDivisorError::DivisorIsZero => CtMontgomeryTransformationError::InvalidModulus,
+        CtMpDivisorError::DivisorIsZero => {
+            // n had been checked for being odd above, so should be unreachable, but play
+            // safe.
+            debug_assert!(false);
+            CtMontgomeryTransformationError::InvalidModulus
+        }
     })?;
     ct_mod_lshifted_mp_mp(t, t.len(), radix_shift_len, &n).map_err(|e| match e {
         CtModLshiftedMpMpError::InsufficientRemainderSpace => {
-            CtMontgomeryTransformationError::InsufficientDestinationSpace
+            // The result space had been checked at function entry already, but play safe.
+            debug_assert!(false);
+            CtMontgomeryTransformationError::InsufficientResultSpace
         }
-    })
+    })?;
+    Ok(())
 }
 
 pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
     radix2_mod_n_out: &mut RX2T,
     n: &NT,
 ) -> Result<(), CtMontgomeryTransformationError> {
-    debug_assert!(ct_mp_nlimbs(radix2_mod_n_out.len()) >= ct_mp_nlimbs(n.len()));
+    if n.test_bit(0).unwrap() == 0 {
+        return Err(CtMontgomeryTransformationError::InvalidModulus);
+    }
+    if !n.len_is_compatible_with(radix2_mod_n_out.len()) {
+        return Err(CtMontgomeryTransformationError::InsufficientResultSpace);
+    }
+
+    radix2_mod_n_out.clear_bytes_above(n.len());
+    let mut radix2_mod_n_out = radix2_mod_n_out.shrink_to(n.len());
+    debug_assert_eq!(radix2_mod_n_out.nlimbs(), n.nlimbs());
+
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
     let n = CtMpDivisor::new(n).map_err(|e| match e {
-        CtMpDivisorError::DivisorIsZero => CtMontgomeryTransformationError::InvalidModulus,
-    })?;
-    ct_mod_pow2_mp::<_, _>(2 * 8 * radix_shift_len, radix2_mod_n_out, &n).map_err(|e| match e {
-        CtModPow2MpError::InsufficientRemainderSpace => {
-            CtMontgomeryTransformationError::InsufficientDestinationSpace
+        CtMpDivisorError::DivisorIsZero => {
+            // n had been checked for being odd above, so should be unreachable, but play
+            // safe.
+            debug_assert!(false);
+            CtMontgomeryTransformationError::InvalidModulus
         }
-    })
+    })?;
+    ct_mod_pow2_mp::<_, _>(2 * 8 * radix_shift_len, &mut radix2_mod_n_out, &n).map_err(
+        |e| match e {
+            CtModPow2MpError::InsufficientRemainderSpace => {
+                // The result space had been checked at function entry already, but play safe.
+                debug_assert!(false);
+                CtMontgomeryTransformationError::InsufficientResultSpace
+            }
+        },
+    )?;
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum CtToMontgomeryFormMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InconsistentInputOperandLength,
+    InconsistentRadix2ModNLenth,
 }
 
 pub fn ct_to_montgomery_form_mp<
-    MGT: MpIntMutByteSlice,
+    RT: MpIntMutByteSlice,
     TT: MpIntByteSliceCommon,
     NT: MpIntByteSliceCommon,
     RX2T: MpIntByteSliceCommon,
 >(
-    mg_t_out: &mut MGT,
+    result: &mut RT,
     t: &TT,
     n: &NT,
     neg_n0_inv_mod_l: LimbType,
     radix2_mod_n: &RX2T,
-) {
-    ct_montgomery_mul_mod_mp_mp(mg_t_out, t, radix2_mod_n, n, neg_n0_inv_mod_l);
+) -> Result<(), CtToMontgomeryFormMpError> {
+    // The Montgomery multiplication will do all error checking needed. However, to
+    // disambiguate which of the two factors has a length inconsistent with n,
+    // if any, check that here.
+    if !t.len_is_compatible_with(n.len()) {
+        return Err(CtToMontgomeryFormMpError::InconsistentInputOperandLength);
+    }
+    if !radix2_mod_n.len_is_compatible_with(n.len()) {
+        return Err(CtToMontgomeryFormMpError::InconsistentRadix2ModNLenth);
+    }
+    debug_assert!(ct_lt_mp_mp(t, n).unwrap() != 0);
+    debug_assert!(ct_lt_mp_mp(radix2_mod_n, n).unwrap() != 0);
+
+    // All input arguments have been validated above, just unwrap().
+    ct_montgomery_mul_mod_mp_mp(result, t, radix2_mod_n, n, neg_n0_inv_mod_l).map_err(
+        |e| match e {
+            CtMontgomeryMulModCondMpMpError::InsufficientResultSpace => {
+                CtToMontgomeryFormMpError::InsufficientResultSpace
+            }
+            CtMontgomeryMulModCondMpMpError::InvalidModulus => {
+                CtToMontgomeryFormMpError::InvalidModulus
+            }
+            CtMontgomeryMulModCondMpMpError::InconsistentInputOperandLength => {
+                // The multiplication's factors have been validated above, but play safe.
+                CtToMontgomeryFormMpError::InconsistentInputOperandLength
+            }
+        },
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -734,7 +858,7 @@ fn test_ct_to_montgomery_form_mp<
 
             for n_len in n_lengths {
                 let (_, n) = n.split_at(n_len);
-                let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n);
+                let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n).unwrap();
 
                 let mut radix2_mod_n: [u8; 2 * LIMB_BYTES] = [0xffu8; 2 * LIMB_BYTES];
                 let mut radix2_mod_n = RX2T::from_bytes(radix2_mod_n.as_mut_slice()).unwrap();
@@ -759,7 +883,8 @@ fn test_ct_to_montgomery_form_mp<
                         let mut result = TT::from_bytes(result.as_mut_slice()).unwrap();
                         let (_, mut result) = result.split_at(TT::limbs_align_len(n_len));
                         let (_, mut result) = result.split_at(TT::limbs_align_len(n_len));
-                        ct_to_montgomery_form_mp(&mut result, &a, &n, neg_n0_inv, &radix2_mod_n);
+                        ct_to_montgomery_form_mp(&mut result, &a, &n, neg_n0_inv, &radix2_mod_n)
+                            .unwrap();
 
                         ct_to_montgomery_form_direct_mp(&mut a, &n).unwrap();
                         assert_eq!(ct_eq_mp_mp(&result, &a).unwrap(), 1);
@@ -816,7 +941,7 @@ fn _ct_montogmery_exp_mod_mp_mp<
     exponent_nbits: usize,
     scratch: &mut [u8],
 ) {
-    debug_assert!(result.nlimbs() >= n.nlimbs());
+    debug_assert_eq!(result.nlimbs(), n.nlimbs());
 
     let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
     debug_assert!(scratch.len() >= scratch_len);
@@ -825,7 +950,9 @@ fn _ct_montogmery_exp_mod_mp_mp<
 
     let exponent_nbits = exponent_nbits.min(8 * exponent.len());
     for i in 0..exponent_nbits {
-        ct_montgomery_mul_mod_mp_mp(&mut scratch, result, result, n, neg_n0_inv_mod_l);
+        // Input arguments have been validated/setup by callers, just unwrap() the
+        // result.
+        ct_montgomery_mul_mod_mp_mp(&mut scratch, result, result, n, neg_n0_inv_mod_l).unwrap();
         ct_montgomery_mul_mod_cond_mp_mp(
             result,
             &scratch,
@@ -833,8 +960,18 @@ fn _ct_montogmery_exp_mod_mp_mp<
             n,
             neg_n0_inv_mod_l,
             exponent.test_bit(exponent_nbits - i - 1),
-        );
+        )
+        .unwrap();
     }
+}
+
+#[derive(Debug)]
+pub enum CtMontgomeryExpModOddMpMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InsufficientScratchSpace,
+    InconsistentInputOperandLength,
+    InconsistendRadixModNLengh,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -853,12 +990,33 @@ pub fn ct_montogmery_exp_mod_odd_mp_mp<
     exponent: &ET,
     exponent_nbits: usize,
     scratch: &mut [u8],
-) {
+) -> Result<(), CtMontgomeryExpModOddMpMpError> {
+    if n.test_bit(0).unwrap() == 0 {
+        return Err(CtMontgomeryExpModOddMpMpError::InvalidModulus);
+    }
+    if !n.len_is_compatible_with(result.len()) {
+        return Err(CtMontgomeryExpModOddMpMpError::InsufficientResultSpace);
+    }
+    if scratch.len() < MpNativeEndianMutByteSlice::limbs_align_len(n.len()) {
+        return Err(CtMontgomeryExpModOddMpMpError::InsufficientScratchSpace);
+    }
+    if !op0.len_is_compatible_with(n.len()) {
+        return Err(CtMontgomeryExpModOddMpMpError::InconsistentInputOperandLength);
+    }
+    debug_assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
+    if !radix_mod_n.len_is_compatible_with(n.len()) {
+        return Err(CtMontgomeryExpModOddMpMpError::InconsistendRadixModNLengh);
+    }
+    debug_assert!(ct_lt_mp_mp(radix_mod_n, n).unwrap() != 0);
+
     // Initialize the result with a one in Montgomery form.
+    result.clear_bytes_above(n.len());
+    let mut result = result.shrink_to(n.len());
+    debug_assert_eq!(result.nlimbs(), n.nlimbs());
     result.copy_from(radix_mod_n);
 
     _ct_montogmery_exp_mod_mp_mp(
-        result,
+        &mut result,
         op0,
         n,
         neg_n0_inv_mod_l,
@@ -866,6 +1024,15 @@ pub fn ct_montogmery_exp_mod_odd_mp_mp<
         exponent_nbits,
         scratch,
     );
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum CtExpModOddMpMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InsufficientScratchSpace,
+    InconsistentInputOperandLength,
 }
 
 pub fn ct_exp_mod_odd_mp_mp<
@@ -880,31 +1047,54 @@ pub fn ct_exp_mod_odd_mp_mp<
     exponent: &ET,
     exponent_nbits: usize,
     scratch: &mut [u8],
-) {
-    debug_assert!(result.nlimbs() >= n.nlimbs());
-    debug_assert_ne!(ct_lt_mp_mp(op0, n).unwrap(), 0);
-
+) -> Result<(), CtExpModOddMpMpError> {
+    if !n.len_is_compatible_with(result.len()) {
+        return Err(CtExpModOddMpMpError::InsufficientResultSpace);
+    }
+    if !op0.len_is_compatible_with(n.len()) {
+        return Err(CtExpModOddMpMpError::InconsistentInputOperandLength);
+    }
+    debug_assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
+    if !n.len_is_compatible_with(op0.len()) {
+        // op0 will get transformed in-place into Montgomery form. So the
+        // backing byte slice must be large enough.
+        return Err(CtExpModOddMpMpError::InconsistentInputOperandLength);
+    }
+    debug_assert_eq!(op0.nlimbs(), n.nlimbs());
     let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
-    debug_assert!(scratch.len() >= scratch_len);
+    if scratch.len() < scratch_len {
+        return Err(CtExpModOddMpMpError::InsufficientScratchSpace);
+    }
 
-    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n);
+    // This checks the modulus for validity as a side-effect.
+    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n).map_err(|e| match e {
+        CtMontgomeryNegN0InvModLMpError::InvalidModulus => CtExpModOddMpMpError::InvalidModulus,
+    })?;
+
+    // Shrink result[] to the length of n. It will be used to temporarily hold the
+    // radix^2 mod n and ct_to_montgomery_form_mp() below would complain if its
+    // length is unexpectedly large.
+    result.clear_bytes_above(n.len());
+    let mut result = result.shrink_to(n.len());
+    debug_assert_eq!(result.nlimbs(), n.nlimbs());
+
     // The radix squared mod n gets into result[], it will be reduced
     // later on to a one in Montgomery form.
-    ct_montgomery_radix2_mod_n_mp(result, n).unwrap();
+    ct_montgomery_radix2_mod_n_mp(&mut result, n).unwrap();
 
     // Transform op0 into Montgomery form, the function argument will get
     // overwritten to save an extra scratch buffer.
     let mut mg_op0 = MpNativeEndianMutByteSlice::from_bytes(scratch).unwrap();
-    ct_to_montgomery_form_mp(&mut mg_op0, op0, n, neg_n0_inv_mod_l, result);
+    ct_to_montgomery_form_mp(&mut mg_op0, op0, n, neg_n0_inv_mod_l, &result).unwrap();
     op0.copy_from(&mg_op0);
 
     // Reduce the radix squared mod n in result[] to the radix mod n,
     // i.e. to a one in Montgomery form.
-    ct_montgomery_redc_mp(result, n, neg_n0_inv_mod_l);
+    ct_montgomery_redc_mp(&mut result, n, neg_n0_inv_mod_l).unwrap();
 
     // Do the Montgomery exponentiation.
     _ct_montogmery_exp_mod_mp_mp(
-        result,
+        &mut result,
         op0,
         n,
         neg_n0_inv_mod_l,
@@ -914,7 +1104,8 @@ pub fn ct_exp_mod_odd_mp_mp<
     );
 
     // And transform the result back from Montgomery form.
-    ct_montgomery_redc_mp(result, n, neg_n0_inv_mod_l);
+    ct_montgomery_redc_mp(&mut result, n, neg_n0_inv_mod_l).unwrap();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -964,7 +1155,8 @@ fn test_ct_exp_mod_odd_mp_mp<
             exponent,
             8 * exponent.len(),
             &mut scratch,
-        );
+        )
+        .unwrap();
 
         // Compute the expected value using repeated multiplications/squarings and
         // modular reductions.

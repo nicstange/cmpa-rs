@@ -12,7 +12,7 @@ use super::limbs_buffer::{
 };
 use super::montgomery_impl::{
     ct_montgomery_mul_mod_cond_mp_mp, ct_montgomery_mul_mod_mp_mp,
-    ct_montgomery_neg_n0_inv_mod_l_mp,
+    ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryNegN0InvModLMpError,
 };
 use super::usize_ct_cmp::{ct_eq_usize_usize, ct_lt_usize_usize};
 
@@ -99,15 +99,28 @@ const SMALL_ODD_PRIME_PRODUCTS: [&[u8]; 9] = [
     &SMALL_ODD_PRIME_PRODUCT_2048,
 ];
 
+#[derive(Debug)]
+pub enum CtCompositeTestSmallPrimeGcdMpError {
+    InsufficientScratchSpace,
+}
+
 pub fn ct_composite_test_small_prime_gcd_mp<PT: MpIntByteSliceCommon>(
     p: &PT,
     scratch: [&mut [u8]; 2],
-) -> LimbChoice {
-    debug_assert!(!p.is_empty());
+) -> Result<LimbChoice, CtCompositeTestSmallPrimeGcdMpError> {
+    if p.is_empty() {
+        return Ok(LimbChoice::from(1));
+    }
+
+    let p_len_aligned = MpNativeEndianMutByteSlice::limbs_align_len(p.len());
+    for s in scratch.iter() {
+        if s.len() < p_len_aligned {
+            return Err(CtCompositeTestSmallPrimeGcdMpError::InsufficientScratchSpace);
+        }
+    }
 
     // The GCD runtime depends on the maximum of both operands' bit length.
     // Select the largest small prime product with length <= p.len().
-    let p_len_aligned = MpNativeEndianMutByteSlice::limbs_align_len(p.len());
     let mut i = SMALL_ODD_PRIME_PRODUCTS.len();
     while i > 0 {
         i -= 1;
@@ -128,14 +141,14 @@ pub fn ct_composite_test_small_prime_gcd_mp<PT: MpIntByteSliceCommon>(
     let mut p_work_scratch = MpNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
     p_work_scratch.copy_from(p);
 
-    ct_gcd_odd_mp_mp(&mut gcd, &mut p_work_scratch);
+    ct_gcd_odd_mp_mp(&mut gcd, &mut p_work_scratch).unwrap();
     let gcd_is_one = ct_is_one_mp(&gcd);
 
     // The small prime products don't include a factor of two.
     // Test for it separately.
-    let p_is_odd = LimbChoice::from(p.load_l(0) & 1);
+    let p_is_odd = p.test_bit(0);
 
-    !gcd_is_one | !p_is_odd
+    Ok(!gcd_is_one | !p_is_odd)
 }
 
 #[cfg(test)]
@@ -155,20 +168,40 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
 
         p.clear_bytes_above(0);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
+        assert!(
+            ct_composite_test_small_prime_gcd_mp(&p, scratch)
+                .unwrap()
+                .unwrap()
+                != 0
+        );
 
         p.store_l(0, 2);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
+        assert!(
+            ct_composite_test_small_prime_gcd_mp(&p, scratch)
+                .unwrap()
+                .unwrap()
+                != 0
+        );
 
         p.store_l(0, 3);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
+        assert!(
+            ct_composite_test_small_prime_gcd_mp(&p, scratch)
+                .unwrap()
+                .unwrap()
+                != 0
+        );
 
         let j = if i > 0 { i - 1 } else { 0 };
         p.copy_from(&MpBigEndianByteSlice::from_bytes(SMALL_ODD_PRIME_PRODUCTS[j]).unwrap());
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
-        assert!(ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap() != 0);
+        assert!(
+            ct_composite_test_small_prime_gcd_mp(&p, scratch)
+                .unwrap()
+                .unwrap()
+                != 0
+        );
     }
 
     // p = 2^255 - 19.
@@ -182,7 +215,9 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
     let mut scratch1 = vec![0u8; scratch_len];
     let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
     assert_eq!(
-        ct_composite_test_small_prime_gcd_mp(&p, scratch).unwrap(),
+        ct_composite_test_small_prime_gcd_mp(&p, scratch)
+            .unwrap()
+            .unwrap(),
         0
     );
 }
@@ -204,6 +239,14 @@ fn test_ct_composite_test_small_prime_gcd_ne() {
     test_ct_composite_test_small_prime_gcd_mp::<MpNativeEndianMutByteSlice>()
 }
 
+#[derive(Debug)]
+pub enum CtPrimeTestMillerRabinMpError {
+    InvalidCandidate,
+    InsufficientScratchSpace,
+    InconsistentBaseLength,
+    InconsistentMgRadixModPLength,
+}
+
 pub fn ct_prime_test_miller_rabin_mp<
     BT: MpIntByteSliceCommon,
     PT: MpIntByteSliceCommon,
@@ -213,19 +256,28 @@ pub fn ct_prime_test_miller_rabin_mp<
     p: &PT,
     mg_radix_mod_p: &RXT,
     scratch: [&mut [u8]; 2],
-) -> LimbChoice {
-    debug_assert!(!p.is_empty());
-    debug_assert_eq!(p.load_l(0) & 1, 1);
-    debug_assert!(mg_base.nlimbs() >= p.nlimbs());
+) -> Result<LimbChoice, CtPrimeTestMillerRabinMpError> {
+    if p.test_bit(0).unwrap() == 0 {
+        return Err(CtPrimeTestMillerRabinMpError::InvalidCandidate);
+    }
+    if !mg_base.len_is_compatible_with(p.len()) {
+        return Err(CtPrimeTestMillerRabinMpError::InconsistentBaseLength);
+    }
     debug_assert_ne!(ct_lt_mp_mp(mg_base, p).unwrap(), 0);
+    if !mg_radix_mod_p.len_is_compatible_with(p.len()) {
+        return Err(CtPrimeTestMillerRabinMpError::InconsistentMgRadixModPLength);
+    }
     debug_assert_ne!(ct_lt_mp_mp(mg_radix_mod_p, p).unwrap(), 0);
 
+    let p_len_aligned = MpNativeEndianMutByteSlice::limbs_align_len(p.len());
+    for s in scratch.iter() {
+        if s.len() < p_len_aligned {
+            return Err(CtPrimeTestMillerRabinMpError::InsufficientScratchSpace);
+        }
+    }
     let [scratch0, scratch1] = scratch;
-    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(p.len());
-    debug_assert!(scratch0.len() >= scratch_len);
-    let (scratch0, _) = scratch0.split_at_mut(scratch_len);
-    debug_assert!(scratch1.len() >= scratch_len);
-    let (scratch1, _) = scratch1.split_at_mut(scratch_len);
+    let (scratch0, _) = scratch0.split_at_mut(p_len_aligned);
+    let (scratch1, _) = scratch1.split_at_mut(p_len_aligned);
 
     let mut p_minus_one = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
     p_minus_one.copy_from(p);
@@ -240,14 +292,22 @@ pub fn ct_prime_test_miller_rabin_mp<
     // Initialize with a 1 in Montgomery form.
     base_pow.copy_from(mg_radix_mod_p);
 
-    let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p);
+    let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p).map_err(|e| match e {
+        CtMontgomeryNegN0InvModLMpError::InvalidModulus => {
+            // Should not be possible, p had been validated for being an odd number at the
+            // beginning, but play safe.
+            debug_assert!(false);
+            CtPrimeTestMillerRabinMpError::InvalidCandidate
+        }
+    })?;
 
     let mut is_probable_prime = 0;
     let mut exp_bit_pos = 8 * p.len();
     while exp_bit_pos > 1 {
         exp_bit_pos -= 1;
 
-        ct_montgomery_mul_mod_mp_mp(&mut pow_scratch, &base_pow, &base_pow, p, neg_p0_inv_mod_l);
+        ct_montgomery_mul_mod_mp_mp(&mut pow_scratch, &base_pow, &base_pow, p, neg_p0_inv_mod_l)
+            .unwrap();
 
         // The exponent is p - 1, p is odd, so the lsb of p - 1 is zero and there's no
         // borrow into the next bit position. exp_bit_pos != 0 by the loop's
@@ -262,7 +322,8 @@ pub fn ct_prime_test_miller_rabin_mp<
             p,
             neg_p0_inv_mod_l,
             LimbChoice::from(exp_bit),
-        );
+        )
+        .unwrap();
 
         // Compare the current power of the base against 1 and -1 (in Montgomery form).
         let mut is_one = 1;
@@ -300,7 +361,7 @@ pub fn ct_prime_test_miller_rabin_mp<
         is_probable_prime |= bit_pos_below_first_set.select(0, is_minus_one);
     }
 
-    LimbChoice::from(is_probable_prime)
+    Ok(LimbChoice::from(is_probable_prime))
 }
 
 #[cfg(test)]
@@ -337,17 +398,18 @@ fn test_ct_prime_test_miller_rabin_mp<
 
         let mut mg_base_mod_p = vec![0u8; RXT::limbs_align_len(p.len())];
         let mut mg_base_mod_p = RXT::from_bytes(&mut mg_base_mod_p).unwrap();
-        let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p);
+        let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p).unwrap();
         ct_to_montgomery_form_mp(
             &mut mg_base_mod_p,
             &base_mod_p,
             p,
             neg_p0_inv_mod_l,
             &mg_radix2_mod_p,
-        );
+        )
+        .unwrap();
 
         let mut mg_radix_mod_p = mg_radix2_mod_p;
-        ct_montgomery_redc_mp(&mut mg_radix_mod_p, p, neg_p0_inv_mod_l);
+        ct_montgomery_redc_mp(&mut mg_radix_mod_p, p, neg_p0_inv_mod_l).unwrap();
 
         let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(p.len())];
         let mut scratch1 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(p.len())];
@@ -357,6 +419,7 @@ fn test_ct_prime_test_miller_rabin_mp<
             &mg_radix_mod_p,
             [scratch0.as_mut_slice(), scratch1.as_mut_slice()],
         )
+        .unwrap()
         .unwrap()
             != 0
     }
@@ -721,8 +784,10 @@ impl PrimeWheelSieveLvl1 {
     const PRIMORIAL: LimbType = first_primes_primorial(Self::PRIMORIAL_NFACTORS);
 
     pub fn start_geq_than<LBT: MpIntByteSliceCommon>(lower_bound: &LBT) -> Self {
-        let offset_lower_bound =
-            ct_mod_mp_l(lower_bound, &CtLDivisor::nonct_new(Self::PRIMORIAL).unwrap());
+        let offset_lower_bound = ct_mod_mp_l(
+            lower_bound,
+            &CtLDivisor::nonct_new(Self::PRIMORIAL).unwrap(),
+        );
         // If the lower bound is <= 1, skip the 1 generated by the level 0.
         // It only got the potential for causing confusion or subtle corner cases.
         // It's important to account for that internal increment when producing

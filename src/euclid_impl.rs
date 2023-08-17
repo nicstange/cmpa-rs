@@ -6,10 +6,12 @@ use super::limb::{
     ct_mul_l_l, ct_sub_l_l, LimbChoice, LimbType, LIMB_BITS,
 };
 use super::limbs_buffer::{
-    ct_find_first_set_bit_mp, ct_swap_cond_mp, MpIntByteSliceCommon, MpIntMutByteSlice,
-    MpNativeEndianMutByteSlice,
+    ct_find_first_set_bit_mp, ct_swap_cond_mp, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _,
+    MpIntMutByteSlice, MpNativeEndianMutByteSlice,
 };
-use super::montgomery_impl::{ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryRedcKernel};
+use super::montgomery_impl::{
+    ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryNegN0InvModLMpError, CtMontgomeryRedcKernel,
+};
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
 use super::usize_ct_cmp::ct_lt_usize_usize;
 
@@ -597,7 +599,23 @@ fn ct_gcd_ext_odd_mp_mp<
     f_is_neg
 }
 
-pub fn ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(f: &mut FT, g: &mut GT) {
+#[derive(Debug)]
+pub enum CtGcdOddMpMpError {
+    InconsistentInputOperandLengths,
+    InvalidInputOperandValue,
+}
+
+pub fn ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
+    f: &mut FT,
+    g: &mut GT,
+) -> Result<(), CtGcdOddMpMpError> {
+    if f.test_bit(0).unwrap() == 0 {
+        return Err(CtGcdOddMpMpError::InvalidInputOperandValue);
+    }
+    if !f.len_is_compatible_with(g.len()) || !g.len_is_compatible_with(f.len()) {
+        return Err(CtGcdOddMpMpError::InconsistentInputOperandLengths);
+    }
+
     let gcd_is_neg = ct_gcd_ext_odd_mp_mp(|_, _| {}, f, g);
 
     // If the GCD came out as negative, negate before returning.
@@ -616,6 +634,7 @@ pub fn ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(f: &mut FT
     f_val ^= neg_mask;
     (_, f_val) = ct_add_l_l(f_val, carry);
     f.store_l(nlimbs - 1, f_val & f.partial_high_mask());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -642,7 +661,7 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         let mut f = FT::from_bytes(f_buf.as_mut_slice()).unwrap();
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 1);
-        ct_gcd_odd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g).unwrap();
         assert_mp_is_equal(&f, 1);
         assert_mp_is_equal(&g, 0);
 
@@ -655,7 +674,7 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
                 f.set_bit_to(i, true);
                 f.set_bit_to(0, true);
                 g.set_bit_to(j, true);
-                ct_gcd_odd_mp_mp(&mut f, &mut g);
+                ct_gcd_odd_mp_mp(&mut f, &mut g).unwrap();
                 assert_mp_is_equal(&f, 1);
                 assert_mp_is_equal(&g, 0);
             }
@@ -667,7 +686,7 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 3 * 3 * 3 * 7);
         g.store_l(0, 3 * 3 * 5);
-        ct_gcd_odd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g).unwrap();
         assert_mp_is_equal(&f, 3 * 3);
         assert_mp_is_equal(&g, 0);
 
@@ -677,7 +696,7 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         let mut g = GT::from_bytes(g_buf.as_mut_slice()).unwrap();
         f.store_l(0, 3 * 3 * 5);
         g.store_l(0, 3 * 3 * 3 * 7);
-        ct_gcd_odd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g).unwrap();
         assert_mp_is_equal(&f, 3 * 3);
         assert_mp_is_equal(&g, 0);
 
@@ -696,7 +715,7 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
             ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        ct_gcd_odd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g).unwrap();
         assert_mp_is_equal(&f, 1);
         assert_mp_is_equal(&g, 0);
 
@@ -716,7 +735,7 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
             ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        ct_gcd_odd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g).unwrap();
         assert_mp_is_equal(&f, 241);
         assert_mp_is_equal(&g, 0);
 
@@ -736,7 +755,7 @@ fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
         while g.load_l(g.nlimbs() - 1) >> 8 * (f_g_high_min_len) - 1 == 0 {
             ct_mul_trunc_mp_l(&mut g, g_len, 2);
         }
-        ct_gcd_odd_mp_mp(&mut f, &mut g);
+        ct_gcd_odd_mp_mp(&mut f, &mut g).unwrap();
         assert_mp_is_equal(&f, 251);
         assert_mp_is_equal(&g, 0);
     }
@@ -760,8 +779,24 @@ fn test_ct_gcd_odd_ne_ne() {
     test_ct_gcd_odd_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
 }
 
-pub fn ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(op0: &mut T0, op1: &mut T1) {
-    debug_assert_eq!(op0.len(), op1.len());
+#[derive(Debug)]
+pub enum CtGcdMpMpError {
+    InsufficientResultSpace,
+    InconsistentInputOperandLengths,
+}
+
+pub fn ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
+    op0: &mut T0,
+    op1: &mut T1,
+) -> Result<(), CtGcdMpMpError> {
+    // In case both op0 and op1 are zero, op0 is forced to one below.
+    if op0.is_empty() {
+        return Err(CtGcdMpMpError::InsufficientResultSpace);
+    }
+    if !op0.len_is_compatible_with(op1.len()) || !op1.len_is_compatible_with(op0.len()) {
+        return Err(CtGcdMpMpError::InconsistentInputOperandLengths);
+    }
+
     // The GCD implementation requires the first operand to be odd. Factor out
     // common powers of two.
     let (op0_is_nonzero, op0_powers_of_two) = ct_find_first_set_bit_mp(op0);
@@ -778,13 +813,14 @@ pub fn ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(op0: &mut T0, 
     debug_assert!(op0_and_op1_zero.unwrap() != 0 || op0.load_l(0) & 1 == 1);
     // If both inputs are zero, force op0 to 1, the GCD needs that.
     op0.store_l(0, op0_and_op1_zero.select(op0.load_l(0), 1));
-    ct_gcd_odd_mp_mp(op0, op1);
+    ct_gcd_odd_mp_mp(op0, op1).unwrap();
     // Now the GCD (odd factors only) is in op0.
     debug_assert_eq!(ct_is_zero_mp(op0).unwrap(), 0);
     debug_assert!(op0_and_op1_zero.unwrap() == 0 || ct_is_one_mp(op0).unwrap() != 0);
     debug_assert!(op0_and_op1_zero.unwrap() == 0 || min_powers_of_two == 0);
     // Scale the GCD by the common powers of two to obtain the final result.
     ct_lshift_mp(op0, min_powers_of_two);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -817,7 +853,7 @@ fn test_ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
         op1_gcd_work.copy_from(op1);
         ct_mul_trunc_mp_mp(&mut op1_gcd_work, op1.len(), gcd);
 
-        ct_gcd_mp_mp(&mut op0_gcd_work, &mut op1_gcd_work);
+        ct_gcd_mp_mp(&mut op0_gcd_work, &mut op1_gcd_work).unwrap();
 
         let op0_is_zero = ct_is_zero_mp(op0).unwrap() != 0;
         let op1_is_zero = ct_is_zero_mp(op1).unwrap() != 0;
@@ -937,6 +973,10 @@ fn test_ct_gcd_ne_ne() {
 
 #[derive(Debug)]
 pub enum CtInvModOddMpMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InsufficientScratchSpace,
+    InconsistentInputOperandLength,
     OperandsNotCoprime,
 }
 
@@ -950,40 +990,51 @@ pub fn ct_inv_mod_odd_mp_mp<
     n: &NT,
     scratch: [&mut [u8]; 2],
 ) -> Result<(), CtInvModOddMpMpError> {
-    debug_assert_eq!(n.nlimbs(), op0.nlimbs());
-    debug_assert_eq!(result.nlimbs(), n.nlimbs());
-    debug_assert!(!n.is_empty());
-    debug_assert_eq!(n.load_l(0) & 1, 1);
+    if !n.len_is_compatible_with(result.len()) {
+        return Err(CtInvModOddMpMpError::InsufficientResultSpace);
+    }
+    if !op0.len_is_compatible_with(n.len()) || !n.len_is_compatible_with(op0.len()) {
+        return Err(CtInvModOddMpMpError::InconsistentInputOperandLength);
+    }
+
+    let n_aligned_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
+    for s in scratch.iter() {
+        if s.len() < n_aligned_len {
+            return Err(CtInvModOddMpMpError::InsufficientScratchSpace);
+        }
+    }
+
+    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n).map_err(|e| match e {
+        CtMontgomeryNegN0InvModLMpError::InvalidModulus => CtInvModOddMpMpError::InvalidModulus,
+    })?;
 
     // The column vector (ext_u0, ext_u1) tracking the coefficents of the extended
     // Euclidean algorithm for the modular inversion case will be stored in
     // (result, ext_u1_scratch).
     let [f_work_scratch, ext_u1_scratch] = scratch;
-    let work_scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
-    debug_assert!(f_work_scratch.len() >= work_scratch_len);
-    let (f_work_scratch, _) = f_work_scratch.split_at_mut(work_scratch_len);
+    let (f_work_scratch, _) = f_work_scratch.split_at_mut(n_aligned_len);
     let mut f_work_scratch = MpNativeEndianMutByteSlice::from_bytes(f_work_scratch).unwrap();
-    debug_assert!(ext_u1_scratch.len() >= work_scratch_len);
-    let (ext_u1_scratch, _) = ext_u1_scratch.split_at_mut(work_scratch_len);
+    f_work_scratch.copy_from(n);
+    let (ext_u1_scratch, _) = ext_u1_scratch.split_at_mut(n_aligned_len);
     let mut ext_u1_scratch = MpNativeEndianMutByteSlice::from_bytes(ext_u1_scratch).unwrap();
 
     // ext_u0 starts out as 0.
     result.clear_bytes_above(0);
+    let mut result = result.shrink_to(n.len());
+
     // ext_u1 starts out as 1. If the modulus is == 1, the result is undefined (the
     // multiplicative group does not exist). Force the result to zero in this
-    // case.
+    // case as is needed by the application of Garner's method in the generic
+    // ct_inv_mod_n_mp_mp().
     let n_is_one = ct_is_one_mp(n);
     ext_u1_scratch.clear_bytes_above(0);
     ext_u1_scratch.store_l_full(0, 1 ^ n_is_one.unwrap());
-
-    f_work_scratch.copy_from(n);
-    let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n);
 
     let gcd_is_neg = ct_gcd_ext_odd_mp_mp(
         |t, t_is_neg_mask| {
             t.apply_to_mod_odd_n(
                 t_is_neg_mask,
-                result,
+                &mut result,
                 &mut ext_u1_scratch,
                 n,
                 neg_n0_inv_mod_l,
@@ -1006,7 +1057,7 @@ pub fn ct_inv_mod_odd_mp_mp<
 
     // If the computed GCD came out as a negative 1, the inverse needs
     // to get negated mod f. Note that -result mod f == f - result.
-    debug_assert!(ct_is_zero_mp(result).unwrap() == 0 || n_is_one.unwrap() != 0);
+    debug_assert!(ct_is_zero_mp(&result).unwrap() == 0 || n_is_one.unwrap() != 0);
     let neg_mask = n_is_one.select(neg_mask, 0);
     let mut neg_carry = (gcd_is_neg & !n_is_one).select(0, 1);
     let mut carry = 0;
@@ -1047,6 +1098,7 @@ fn test_ct_inv_mod_odd_mp_mp<
         let mut op0_work_scratch = vec![0u8; op0.len()];
         let mut op0_work_scratch = T0::from_bytes(&mut op0_work_scratch).unwrap();
         op0_work_scratch.copy_from(op0);
+        ct_mod_mp_mp(None, &mut op0_work_scratch, &CtMpDivisor::new(n).unwrap());
 
         let mut op0_inv_mod_n = vec![0u8; RT::limbs_align_len(n.len())];
         let mut op0_inv_mod_n = RT::from_bytes(&mut op0_inv_mod_n).unwrap();

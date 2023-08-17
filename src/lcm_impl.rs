@@ -1,13 +1,20 @@
 use super::cmp_impl::ct_is_zero_mp;
-use super::div_impl::{CtMpDivisor, ct_div_mp_mp};
+use super::div_impl::{ct_div_mp_mp, CtMpDivisor};
 use super::euclid_impl::ct_gcd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
-    ct_find_last_set_bit_mp, ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon,
-    MpIntByteSliceCommonPriv as _, MpIntMutByteSlice,
+    ct_find_last_set_bit_mp, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _,
+    MpIntMutByteSlice,
 };
 use super::mul_impl::ct_mul_trunc_mp_mp;
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
+
+#[derive(Debug)]
+pub enum CtLcmMpMpError {
+    InsufficientResultSpace,
+    InsufficientScratchSpace,
+    InconsistentInputOperandLengths,
+}
 
 pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
     result: &mut RT,
@@ -16,50 +23,53 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     op1: &mut T1,
     op1_len: usize,
     scratch: &mut [u8],
-) {
+) -> Result<(), CtLcmMpMpError> {
     // The Least Common Multiple (LCM) is the product divided by the GCD of the
     // operands. Be careful to maintain constant-time: the division's runtime
     // depends on the divisor's length. Always left shift the the dividend and
     // the divisor so that the latter attains its maximum possible width before
     // doing the division.
 
-    // op0 and op1 must be equal in length, i.e. callers are required to allocate
-    // the larger of the two operand's length for both. This way, they can be
-    // reused as scratch buffers later on.
-    debug_assert!(op0_len <= op0.len());
-    debug_assert!(op1_len <= op1.len());
-    debug_assert_eq!(op0.len(), op1.len());
-    debug_assert!(result.len() >= op0_len + op1_len);
+    let op0_len = op0_len.min(op0.len());
+    let op1_len = op1_len.min(op1.len());
     if op0_len == 0 || op1_len == 0 {
         result.clear_bytes_above(0);
-        return;
+        return Ok(());
+    }
+
+    // op0 and op1 must be equal in length (within alignment excess), i.e. callers
+    // are required to allocate the larger of the two operand's length for both.
+    // This way, they can be reused as scratch buffers later on.
+    if !op0.len_is_compatible_with(op1.len()) || !op1.len_is_compatible_with(op0.len()) {
+        return Err(CtLcmMpMpError::InconsistentInputOperandLengths);
+    }
+
+    debug_assert_eq!(op0.len(), op1.len());
+
+    if result.len() < op0_len + op1_len {
+        return Err(CtLcmMpMpError::InsufficientResultSpace);
     }
 
     let prod_len = op0_len + op1_len;
     let prod_aligned_len = T1::limbs_align_len(prod_len);
-    debug_assert!(scratch.len() >= prod_aligned_len);
+    if scratch.len() < prod_aligned_len {
+        return Err(CtLcmMpMpError::InsufficientScratchSpace);
+    }
     let (scratch, _) = scratch.split_at_mut(prod_aligned_len);
     let mut prod_scratch = T1::from_bytes(scratch).unwrap();
 
     // Compute the product before messing around with op0's and op1's values below.
     prod_scratch.copy_from(op0);
-    let op1_aligned_len = ct_mp_limbs_align_len(op1_len);
-    if op1_aligned_len < op1.len() {
-        let (_, trimmed_op1) = op1.split_at(op1_aligned_len);
-        ct_mul_trunc_mp_mp(&mut prod_scratch, op0_len, &trimmed_op1);
-    } else {
-        ct_mul_trunc_mp_mp(&mut prod_scratch, op0_len, op1);
-    };
+    ct_mul_trunc_mp_mp(&mut prod_scratch, op0_len, &op1.shrink_to(op1_len));
 
     // Compute the GCD, result will be in op0.
-    ct_gcd_mp_mp(op0, op1);
+    ct_gcd_mp_mp(op0, op1).unwrap();
     let gcd: &mut T0 = op0;
     debug_assert_eq!(ct_is_zero_mp(gcd).unwrap(), 0);
 
-    // And divide the product by the remaining, odd factors of the GCD to
-    // arrive at the LCM. As initially said, be careful to scale the GCD
-    // to the maximum possible value so that the division's runtime is
-    // independent of its actual value's width.
+    // And divide the product by the GCD to arrive at the LCM. As initially said, be
+    // careful to scale the GCD to the maximum possible value so that the
+    // division's runtime is independent of its actual value's width.
     let (_, gcd_width) = ct_find_last_set_bit_mp(gcd);
     // Maximum GCD length is the larger of the two operands' lengths: in the most
     // common case of non-zero operands, it's <= the smaller one actually, but
@@ -116,6 +126,7 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     // The remainder should be zero.
     debug_assert_ne!(ct_is_zero_mp(&scaled_prod_low).unwrap(), 0);
     debug_assert_ne!(ct_is_zero_mp(&scaled_prod_high).unwrap(), 0);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -161,7 +172,8 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
             &mut op1_lcm_work,
             op1_len,
             &mut scratch,
-        );
+        )
+        .unwrap();
 
         let expected_len = op0.len() + op1.len() + gcd_len;
         let mut expected = vec![0u8; RT::limbs_align_len(expected_len)];

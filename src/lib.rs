@@ -43,22 +43,29 @@ pub use div_impl::{
     CtMpDivisorError,
 };
 
-pub use euclid_impl::{ct_gcd_mp_mp, ct_gcd_odd_mp_mp, ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
+pub use euclid_impl::{
+    ct_gcd_mp_mp, ct_gcd_odd_mp_mp, ct_inv_mod_odd_mp_mp, CtGcdMpMpError, CtGcdOddMpMpError,
+    CtInvModOddMpMpError,
+};
 
 pub use invmod_impl::{ct_inv_mod_mp_mp, CtInvModMpMpError};
 
-pub use lcm_impl::ct_lcm_mp_mp;
+pub use lcm_impl::{ct_lcm_mp_mp, CtLcmMpMpError};
 
 pub use montgomery_impl::{
     ct_exp_mod_odd_mp_mp, ct_montgomery_mul_mod_mp_mp, ct_montgomery_neg_n0_inv_mod_l_mp,
     ct_montgomery_radix2_mod_n_mp, ct_montgomery_redc_mp, ct_montogmery_exp_mod_odd_mp_mp,
-    ct_to_montgomery_form_direct_mp, ct_to_montgomery_form_mp, CtMontgomeryTransformationError,
+    ct_to_montgomery_form_direct_mp, ct_to_montgomery_form_mp, CtExpModOddMpMpError,
+    CtMontgomeryExpModOddMpMpError, CtMontgomeryMulModCondMpMpError, CtMontgomeryMulModMpMpError,
+    CtMontgomeryNegN0InvModLMpError, CtMontgomeryRedcMpError, CtMontgomeryTransformationError,
+    CtToMontgomeryFormMpError,
 };
 
 pub use mul_impl::{ct_mul_trunc_mp_l, ct_mul_trunc_mp_mp, ct_square_trunc_mp};
 
 pub use prime_impl::{
-    ct_composite_test_small_prime_gcd_mp, ct_prime_test_miller_rabin_mp, PrimeWheelSieve,
+    ct_composite_test_small_prime_gcd_mp, ct_prime_test_miller_rabin_mp,
+    CtCompositeTestSmallPrimeGcdMpError, CtPrimeTestMillerRabinMpError, PrimeWheelSieve,
 };
 
 pub use shift_impl::{ct_lshift_mp, ct_rshift_mp};
