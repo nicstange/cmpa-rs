@@ -1043,6 +1043,17 @@ pub trait MpIntByteSliceCommon: MpIntByteSliceCommonPriv + fmt::LowerHex {
 
         Ok(())
     }
+
+    fn len_is_compatible_with(&self, len: usize) -> bool {
+        if self._len() <= len {
+            true
+        } else if !Self::SUPPORTS_UNALIGNED_BUFFER_LENGTHS && self._len() - len < LIMB_BYTES {
+            // Allow for aligment excess
+            self.load_l(self.nlimbs() - 1) >> (8 * (LIMB_BYTES - (self._len() - len))) == 0
+        } else {
+            false
+        }
+    }
 }
 
 pub trait MpIntByteSlicePriv: MpIntByteSliceCommon {
