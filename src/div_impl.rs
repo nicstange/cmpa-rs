@@ -1,7 +1,9 @@
+#[cfg(test)]
+extern crate alloc;
 use super::limb::{
     ct_add_l_l, ct_eq_l_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_gt_l_l,
-    ct_lsb_mask_l, ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtLDivisor, LDivisorPrivate,
-    DoubleLimb, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
+    ct_lsb_mask_l, ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtLDivisor, DoubleLimb,
+    LDivisorPrivate, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
 };
 use super::limbs_buffer::{
     ct_mp_nlimbs, find_last_set_byte_mp, CompositeLimbsBuffer, MpIntByteSliceCommon,
@@ -9,6 +11,8 @@ use super::limbs_buffer::{
 };
 use super::shift_impl::ct_lshift_mp;
 use super::usize_ct_cmp::ct_is_zero_usize;
+#[cfg(test)]
+use alloc::vec;
 
 pub struct CtMpDivisor<'a, VT: MpIntByteSliceCommon> {
     v: &'a VT,
@@ -371,7 +375,7 @@ pub fn ct_div_mp_mp<UT: MpIntMutByteSlice, VT: MpIntByteSliceCommon, QT: MpIntMu
 }
 
 #[cfg(test)]
-fn test_limbs_from_be_bytes<DT: MpIntMutByteSlice, const N: usize>(bytes: [u8; N]) -> Vec<u8> {
+fn test_limbs_from_be_bytes<DT: MpIntMutByteSlice, const N: usize>(bytes: [u8; N]) -> vec::Vec<u8> {
     use super::limbs_buffer::{MpBigEndianByteSlice, MpIntByteSlice};
     let mut limbs = vec![0u8; DT::limbs_align_len(N)];
     let mut dst = DT::from_bytes(limbs.as_mut_slice()).unwrap();

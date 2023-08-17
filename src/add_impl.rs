@@ -466,9 +466,11 @@ pub fn ct_negate_cond_mp<T0: MpIntMutByteSlice>(op0: &mut T0, cond: LimbChoice) 
 
 #[cfg(test)]
 fn test_ct_negate_cond_mp<T0: MpIntMutByteSlice>() {
+    extern crate alloc;
     use super::cmp_impl::{ct_is_one_mp, ct_is_zero_mp};
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpIntByteSliceCommonPriv as _;
+    use alloc::vec;
 
     let op0_len = T0::limbs_align_len(2 * LIMB_BYTES - 1);
 

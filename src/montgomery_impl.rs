@@ -1115,9 +1115,11 @@ fn test_ct_exp_mod_odd_mp_mp<
     NT: MpIntMutByteSlice,
     ET: MpIntMutByteSlice,
 >() {
+    extern crate alloc;
     use super::limb::LIMB_BYTES;
     use super::mul_impl::ct_mul_trunc_mp_l;
     use super::shift_impl::ct_lshift_mp;
+    use alloc::vec;
 
     fn test_one<
         'a,

@@ -130,8 +130,10 @@ fn test_fill_limb_with_seq(first: u8) -> LimbType {
 
 #[cfg(test)]
 fn test_ct_lshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    extern crate alloc;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommon, MpIntByteSliceCommonPriv};
+    use alloc::vec;
 
     fn test_fill_limb_with_seq_lshifted(limb_index: usize, lshift_distance: usize) -> LimbType {
         let lshift_len = (lshift_distance + 7) / 8;
@@ -381,8 +383,10 @@ pub fn ct_rshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 
 #[cfg(test)]
 fn test_ct_rshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    extern crate alloc;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommon, MpIntByteSliceCommonPriv};
+    use alloc::vec;
 
     // limb_index is offset by one: an index of zero is used
     // for specifiying the virtual limb rshifted into.

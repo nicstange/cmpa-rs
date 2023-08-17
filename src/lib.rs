@@ -1,5 +1,7 @@
 //! Multiprecision integer arithmetic primitives.
 
+#![no_std]
+
 mod add_impl;
 mod cmp_impl;
 mod div_impl;

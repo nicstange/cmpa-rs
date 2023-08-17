@@ -639,9 +639,11 @@ pub fn ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
 
 #[cfg(test)]
 fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
+    extern crate alloc;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
     use super::mul_impl::ct_mul_trunc_mp_l;
+    use alloc::vec;
 
     fn assert_mp_is_equal<T: MpIntMutByteSlice>(v: &T, expected: LimbType) {
         assert_eq!(v.load_l(0), expected);
@@ -825,9 +827,11 @@ pub fn ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
 
 #[cfg(test)]
 fn test_ct_gcd_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
+    extern crate alloc;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpIntByteSliceCommon as _;
     use super::mul_impl::ct_mul_trunc_mp_l;
+    use alloc::vec;
 
     fn test_one<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
         op0: &T0,
@@ -1084,9 +1088,11 @@ fn test_ct_inv_mod_odd_mp_mp<
     T0: MpIntMutByteSlice,
     NT: MpIntMutByteSlice,
 >() {
+    extern crate alloc;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
     use super::mul_impl::ct_mul_trunc_mp_l;
+    use alloc::vec;
 
     fn test_one<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, NT: MpIntByteSliceCommon>(
         op0: &T0,

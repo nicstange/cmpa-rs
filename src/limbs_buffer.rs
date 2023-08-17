@@ -1862,6 +1862,9 @@ pub fn ct_clear_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize)
 
 #[cfg(test)]
 fn test_ct_clear_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    extern crate alloc;
+    use alloc::vec;
+
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -1977,6 +1980,9 @@ pub fn clear_bits_above_mp<T0: MpIntMutByteSlice>(op0: &mut T0, begin: usize) {
 
 #[cfg(test)]
 fn test_clear_bits_above_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    extern crate alloc;
+    use alloc::vec;
+
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -2091,6 +2097,9 @@ pub fn ct_clear_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
 
 #[cfg(test)]
 fn test_ct_clear_bits_mp_below_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    extern crate alloc;
+    use alloc::vec;
+
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -2206,6 +2215,9 @@ pub fn clear_bits_below_mp<T0: MpIntMutByteSlice>(op0: &mut T0, end: usize) {
 
 #[cfg(test)]
 fn test_clear_bits_below_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
+    extern crate alloc;
+    use alloc::vec;
+
     fn fill_with_ones<T0: MpIntMutByteSlice>(op0: &mut T0) {
         for i in 0..op0.nlimbs() {
             if i + 1 != op0.nlimbs() {
@@ -2326,7 +2338,9 @@ pub fn ct_swap_cond_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
 
 #[cfg(test)]
 fn test_ct_swap_cond_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
+    extern crate alloc;
     use super::cmp_impl::ct_eq_mp_mp;
+    use alloc::vec;
 
     let len = T0::limbs_align_len(2 * LIMB_BYTES - 1);
     let len = T1::limbs_align_len(len);

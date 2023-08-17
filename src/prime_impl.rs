@@ -153,7 +153,9 @@ pub fn ct_composite_test_small_prime_gcd_mp<PT: MpIntByteSliceCommon>(
 
 #[cfg(test)]
 fn test_ct_composite_test_small_prime_gcd_mp<PT: MpIntMutByteSlice>() {
+    extern crate alloc;
     use super::add_impl::ct_sub_mp_l;
+    use alloc::vec;
 
     for i in 0..8 {
         let l = SMALL_ODD_PRIME_PRODUCTS[i].len();
@@ -370,9 +372,11 @@ fn test_ct_prime_test_miller_rabin_mp<
     PT: MpIntMutByteSlice,
     RXT: MpIntMutByteSlice,
 >() {
+    extern crate alloc;
     use super::add_impl::ct_sub_mp_l;
     use super::limbs_buffer::ct_mp_nlimbs;
     use super::mul_impl::ct_mul_trunc_mp_l;
+    use alloc::vec;
 
     fn is_probable_prime<
         BT: MpIntMutByteSlice,

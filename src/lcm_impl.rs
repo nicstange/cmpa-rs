@@ -131,7 +131,9 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
 
 #[cfg(test)]
 fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
+    extern crate alloc;
     use super::mul_impl::ct_mul_trunc_mp_l;
+    use alloc::vec;
 
     fn test_one<
         RT: MpIntMutByteSlice,

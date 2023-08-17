@@ -94,8 +94,10 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
 
 #[cfg(test)]
 fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(op0_len: usize) {
+    extern crate alloc;
     use super::cmp_impl::ct_is_one_mp;
     use super::limb::LimbType;
+    use alloc::vec;
 
     for i in 0..8 {
         const MERSENNE_PRIME_17: LimbType = 131071 as LimbType;
@@ -337,8 +339,10 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
 
 #[cfg(test)]
 fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
+    extern crate alloc;
     use super::limb::LIMB_BYTES;
     use super::mul_impl::ct_mul_trunc_mp_l;
+    use alloc::vec;
 
     fn test_one<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(op0: &T0, n: &mut NT) {
         use super::cmp_impl::ct_is_one_mp;
