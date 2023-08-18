@@ -641,7 +641,7 @@ pub fn ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>(
 fn test_ct_gcd_odd_mp_mp<FT: MpIntMutByteSlice, GT: MpIntMutByteSlice>() {
     extern crate alloc;
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
+    use super::limbs_buffer::MpIntByteSliceCommon as _;
     use super::mul_impl::ct_mul_trunc_mp_l;
     use alloc::vec;
 
@@ -1142,7 +1142,7 @@ fn test_ct_inv_mod_odd_mp_mp<
 >() {
     extern crate alloc;
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MpIntByteSliceCommon as _, MpIntByteSliceCommonPriv as _};
+    use super::limbs_buffer::MpIntByteSliceCommon as _;
     use super::mul_impl::ct_mul_trunc_mp_l;
     use alloc::vec;
 

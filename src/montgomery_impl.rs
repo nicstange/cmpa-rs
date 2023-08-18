@@ -9,8 +9,8 @@ use super::limb::{
     LIMB_BITS,
 };
 use super::limbs_buffer::{
-    ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _,
-    MpIntMutByteSlice, MpNativeEndianMutByteSlice,
+    ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntMutByteSlice,
+    MpNativeEndianMutByteSlice,
 };
 
 fn ct_montgomery_radix_shift_len(n_len: usize) -> usize {
@@ -525,7 +525,7 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
 >() {
     use super::div_impl::ct_mod_mp_mp;
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MpIntByteSliceCommonPriv as _, MpIntMutByteSlicePriv as _};
+    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
     use super::mul_impl::ct_mul_trunc_mp_mp;
 
     for i in 0..16 {

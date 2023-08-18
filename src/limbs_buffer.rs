@@ -938,10 +938,6 @@ pub trait MpIntByteSliceCommonPriv: Sized {
 
     fn _len(&self) -> usize;
 
-    fn nlimbs(&self) -> usize {
-        ct_mp_nlimbs(self._len())
-    }
-
     fn partial_high_mask(&self) -> LimbType {
         if Self::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
             let high_npartial = if self._len() != 0 {
@@ -974,6 +970,10 @@ pub trait MpIntByteSliceCommonPriv: Sized {
 pub trait MpIntByteSliceCommon: MpIntByteSliceCommonPriv + fmt::LowerHex {
     fn len(&self) -> usize {
         self._len()
+    }
+
+    fn nlimbs(&self) -> usize {
+        ct_mp_nlimbs(self.len())
     }
 
     fn limbs_align_len(nbytes: usize) -> usize {

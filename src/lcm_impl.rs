@@ -3,8 +3,7 @@ use super::div_impl::{ct_div_mp_mp, CtMpDivisor};
 use super::euclid_impl::ct_gcd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
-    ct_find_last_set_bit_mp, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _,
-    MpIntMutByteSlice,
+    ct_find_last_set_bit_mp, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntMutByteSlice,
 };
 use super::mul_impl::ct_mul_trunc_mp_mp;
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
