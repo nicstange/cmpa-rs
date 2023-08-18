@@ -1,6 +1,6 @@
 use super::add_impl::{ct_add_mp_mp, ct_sub_mp_mp};
 use super::cmp_impl::{ct_is_zero_mp, ct_lt_mp_mp};
-use super::euclid_impl::{ct_inv_mod_odd_mp_mp, CtInvModOddMpMpError};
+use super::euclid_impl::{ct_inv_mod_odd_mp_mp_impl, CtInvModOddMpMpImplError};
 use super::limb::{ct_is_nonzero_l, ct_sub_l_l_b, LIMB_BITS};
 use super::limbs_buffer::{
     clear_bits_above_mp, ct_clear_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs,
@@ -274,32 +274,34 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     ct_inv_mod_pow2_mp(&mut scratch0, op0, n_pow2_exp, max_n_pow2_exp, scratch2);
 
     // Compute scratch1 = op0^{-1} mod n_{*}. Will destroy the value in op0.
-    match ct_inv_mod_odd_mp_mp(&mut scratch1, op0, n, [scratch2, scratch3]) {
+    match ct_inv_mod_odd_mp_mp_impl(&mut scratch1, op0, n, [scratch2, scratch3]) {
         Ok(_) => (),
         Err(e) => {
             // Undo the rshift on n for good measure.
             ct_lshift_mp(n, n_pow2_exp);
             let e = match e {
-                CtInvModOddMpMpError::InvalidModulus => {
+                CtInvModOddMpMpImplError::InvalidModulus => {
                     // Cannot happen, the modulus had been checked for being non-zero
                     // and made odd. But play safe.
                     debug_assert!(false);
                     CtInvModMpMpError::InvalidModulus
                 }
-                CtInvModOddMpMpError::OperandsNotCoprime => CtInvModMpMpError::OperandsNotCoprime,
-                CtInvModOddMpMpError::InsufficientResultSpace => {
+                CtInvModOddMpMpImplError::OperandsNotCoprime => {
+                    CtInvModMpMpError::OperandsNotCoprime
+                }
+                CtInvModOddMpMpImplError::InsufficientResultSpace => {
                     // Cannot happen, the result destination is a scratch buffer, and that one's
                     // length had been validated above. But play safe.
                     debug_assert!(false);
                     CtInvModMpMpError::InsufficientScratchSpace
                 }
-                CtInvModOddMpMpError::InsufficientScratchSpace => {
+                CtInvModOddMpMpImplError::InsufficientScratchSpace => {
                     // Cannot happen, the scratch buffer lengths' had been
                     // validated above. But play safe.
                     debug_assert!(false);
                     CtInvModMpMpError::InsufficientScratchSpace
                 }
-                CtInvModOddMpMpError::InconsistentInputOperandLength => {
+                CtInvModOddMpMpImplError::InconsistentInputOperandLength => {
                     // Cannot happen, the lengths of op0 and n had been checked for being compatible
                     // above. But play safe.
                     CtInvModMpMpError::InconsistentInputOperandLength
@@ -330,9 +332,22 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     let carry = ct_add_mp_mp(op0, &scratch0);
     assert_eq!(carry, 0);
 
-    // Undo the rshift on n for the debug_assert!() comparison.
+    // Undo the rshift on n.
     ct_lshift_mp(n, n_pow2_exp);
     assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
+
+    // The inverse does not exist for n = 1 and/or op0 = 0.  The code above,
+    // ct_inv_mod_odd_mp_mp_impl() in particular, does support this and would
+    // compute the "inverse" to zero.  For external use however, this is such a
+    // suspicious condition that it should be caught.  Return a
+    // OperandsNotCoprime in this case. Strictly speaking, for n = 1, which
+    // implies op0 = 0, the multiplicative group doesn't exist and one could argue
+    // whether InvalidModulus would be more appropriate. However, more precise
+    // error reporting in this corner case doesn't warrant an additional n == 1
+    // multiprecision integer comparison.
+    if ct_is_zero_mp(op0).unwrap() != 0 {
+        return Err(CtInvModMpMpError::OperandsNotCoprime);
+    }
 
     Ok(())
 }
@@ -340,12 +355,12 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
 #[cfg(test)]
 fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
     extern crate alloc;
+    use super::cmp_impl::ct_is_one_mp;
     use super::limb::LIMB_BYTES;
     use super::mul_impl::ct_mul_trunc_mp_l;
     use alloc::vec;
 
     fn test_one<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(op0: &T0, n: &mut NT) {
-        use super::cmp_impl::ct_is_one_mp;
         use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
 
         // Reserve an extra byte for the NotCoprime checks below.
@@ -365,13 +380,14 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
             scratch2.as_mut_slice(),
             scratch3.as_mut_slice(),
         ];
-        ct_inv_mod_mp_mp(&mut op0_inv_mod_n, n, scratch).unwrap();
-        // If n == 1, the multiplicative group does not exist and the result is fixed to
-        // zero.
-        if ct_is_one_mp(n).unwrap() != 0 {
-            assert_eq!(ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
+        let r = ct_inv_mod_mp_mp(&mut op0_inv_mod_n, n, scratch);
+        // If n == 1, the multiplicative group does not exist, of op0 == 0,
+        // the multiplicative inverse does not exist.
+        if ct_is_one_mp(n).unwrap() != 0 || ct_is_zero_mp(op0).unwrap() != 0 {
+            assert!(matches!(r, Err(CtInvModMpMpError::OperandsNotCoprime)));
             return;
         }
+        r.unwrap();
 
         // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
         let mut product_buf = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];

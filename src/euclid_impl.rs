@@ -976,7 +976,7 @@ fn test_ct_gcd_ne_ne() {
 }
 
 #[derive(Debug)]
-pub enum CtInvModOddMpMpError {
+pub enum CtInvModOddMpMpImplError {
     InvalidModulus,
     InsufficientResultSpace,
     InsufficientScratchSpace,
@@ -984,7 +984,9 @@ pub enum CtInvModOddMpMpError {
     OperandsNotCoprime,
 }
 
-pub fn ct_inv_mod_odd_mp_mp<
+// Allows n == 1 (and/or op0 == 0) repspectively to support the generic
+// ct_inv_mod_mp_mp() implementation.
+pub fn ct_inv_mod_odd_mp_mp_impl<
     RT: MpIntMutByteSlice,
     T0: MpIntMutByteSlice,
     NT: MpIntByteSliceCommon,
@@ -993,23 +995,23 @@ pub fn ct_inv_mod_odd_mp_mp<
     op0: &mut T0,
     n: &NT,
     scratch: [&mut [u8]; 2],
-) -> Result<(), CtInvModOddMpMpError> {
+) -> Result<(), CtInvModOddMpMpImplError> {
     if !n.len_is_compatible_with(result.len()) {
-        return Err(CtInvModOddMpMpError::InsufficientResultSpace);
+        return Err(CtInvModOddMpMpImplError::InsufficientResultSpace);
     }
     if !op0.len_is_compatible_with(n.len()) || !n.len_is_compatible_with(op0.len()) {
-        return Err(CtInvModOddMpMpError::InconsistentInputOperandLength);
+        return Err(CtInvModOddMpMpImplError::InconsistentInputOperandLength);
     }
 
     let n_aligned_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
     for s in scratch.iter() {
         if s.len() < n_aligned_len {
-            return Err(CtInvModOddMpMpError::InsufficientScratchSpace);
+            return Err(CtInvModOddMpMpImplError::InsufficientScratchSpace);
         }
     }
 
     let neg_n0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(n).map_err(|e| match e {
-        CtMontgomeryNegN0InvModLMpError::InvalidModulus => CtInvModOddMpMpError::InvalidModulus,
+        CtMontgomeryNegN0InvModLMpError::InvalidModulus => CtInvModOddMpMpImplError::InvalidModulus,
     })?;
 
     // The column vector (ext_u0, ext_u1) tracking the coefficents of the extended
@@ -1054,7 +1056,7 @@ pub fn ct_inv_mod_odd_mp_mp<
     let nlimbs = n.nlimbs();
     for i in 0..nlimbs {
         if f_work_scratch.load_l_full(i) != expected_val {
-            return Err(CtInvModOddMpMpError::OperandsNotCoprime);
+            return Err(CtInvModOddMpMpImplError::OperandsNotCoprime);
         }
         expected_val = neg_mask;
     }
@@ -1077,6 +1079,56 @@ pub fn ct_inv_mod_odd_mp_mp<
         } else {
             result.store_l(i, result_val & result.partial_high_mask());
         }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum CtInvModOddMpMpError {
+    InvalidModulus,
+    InsufficientResultSpace,
+    InsufficientScratchSpace,
+    InconsistentInputOperandLength,
+    OperandsNotCoprime,
+}
+
+pub fn ct_inv_mod_odd_mp_mp<
+    RT: MpIntMutByteSlice,
+    T0: MpIntMutByteSlice,
+    NT: MpIntByteSliceCommon,
+>(
+    result: &mut RT,
+    op0: &mut T0,
+    n: &NT,
+    scratch: [&mut [u8]; 2],
+) -> Result<(), CtInvModOddMpMpError> {
+    ct_inv_mod_odd_mp_mp_impl(result, op0, n, scratch).map_err(|e| match e {
+        CtInvModOddMpMpImplError::InvalidModulus => CtInvModOddMpMpError::InvalidModulus,
+        CtInvModOddMpMpImplError::InsufficientResultSpace => {
+            CtInvModOddMpMpError::InsufficientResultSpace
+        }
+        CtInvModOddMpMpImplError::InsufficientScratchSpace => {
+            CtInvModOddMpMpError::InsufficientScratchSpace
+        }
+        CtInvModOddMpMpImplError::InconsistentInputOperandLength => {
+            CtInvModOddMpMpError::InconsistentInputOperandLength
+        }
+        CtInvModOddMpMpImplError::OperandsNotCoprime => CtInvModOddMpMpError::OperandsNotCoprime,
+    })?;
+
+    // The inverse does not exist for n = 1 and/or op0 = 0.
+    // ct_inv_mod_odd_mp_mp_impl() does support this and forces the result to
+    // zero in this case, as is needed for the application of Garner's method in
+    // the generic ct_inv_mod_mo_mp(). For external use however, this is such a
+    // suspicious condition that it should be caught.  Return a OperandsNotCoprime
+    // in this case. Strictly speaking, for n = 1, which implies op0 = 0, the
+    // multiplicative group doesn't exist and one could argue whether
+    // InvalidModulus would be more appropriate. However, more precise error
+    // reporting in this corner case doesn't warrant an additional n == 1
+    // multiprecision integer comparison.
+    if ct_is_zero_mp(result).unwrap() != 0 {
+        return Err(CtInvModOddMpMpError::OperandsNotCoprime);
     }
 
     Ok(())
@@ -1112,20 +1164,19 @@ fn test_ct_inv_mod_odd_mp_mp<
         let mut scratch0 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len())];
         let mut scratch1 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len())];
 
-        ct_inv_mod_odd_mp_mp(
+        let r = ct_inv_mod_odd_mp_mp(
             &mut op0_inv_mod_n,
             &mut op0_work_scratch,
             n,
             [&mut scratch0, &mut scratch1],
-        )
-        .unwrap();
-
-        // If n == 1, the multiplicative group does not exist and the result is fixed to
-        // zero.
-        if ct_is_one_mp(n).unwrap() != 0 {
-            assert_eq!(ct_is_zero_mp(&op0_inv_mod_n).unwrap(), 1);
+        );
+        // If n == 1, the multiplicative group does not exist, of op0 == 0,
+        // the multiplicative inverse does not exist.
+        if ct_is_one_mp(n).unwrap() != 0 ||  ct_is_zero_mp(op0).unwrap() != 0 {
+            assert!(matches!(r, Err(CtInvModOddMpMpError::OperandsNotCoprime)));
             return;
         }
+        r.unwrap();
 
         // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
         let mut product_buf = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];
