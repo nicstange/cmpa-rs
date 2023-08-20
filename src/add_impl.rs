@@ -4,7 +4,9 @@ use super::limb::{
     ct_add_l_l, ct_add_l_l_c, ct_find_last_set_byte_l, ct_sub_l_l, ct_sub_l_l_b, LimbChoice,
     LimbType, LIMB_BITS,
 };
-use super::limbs_buffer::{MpIntMutSlice, MpIntSliceCommon};
+#[cfg(test)]
+use super::limbs_buffer::MpMutUIntSlice;
+use super::limbs_buffer::{MpMutUInt, MpUIntCommon};
 
 /// Conditionally add two multiprecision integers of specified endianess.
 ///
@@ -22,7 +24,7 @@ use super::limbs_buffer::{MpIntMutSlice, MpIntSliceCommon};
 ///   addend.
 /// * `op1` - The second input addend. Its length must not exceed the length of
 ///   `op0`.
-pub fn ct_add_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
+pub fn ct_add_cond_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(
     op0: &mut T0,
     op1: &T1,
     cond: LimbChoice,
@@ -64,7 +66,7 @@ pub fn ct_add_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_ct_add_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
+fn test_ct_add_cond_mp_mp<T0: MpMutUIntSlice, T1: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
 
     let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
@@ -167,28 +169,28 @@ fn test_ct_add_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_add_cond_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_add_cond_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_add_cond_mp_mp::<MpMutBigEndianUIntByteSlice, MpMutBigEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_add_cond_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_add_cond_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_add_cond_mp_mp::<MpMutLittleEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_add_cond_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_add_cond_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_add_cond_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
 }
 
-pub fn ct_add_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(op0: &mut T0, op1: &T1) -> LimbType {
+pub fn ct_add_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(op0: &mut T0, op1: &T1) -> LimbType {
     ct_add_cond_mp_mp(op0, op1, LimbChoice::from(1))
 }
 
 // Add a limb to a multiprecision integer.
-pub fn ct_add_mp_l<T0: MpIntMutSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
+pub fn ct_add_mp_l<T0: MpMutUInt>(op0: &mut T0, op1: LimbType) -> LimbType {
     debug_assert!(ct_find_last_set_byte_l(op1) <= op0.len());
     let op0_nlimbs = op0.nlimbs();
     if op0_nlimbs == 0 {
@@ -231,7 +233,7 @@ pub fn ct_add_mp_l<T0: MpIntMutSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
 ///   the second operand.
 /// * `op1` - The subtrahend. Its length must not exceed the length of `op0`.
 /// * `cond` - Whether or not to replace `ob0` by the difference.
-pub fn ct_sub_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
+pub fn ct_sub_cond_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(
     op0: &mut T0,
     op1: &T1,
     cond: LimbChoice,
@@ -270,7 +272,7 @@ pub fn ct_sub_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_ct_sub_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
+fn test_ct_sub_cond_mp_mp<T0: MpMutUIntSlice, T1: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
 
     let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
@@ -392,28 +394,28 @@ fn test_ct_sub_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_sub_cond_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_sub_cond_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_sub_cond_mp_mp::<MpMutBigEndianUIntByteSlice, MpMutBigEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_sub_cond_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_sub_cond_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_sub_cond_mp_mp::<MpMutLittleEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_sub_cond_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_sub_cond_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_sub_cond_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
 }
 
-pub fn ct_sub_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(op0: &mut T0, op1: &T1) -> LimbType {
+pub fn ct_sub_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(op0: &mut T0, op1: &T1) -> LimbType {
     ct_sub_cond_mp_mp(op0, op1, LimbChoice::from(1))
 }
 
 // Subtract a limb from a multiprecision integer.
-pub fn ct_sub_mp_l<T0: MpIntMutSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
+pub fn ct_sub_mp_l<T0: MpMutUInt>(op0: &mut T0, op1: LimbType) -> LimbType {
     debug_assert!(ct_find_last_set_byte_l(op1) <= op0.len());
     let op0_nlimbs = op0.nlimbs();
     if op0_nlimbs == 0 {
@@ -437,7 +439,7 @@ pub fn ct_sub_mp_l<T0: MpIntMutSlice>(op0: &mut T0, op1: LimbType) -> LimbType {
     borrow
 }
 
-pub fn ct_negate_cond_mp<T0: MpIntMutSlice>(op0: &mut T0, cond: LimbChoice) {
+pub fn ct_negate_cond_mp<T0: MpMutUInt>(op0: &mut T0, cond: LimbChoice) {
     if op0.is_empty() {
         return;
     }
@@ -459,10 +461,10 @@ pub fn ct_negate_cond_mp<T0: MpIntMutSlice>(op0: &mut T0, cond: LimbChoice) {
 }
 
 #[cfg(test)]
-fn test_ct_negate_cond_mp<T0: MpIntMutSlice>() {
+fn test_ct_negate_cond_mp<T0: MpMutUIntSlice>() {
     use super::cmp_impl::{ct_is_one_mp, ct_is_zero_mp};
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntSliceCommonPriv as _;
+    use super::limbs_buffer::MpUIntCommonPriv as _;
 
     let op0_len = 2 * LIMB_BYTES - 1;
 
@@ -500,18 +502,18 @@ fn test_ct_negate_cond_mp<T0: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_negate_cond_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_negate_cond_mp::<MpBigEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_negate_cond_mp::<MpMutBigEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_negate_cond_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_negate_cond_mp::<MpLittleEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_negate_cond_mp::<MpMutLittleEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_negate_cond_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_negate_cond_mp::<MpNativeEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_negate_cond_mp::<MpMutNativeEndianUIntByteSlice>()
 }

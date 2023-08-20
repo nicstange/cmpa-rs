@@ -1,12 +1,14 @@
 use super::limb::{ct_lsb_mask_l, LimbType, LIMB_BITS};
+#[cfg(test)]
+use super::limbs_buffer::MpMutUIntSlice;
 use super::limbs_buffer::{
-    ct_clear_bits_above_mp, ct_clear_bits_below_mp, ct_mp_nlimbs, MpIntMutSlice,
+    ct_clear_bits_above_mp, ct_clear_bits_below_mp, ct_mp_nlimbs, MpMutUInt,
 };
 use super::usize_ct_cmp::{
     ct_eq_usize_usize, ct_geq_usize_usize, ct_gt_usize_usize, ct_leq_usize_usize, ct_lt_usize_usize,
 };
 
-pub fn ct_lshift_mp<T0: MpIntMutSlice>(op0: &mut T0, distance: usize) -> LimbType {
+pub fn ct_lshift_mp<T0: MpMutUInt>(op0: &mut T0, distance: usize) -> LimbType {
     if op0.is_empty() {
         return 0;
     }
@@ -129,9 +131,9 @@ fn test_fill_limb_with_seq(first: u8) -> LimbType {
 }
 
 #[cfg(test)]
-fn test_ct_lshift_mp_common<T0: MpIntMutSlice>(op0_len: usize) {
+fn test_ct_lshift_mp_common<T0: MpMutUIntSlice>(op0_len: usize) {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MpIntSliceCommon, MpIntSliceCommonPriv};
+    use super::limbs_buffer::{MpUIntCommon as _, MpUIntCommonPriv as _};
 
     fn test_fill_limb_with_seq_lshifted(limb_index: usize, lshift_distance: usize) -> LimbType {
         let lshift_len = (lshift_distance + 7) / 8;
@@ -215,9 +217,9 @@ fn test_ct_lshift_mp_common<T0: MpIntMutSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpIntMutSlice>() {
+fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntSliceCommon;
+    use super::limbs_buffer::MpUIntCommon as _;
 
     let mut op0 = [0xffu8.into(); 1];
     let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
@@ -243,7 +245,7 @@ fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpIntMutSlice>() {
 }
 
 #[cfg(test)]
-fn test_ct_lshift_mp_with_aligned_lengths<T0: MpIntMutSlice>() {
+fn test_ct_lshift_mp_with_aligned_lengths<T0: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
 
     for i in 0..LIMB_BYTES + 3 {
@@ -258,25 +260,25 @@ fn test_ct_lshift_mp_with_aligned_lengths<T0: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_lshift_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_lshift_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
-    test_ct_lshift_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_lshift_mp_with_unaligned_lengths::<MpMutBigEndianUIntByteSlice>();
+    test_ct_lshift_mp_with_aligned_lengths::<MpMutBigEndianUIntByteSlice>();
 }
 
 #[test]
 fn test_ct_lshift_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_lshift_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
-    test_ct_lshift_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_lshift_mp_with_unaligned_lengths::<MpMutLittleEndianUIntByteSlice>();
+    test_ct_lshift_mp_with_aligned_lengths::<MpMutLittleEndianUIntByteSlice>();
 }
 
 #[test]
 fn test_ct_lshift_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_lshift_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_lshift_mp_with_aligned_lengths::<MpMutNativeEndianUIntByteSlice>();
 }
 
-pub fn ct_rshift_mp<T0: MpIntMutSlice>(op0: &mut T0, distance: usize) -> LimbType {
+pub fn ct_rshift_mp<T0: MpMutUInt>(op0: &mut T0, distance: usize) -> LimbType {
     if op0.is_empty() {
         return 0;
     }
@@ -380,9 +382,9 @@ pub fn ct_rshift_mp<T0: MpIntMutSlice>(op0: &mut T0, distance: usize) -> LimbTyp
 }
 
 #[cfg(test)]
-fn test_ct_rshift_mp_common<T0: MpIntMutSlice>(op0_len: usize) {
+fn test_ct_rshift_mp_common<T0: MpMutUIntSlice>(op0_len: usize) {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MpIntSliceCommon, MpIntSliceCommonPriv};
+    use super::limbs_buffer::{MpUIntCommon as _, MpUIntCommonPriv as _};
 
     // limb_index is offset by one: an index of zero is used
     // for specifiying the virtual limb rshifted into.
@@ -462,9 +464,9 @@ fn test_ct_rshift_mp_common<T0: MpIntMutSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpIntMutSlice>() {
+fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntSliceCommon;
+    use super::limbs_buffer::MpUIntCommon as _;
 
     let mut op0 = [0xffu8.into(); 1];
     let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
@@ -490,7 +492,7 @@ fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpIntMutSlice>() {
 }
 
 #[cfg(test)]
-fn test_ct_rshift_mp_with_aligned_lengths<T0: MpIntMutSlice>() {
+fn test_ct_rshift_mp_with_aligned_lengths<T0: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
 
     for i in 0..LIMB_BYTES + 3 {
@@ -505,20 +507,20 @@ fn test_ct_rshift_mp_with_aligned_lengths<T0: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_rshift_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_rshift_mp_with_unaligned_lengths::<MpBigEndianMutByteSlice>();
-    test_ct_rshift_mp_with_aligned_lengths::<MpBigEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_rshift_mp_with_unaligned_lengths::<MpMutBigEndianUIntByteSlice>();
+    test_ct_rshift_mp_with_aligned_lengths::<MpMutBigEndianUIntByteSlice>();
 }
 
 #[test]
 fn test_ct_rshift_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_rshift_mp_with_unaligned_lengths::<MpLittleEndianMutByteSlice>();
-    test_ct_rshift_mp_with_aligned_lengths::<MpLittleEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_rshift_mp_with_unaligned_lengths::<MpMutLittleEndianUIntByteSlice>();
+    test_ct_rshift_mp_with_aligned_lengths::<MpMutLittleEndianUIntByteSlice>();
 }
 
 #[test]
 fn test_ct_rshift_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_rshift_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_rshift_mp_with_aligned_lengths::<MpMutNativeEndianUIntByteSlice>();
 }

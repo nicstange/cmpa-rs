@@ -9,8 +9,8 @@ use super::limb::{
     LIMB_BITS,
 };
 use super::limbs_buffer::{
-    ct_mp_limbs_align_len, ct_mp_nlimbs, MpIntMutSlice, MpIntMutSlicePriv as _, MpIntSliceCommon,
-    MpNativeEndianMutByteSlice,
+    ct_mp_limbs_align_len, ct_mp_nlimbs, MpMutNativeEndianUIntByteSlice, MpMutUInt, MpMutUIntSlice,
+    MpMutUIntSlicePriv as _, MpUIntCommon, MpUIntSliceCommon as _,
 };
 
 fn ct_montgomery_radix_shift_len(n_len: usize) -> usize {
@@ -26,7 +26,7 @@ pub enum CtMontgomeryNegN0InvModLMpError {
     InvalidModulus,
 }
 
-pub fn ct_montgomery_neg_n0_inv_mod_l_mp<NT: MpIntSliceCommon>(
+pub fn ct_montgomery_neg_n0_inv_mod_l_mp<NT: MpUIntCommon>(
     n: &NT,
 ) -> Result<LimbType, CtMontgomeryNegN0InvModLMpError> {
     if n.is_empty() {
@@ -43,9 +43,7 @@ pub fn ct_montgomery_neg_n0_inv_mod_l_mp<NT: MpIntSliceCommon>(
 #[test]
 fn test_ct_montgomery_neg_n0_inv_mod_l_mp() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{
-        MpBigEndianMutByteSlice, MpIntMutSlice as _, MpIntMutSlicePriv as _,
-    };
+    use super::limbs_buffer::{MpMutBigEndianUIntByteSlice, MpMutUIntSlicePriv as _};
 
     for n0 in 0 as LimbType..128 {
         let n0 = 2 * n0 + 1;
@@ -56,7 +54,7 @@ fn test_ct_montgomery_neg_n0_inv_mod_l_mp() {
             let n0 = n0.wrapping_add(v);
 
             let mut n0_buf: [u8; LIMB_BYTES] = [0; LIMB_BYTES];
-            let mut n = MpBigEndianMutByteSlice::from_slice(n0_buf.as_mut_slice()).unwrap();
+            let mut n = MpMutBigEndianUIntByteSlice::from_slice(n0_buf.as_mut_slice()).unwrap();
             n.store_l(0, n0);
             let neg_n0_inv = ct_montgomery_neg_n0_inv_mod_l_mp(&n).unwrap();
             assert_eq!(n0.wrapping_mul(neg_n0_inv), !0);
@@ -189,7 +187,7 @@ pub enum CtMontgomeryRedcMpError {
     InputValueOutOfRange,
 }
 
-pub fn ct_montgomery_redc_mp<TT: MpIntMutSlice, NT: MpIntSliceCommon>(
+pub fn ct_montgomery_redc_mp<TT: MpMutUInt, NT: MpUIntCommon>(
     t: &mut TT,
     n: &NT,
     neg_n0_inv_mod_l: LimbType,
@@ -266,10 +264,9 @@ pub fn ct_montgomery_redc_mp<TT: MpIntMutSlice, NT: MpIntSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_ct_montgomery_redc_mp<TT: MpIntMutSlice, NT: MpIntMutSlice>() {
+fn test_ct_montgomery_redc_mp<TT: MpMutUIntSlice, NT: MpMutUIntSlice>() {
     use super::div_impl::ct_mod_mp_mp;
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntMutSlice as _;
 
     for i in 0..64 {
         const MERSENNE_PRIME_13: LimbType = 8191 as LimbType;
@@ -316,20 +313,20 @@ fn test_ct_montgomery_redc_mp<TT: MpIntMutSlice, NT: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_montgomery_redc_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_montgomery_redc_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_montgomery_redc_mp::<MpMutBigEndianUIntByteSlice, MpMutBigEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_montgomery_redc_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_montgomery_redc_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_montgomery_redc_mp::<MpMutLittleEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_montgomery_redc_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_montgomery_redc_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_montgomery_redc_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
 }
 
 #[derive(Debug)]
@@ -340,10 +337,10 @@ pub enum CtMontgomeryMulModCondMpMpError {
 }
 
 pub fn ct_montgomery_mul_mod_cond_mp_mp<
-    RT: MpIntMutSlice,
-    T0: MpIntSliceCommon,
-    T1: MpIntSliceCommon,
-    NT: MpIntSliceCommon,
+    RT: MpMutUIntSlice,
+    T0: MpUIntCommon,
+    T1: MpUIntCommon,
+    NT: MpUIntCommon,
 >(
     result: &mut RT,
     op0: &T0,
@@ -521,10 +518,10 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
 
 #[cfg(test)]
 fn test_ct_montgomery_mul_mod_cond_mp_mp<
-    RT: MpIntMutSlice,
-    T0: MpIntMutSlice,
-    T1: MpIntMutSlice,
-    NT: MpIntMutSlice,
+    RT: MpMutUIntSlice,
+    T0: MpMutUIntSlice,
+    T1: MpMutUIntSlice,
+    NT: MpMutUIntSlice,
 >() {
     use super::div_impl::ct_mod_mp_mp;
     use super::limb::LIMB_BYTES;
@@ -670,44 +667,44 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
 
 #[test]
 fn test_ct_montgomery_mul_mod_cond_be_be_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
     test_ct_montgomery_mul_mod_cond_mp_mp::<
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
     >()
 }
 
 #[test]
 fn test_ct_montgomery_mul_mod_cond_le_le_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
     test_ct_montgomery_mul_mod_cond_mp_mp::<
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
     >()
 }
 
 #[test]
 fn test_ct_montgomery_mul_mod_cond_ne_ne_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
     test_ct_montgomery_mul_mod_cond_mp_mp::<
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
     >()
 }
 
 pub type CtMontgomeryMulModMpMpError = CtMontgomeryMulModCondMpMpError;
 
 pub fn ct_montgomery_mul_mod_mp_mp<
-    RT: MpIntMutSlice,
-    T0: MpIntSliceCommon,
-    T1: MpIntSliceCommon,
-    NT: MpIntSliceCommon,
+    RT: MpMutUIntSlice,
+    T0: MpUIntCommon,
+    T1: MpUIntCommon,
+    NT: MpUIntCommon,
 >(
     result: &mut RT,
     op0: &T0,
@@ -724,7 +721,7 @@ pub enum CtMontgomeryTransformationError {
     InsufficientResultSpace,
 }
 
-pub fn ct_to_montgomery_form_direct_mp<TT: MpIntMutSlice, NT: MpIntSliceCommon>(
+pub fn ct_to_montgomery_form_direct_mp<TT: MpMutUInt, NT: MpUIntCommon>(
     t: &mut TT,
     n: &NT,
 ) -> Result<(), CtMontgomeryTransformationError> {
@@ -754,7 +751,7 @@ pub fn ct_to_montgomery_form_direct_mp<TT: MpIntMutSlice, NT: MpIntSliceCommon>(
     Ok(())
 }
 
-pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpIntMutSlice, NT: MpIntSliceCommon>(
+pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpMutUIntSlice, NT: MpUIntCommon>(
     radix2_mod_n_out: &mut RX2T,
     n: &NT,
 ) -> Result<(), CtMontgomeryTransformationError> {
@@ -799,10 +796,10 @@ pub enum CtToMontgomeryFormMpError {
 }
 
 pub fn ct_to_montgomery_form_mp<
-    RT: MpIntMutSlice,
-    TT: MpIntSliceCommon,
-    NT: MpIntSliceCommon,
-    RX2T: MpIntSliceCommon,
+    RT: MpMutUIntSlice,
+    TT: MpUIntCommon,
+    NT: MpUIntCommon,
+    RX2T: MpUIntCommon,
 >(
     result: &mut RT,
     t: &TT,
@@ -842,7 +839,7 @@ pub fn ct_to_montgomery_form_mp<
 }
 
 #[cfg(test)]
-fn test_ct_to_montgomery_form_mp<TT: MpIntMutSlice, NT: MpIntMutSlice, RX2T: MpIntMutSlice>() {
+fn test_ct_to_montgomery_form_mp<TT: MpMutUIntSlice, NT: MpMutUIntSlice, RX2T: MpMutUIntSlice>() {
     use super::cmp_impl::ct_eq_mp_mp;
     use super::div_impl::ct_mod_mp_mp;
     use super::limb::LIMB_BYTES;
@@ -907,41 +904,41 @@ fn test_ct_to_montgomery_form_mp<TT: MpIntMutSlice, NT: MpIntMutSlice, RX2T: MpI
 
 #[test]
 fn test_ct_to_montgomery_form_be_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
     test_ct_to_montgomery_form_mp::<
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
     >()
 }
 
 #[test]
 fn test_ct_to_montgomery_form_le_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
     test_ct_to_montgomery_form_mp::<
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
     >()
 }
 
 #[test]
 fn test_ct_to_montgomery_form_ne_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
     test_ct_to_montgomery_form_mp::<
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
     >()
 }
 
 // result must have been initialized with a one in Montgomery form before the
 // call.
 fn _ct_montogmery_exp_mod_mp_mp<
-    RT: MpIntMutSlice,
-    T0: MpIntSliceCommon,
-    NT: MpIntSliceCommon,
-    ET: MpIntSliceCommon,
+    RT: MpMutUIntSlice,
+    T0: MpUIntCommon,
+    NT: MpUIntCommon,
+    ET: MpUIntCommon,
 >(
     result: &mut RT,
     op0: &T0,
@@ -953,9 +950,9 @@ fn _ct_montogmery_exp_mod_mp_mp<
 ) {
     debug_assert_eq!(result.nlimbs(), n.nlimbs());
 
-    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
+    let scratch_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len());
     debug_assert!(scratch.len() >= scratch_len);
-    let mut scratch = MpNativeEndianMutByteSlice::from_slice(scratch).unwrap();
+    let mut scratch = MpMutNativeEndianUIntByteSlice::from_slice(scratch).unwrap();
     scratch.clear_bytes_above(scratch_len);
     let mut scratch = scratch.shrink_to(scratch_len);
 
@@ -987,11 +984,11 @@ pub enum CtMontgomeryExpModOddMpMpError {
 
 #[allow(clippy::too_many_arguments)]
 pub fn ct_montogmery_exp_mod_odd_mp_mp<
-    RT: MpIntMutSlice,
-    T0: MpIntSliceCommon,
-    NT: MpIntSliceCommon,
-    RXT: MpIntSliceCommon,
-    ET: MpIntSliceCommon,
+    RT: MpMutUIntSlice,
+    T0: MpUIntCommon,
+    NT: MpUIntCommon,
+    RXT: MpUIntCommon,
+    ET: MpUIntCommon,
 >(
     result: &mut RT,
     op0: &T0,
@@ -1008,7 +1005,7 @@ pub fn ct_montogmery_exp_mod_odd_mp_mp<
     if !n.len_is_compatible_with(result.len()) {
         return Err(CtMontgomeryExpModOddMpMpError::InsufficientResultSpace);
     }
-    if scratch.len() < MpNativeEndianMutByteSlice::limbs_align_len(n.len()) {
+    if scratch.len() < MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len()) {
         return Err(CtMontgomeryExpModOddMpMpError::InsufficientScratchSpace);
     }
     if !op0.len_is_compatible_with(n.len()) {
@@ -1047,10 +1044,10 @@ pub enum CtExpModOddMpMpError {
 }
 
 pub fn ct_exp_mod_odd_mp_mp<
-    RT: MpIntMutSlice,
-    T0: MpIntMutSlice,
-    NT: MpIntSliceCommon,
-    ET: MpIntSliceCommon,
+    RT: MpMutUIntSlice,
+    T0: MpMutUInt,
+    NT: MpUIntCommon,
+    ET: MpUIntCommon,
 >(
     result: &mut RT,
     op0: &mut T0,
@@ -1072,7 +1069,7 @@ pub fn ct_exp_mod_odd_mp_mp<
         return Err(CtExpModOddMpMpError::InconsistentInputOperandLength);
     }
     debug_assert_eq!(op0.nlimbs(), n.nlimbs());
-    let scratch_len = MpNativeEndianMutByteSlice::limbs_align_len(n.len());
+    let scratch_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len());
     if scratch.len() < scratch_len {
         return Err(CtExpModOddMpMpError::InsufficientScratchSpace);
     }
@@ -1095,7 +1092,7 @@ pub fn ct_exp_mod_odd_mp_mp<
 
     // Transform op0 into Montgomery form, the function argument will get
     // overwritten to save an extra scratch buffer.
-    let mut mg_op0 = MpNativeEndianMutByteSlice::from_slice(scratch).unwrap();
+    let mut mg_op0 = MpMutNativeEndianUIntByteSlice::from_slice(scratch).unwrap();
     mg_op0.clear_bytes_above(scratch_len);
     let mut mg_op0 = mg_op0.shrink_to(scratch_len);
     ct_to_montgomery_form_mp(&mut mg_op0, op0, n, neg_n0_inv_mod_l, &result).unwrap();
@@ -1123,10 +1120,10 @@ pub fn ct_exp_mod_odd_mp_mp<
 
 #[cfg(test)]
 fn test_ct_exp_mod_odd_mp_mp<
-    RT: MpIntMutSlice,
-    T0: MpIntMutSlice,
-    NT: MpIntMutSlice,
-    ET: MpIntMutSlice,
+    RT: MpMutUIntSlice,
+    T0: MpMutUIntSlice,
+    NT: MpMutUIntSlice,
+    ET: MpMutUIntSlice,
 >() {
     extern crate alloc;
     use super::limb::LIMB_BYTES;
@@ -1134,13 +1131,7 @@ fn test_ct_exp_mod_odd_mp_mp<
     use super::shift_impl::ct_lshift_mp;
     use alloc::vec;
 
-    fn test_one<
-        'a,
-        RT: MpIntMutSlice,
-        T0: MpIntMutSlice,
-        NT: MpIntSliceCommon,
-        ET: MpIntSliceCommon,
-    >(
+    fn test_one<'a, RT: MpMutUIntSlice, T0: MpMutUIntSlice, NT: MpUIntCommon, ET: MpUIntCommon>(
         op0: &T0,
         n: &NT,
         exponent: &'a ET,
@@ -1161,7 +1152,7 @@ fn test_ct_exp_mod_odd_mp_mp<
         op0_scratch.copy_from(&op0_mod_n);
         let mut result = tst_mk_mp_backing_vec!(RT, n_len);
         let mut result = RT::from_slice(&mut result).unwrap();
-        let mut scratch = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n_len)];
+        let mut scratch = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n_len)];
         ct_exp_mod_odd_mp_mp(
             &mut result,
             &mut op0_scratch,
@@ -1228,33 +1219,33 @@ fn test_ct_exp_mod_odd_mp_mp<
 
 #[test]
 fn test_ct_exp_mod_odd_be_be_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
     test_ct_exp_mod_odd_mp_mp::<
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
-        MpBigEndianMutByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
     >()
 }
 
 #[test]
 fn test_ct_exp_mod_odd_le_le_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
     test_ct_exp_mod_odd_mp_mp::<
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
-        MpLittleEndianMutByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
     >()
 }
 
 #[test]
 fn test_ct_exp_mod_odd_ne_ne_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
     test_ct_exp_mod_odd_mp_mp::<
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
-        MpNativeEndianMutByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntByteSlice,
     >()
 }

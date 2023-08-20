@@ -3,7 +3,9 @@
 use super::limb::{
     black_box_l, ct_add_l_l, ct_mul_add_l_l_l_c, ct_mul_l_l, LimbChoice, LimbType, LIMB_BITS,
 };
-use super::limbs_buffer::{ct_mp_nlimbs, MpIntMutSlice, MpIntSliceCommon};
+#[cfg(test)]
+use super::limbs_buffer::MpMutUIntSlice;
+use super::limbs_buffer::{ct_mp_nlimbs, MpMutUInt, MpUIntCommon};
 
 /// Conditionally multiply two multiprecision integers of specified endianess.
 ///
@@ -36,7 +38,7 @@ use super::limbs_buffer::{ct_mp_nlimbs, MpIntMutSlice, MpIntSliceCommon};
 ///   facilitate constant time implementations of algorithms relying on
 ///   conditional executiopns of multiprecision integer multiplication, like
 ///   e.g. binary exponentation.
-pub fn ct_mul_trunc_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
+pub fn ct_mul_trunc_cond_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(
     op0: &mut T0,
     op0_in_len: usize,
     op1: &T1,
@@ -95,7 +97,7 @@ pub fn ct_mul_trunc_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_ct_mul_trunc_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
+fn test_ct_mul_trunc_cond_mp_mp<T0: MpMutUIntSlice, T1: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
 
     let mut op0 = tst_mk_mp_backing_vec!(T0, 5 * LIMB_BYTES);
@@ -209,23 +211,23 @@ fn test_ct_mul_trunc_cond_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_mul_trunc_cond_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_mul_trunc_cond_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_mul_trunc_cond_mp_mp::<MpMutBigEndianUIntByteSlice, MpMutBigEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_mul_trunc_cond_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_mul_trunc_cond_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_mul_trunc_cond_mp_mp::<MpMutLittleEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_mul_trunc_cond_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_mul_trunc_cond_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_mul_trunc_cond_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
 }
 
-pub fn ct_mul_trunc_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
+pub fn ct_mul_trunc_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(
     op0: &mut T0,
     op0_in_len: usize,
     op1: &T1,
@@ -254,7 +256,7 @@ pub fn ct_mul_trunc_mp_mp<T0: MpIntMutSlice, T1: MpIntSliceCommon>(
 ///   be allocated much larger than what would be required to only accomodate
 ///   for the input operand. Thus, the operand's is not implicit from
 ///   `op0.len()` and it must get specified separately as `op0_in_len`.
-pub fn ct_square_trunc_mp<T0: MpIntMutSlice>(op0: &mut T0, op0_in_len: usize) {
+pub fn ct_square_trunc_mp<T0: MpMutUInt>(op0: &mut T0, op0_in_len: usize) {
     debug_assert!(op0_in_len <= op0.len());
     let result_high_mask = op0.partial_high_mask();
     let op0_nlimbs = op0.nlimbs();
@@ -397,12 +399,12 @@ pub fn ct_square_trunc_mp<T0: MpIntMutSlice>(op0: &mut T0, op0_in_len: usize) {
 }
 
 #[cfg(test)]
-fn test_ct_square_trunc_mp<T0: MpIntMutSlice>() {
+fn test_ct_square_trunc_mp<T0: MpMutUIntSlice>() {
     extern crate alloc;
     use super::limb::LIMB_BYTES;
     use alloc::vec::Vec;
 
-    fn square_by_mul<T0: MpIntMutSlice>(
+    fn square_by_mul<T0: MpMutUIntSlice>(
         op0: &[T0::BackingSliceElementType],
         op0_in_len: usize,
     ) -> Vec<T0::BackingSliceElementType> {
@@ -489,24 +491,24 @@ fn test_ct_square_trunc_mp<T0: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_square_trunc_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_square_trunc_mp::<MpBigEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_square_trunc_mp::<MpMutBigEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_square_trunc_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_square_trunc_mp::<MpLittleEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_square_trunc_mp::<MpMutLittleEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_square_trunc_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_square_trunc_mp::<MpNativeEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_square_trunc_mp::<MpMutNativeEndianUIntByteSlice>()
 }
 
 // Multiply multiprecision integer by a limb.
-pub fn ct_mul_trunc_mp_l<T0: MpIntMutSlice>(op0: &mut T0, op0_in_len: usize, op1: LimbType) {
+pub fn ct_mul_trunc_mp_l<T0: MpMutUInt>(op0: &mut T0, op0_in_len: usize, op1: LimbType) {
     debug_assert!(op0_in_len <= op0.len());
     let result_high_mask = op0.partial_high_mask();
     let op0_nlimbs = op0.nlimbs();
@@ -540,7 +542,7 @@ pub fn ct_mul_trunc_mp_l<T0: MpIntMutSlice>(op0: &mut T0, op0_in_len: usize, op1
 }
 
 #[cfg(test)]
-fn test_ct_mul_trunc_mp_l<T0: MpIntMutSlice>() {
+fn test_ct_mul_trunc_mp_l<T0: MpMutUIntSlice>() {
     use super::limb::LIMB_BYTES;
 
     let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
@@ -597,18 +599,18 @@ fn test_ct_mul_trunc_mp_l<T0: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_mul_trunc_be_l() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_mul_trunc_mp_l::<MpBigEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_mul_trunc_mp_l::<MpMutBigEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_mul_trunc_le_l() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_mul_trunc_mp_l::<MpLittleEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_mul_trunc_mp_l::<MpMutLittleEndianUIntByteSlice>()
 }
 
 #[test]
 fn test_ct_mul_trunc_ne_l() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_mul_trunc_mp_l::<MpNativeEndianMutByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_mul_trunc_mp_l::<MpMutNativeEndianUIntByteSlice>()
 }

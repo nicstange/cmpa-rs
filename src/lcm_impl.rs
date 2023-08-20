@@ -3,8 +3,8 @@ use super::div_impl::{ct_div_mp_mp, CtMpDivisor};
 use super::euclid_impl::ct_gcd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
-    ct_find_last_set_bit_mp, ct_mp_nlimbs, MpIntMutSlice, MpIntSliceCommon,
-    MpIntSliceCommonPriv as _,
+    ct_find_last_set_bit_mp, ct_mp_nlimbs, MpMutUInt, MpMutUIntSlice, MpUIntCommon as _,
+    MpUIntSliceCommonPriv as _,
 };
 use super::mul_impl::ct_mul_trunc_mp_mp;
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
@@ -16,7 +16,7 @@ pub enum CtLcmMpMpError {
     InconsistentInputOperandLengths,
 }
 
-pub fn ct_lcm_mp_mp<RT: MpIntMutSlice, T0: MpIntMutSlice, T1: MpIntMutSlice>(
+pub fn ct_lcm_mp_mp<RT: MpMutUInt, T0: MpMutUInt, T1: MpMutUIntSlice>(
     result: &mut RT,
     op0: &mut T0,
     op0_len: usize,
@@ -129,15 +129,16 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutSlice, T0: MpIntMutSlice, T1: MpIntMutSlice>(
 }
 
 #[cfg(test)]
-fn test_ct_lcm_mp_mp<RT: MpIntMutSlice, OT: MpIntMutSlice>() {
+fn test_ct_lcm_mp_mp<RT: MpMutUIntSlice, OT: MpMutUIntSlice>() {
+    use super::limbs_buffer::MpUIntCommon;
     use super::mul_impl::ct_mul_trunc_mp_l;
 
     fn test_one<
-        RT: MpIntMutSlice,
-        OT: MpIntMutSlice,
-        T0: MpIntSliceCommon,
-        T1: MpIntSliceCommon,
-        GT: MpIntSliceCommon,
+        RT: MpMutUIntSlice,
+        OT: MpMutUIntSlice,
+        T0: MpUIntCommon,
+        T1: MpUIntCommon,
+        GT: MpUIntCommon,
     >(
         op0: &T0,
         op1: &T1,
@@ -258,18 +259,18 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutSlice, OT: MpIntMutSlice>() {
 
 #[test]
 fn test_ct_lcm_be_be() {
-    use super::limbs_buffer::MpBigEndianMutByteSlice;
-    test_ct_lcm_mp_mp::<MpBigEndianMutByteSlice, MpBigEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_lcm_mp_mp::<MpMutBigEndianUIntByteSlice, MpMutBigEndianUIntByteSlice>();
 }
 
 #[test]
 fn test_ct_lcm_le_le() {
-    use super::limbs_buffer::MpLittleEndianMutByteSlice;
-    test_ct_lcm_mp_mp::<MpLittleEndianMutByteSlice, MpLittleEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_lcm_mp_mp::<MpMutLittleEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice>();
 }
 
 #[test]
 fn test_ct_lcm_ne_ne() {
-    use super::limbs_buffer::MpNativeEndianMutByteSlice;
-    test_ct_lcm_mp_mp::<MpNativeEndianMutByteSlice, MpNativeEndianMutByteSlice>();
+    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    test_ct_lcm_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>();
 }
