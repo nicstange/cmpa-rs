@@ -1086,18 +1086,16 @@ pub trait MpIntSlicePriv: MpIntSliceCommon {
     where
         Self: 'b;
 
-    fn split_at<'a>(&'a self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>)
-    where
-        Self: 'a;
+    fn _shrink_to(&self, nbytes: usize) -> Self::SelfT<'_>;
 }
 
 pub trait MpIntSlice: MpIntSlicePriv {
     fn coerce_lifetime(&self) -> Self::SelfT<'_>;
 
     fn shrink_to(&self, nbytes: usize) -> Self::SelfT<'_> {
-        let nbytes = Self::limbs_align_len(nbytes.min(self.len()));
+        let nbytes = nbytes.min(self._len());
         debug_assert!(nbytes >= find_last_set_byte_mp(self));
-        self.split_at(nbytes).1
+        self._shrink_to(nbytes)
     }
 }
 
@@ -1122,9 +1120,7 @@ pub trait MpIntMutSlicePriv: MpIntSliceCommon {
     where
         Self: 'b;
 
-    fn split_at<'a>(&'a mut self, nbytes: usize) -> (Self::SelfT<'a>, Self::SelfT<'a>)
-    where
-        Self: 'a;
+    fn _shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_>;
 }
 
 pub trait MpIntMutSlice: MpIntMutSlicePriv {
@@ -1169,9 +1165,9 @@ pub trait MpIntMutSlice: MpIntMutSlicePriv {
     }
 
     fn shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_> {
-        let nbytes = Self::limbs_align_len(nbytes.min(self.len()));
+        let nbytes = nbytes.min(self._len());
         debug_assert!(nbytes >= find_last_set_byte_mp(self));
-        self.split_at(nbytes).1
+        self._shrink_to(nbytes)
     }
 }
 
@@ -1230,15 +1226,8 @@ impl<'a> MpIntSlicePriv for MpBigEndianByteSlice<'a> {
         Ok(Self::SelfT::<'c> { bytes: s })
     }
 
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where
-        Self: 'b,
-    {
-        let (h, l) = self.bytes.split_at(self.bytes.len() - nbytes);
-        (
-            Self::SelfT::<'b> { bytes: h },
-            Self::SelfT::<'b> { bytes: l },
-        )
+    fn _shrink_to(&self, nbytes: usize) -> Self::SelfT<'_> {
+        Self::from_slice(self.bytes.split_at(self.bytes.len() - nbytes).1).unwrap()
     }
 }
 
@@ -1316,12 +1305,8 @@ impl<'a> MpIntMutSlicePriv for MpBigEndianMutByteSlice<'a> {
         Ok(Self::SelfT::<'c> { bytes: s })
     }
 
-    fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where
-        Self: 'b,
-    {
-        let (h, l) = self.bytes.split_at_mut(self.bytes.len() - nbytes);
-        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
+    fn _shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_> {
+        Self::from_slice(self.bytes.split_at_mut(self.bytes.len() - nbytes).1).unwrap()
     }
 }
 
@@ -1415,15 +1400,8 @@ impl<'a> MpIntSlicePriv for MpLittleEndianByteSlice<'a> {
         Ok(Self::SelfT::<'c> { bytes: s })
     }
 
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where
-        Self: 'b,
-    {
-        let (l, h) = self.bytes.split_at(nbytes);
-        (
-            Self::SelfT::<'b> { bytes: h },
-            Self::SelfT::<'b> { bytes: l },
-        )
+    fn _shrink_to(&self, nbytes: usize) -> Self::SelfT<'_> {
+        Self::from_slice(self.bytes.split_at(nbytes).0).unwrap()
     }
 }
 
@@ -1497,12 +1475,8 @@ impl<'a> MpIntMutSlicePriv for MpLittleEndianMutByteSlice<'a> {
         Ok(Self::SelfT::<'c> { bytes: s })
     }
 
-    fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where
-        Self: 'b,
-    {
-        let (l, h) = self.bytes.split_at_mut(nbytes);
-        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
+    fn _shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_> {
+        Self::from_slice(self.bytes.split_at_mut(nbytes).0).unwrap()
     }
 }
 
@@ -1600,16 +1574,9 @@ impl<'a> MpIntSlicePriv for MpNativeEndianByteSlice<'a> {
         }
     }
 
-    fn split_at<'b>(&'b self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where
-        Self: 'b,
-    {
-        debug_assert_eq!(nbytes % LIMB_BYTES, 0);
-        let (l, h) = self.bytes.split_at(nbytes);
-        (
-            Self::SelfT::<'b> { bytes: h },
-            Self::SelfT::<'b> { bytes: l },
-        )
+    fn _shrink_to(&self, nbytes: usize) -> Self::SelfT<'_> {
+        let nbytes = Self::_limbs_align_len(nbytes);
+        Self::from_slice(self.bytes.split_at(nbytes).0).unwrap()
     }
 }
 
@@ -1688,13 +1655,9 @@ impl<'a> MpIntMutSlicePriv for MpNativeEndianMutByteSlice<'a> {
         }
     }
 
-    fn split_at<'b>(&'b mut self, nbytes: usize) -> (Self::SelfT<'b>, Self::SelfT<'b>)
-    where
-        Self: 'b,
-    {
-        debug_assert_eq!(nbytes % LIMB_BYTES, 0);
-        let (l, h) = self.bytes.split_at_mut(nbytes);
-        (Self::SelfT { bytes: h }, Self::SelfT { bytes: l })
+    fn _shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_> {
+        let nbytes = Self::_limbs_align_len(nbytes);
+        Self::from_slice(self.bytes.split_at_mut(nbytes).0).unwrap()
     }
 }
 
