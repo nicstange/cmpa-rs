@@ -4,12 +4,11 @@ use super::euclid_impl::ct_gcd_odd_mp_mp;
 use super::hexstr;
 use super::limb::{
     ct_eq_l_l, ct_geq_l_l, ct_is_zero_l, ct_lt_l_l, ct_sub_l_l_b, CtLDivisor, LimbChoice, LimbType,
-    LIMB_BITS,
+    LIMB_BITS, LIMB_BYTES,
 };
 use super::limbs_buffer::{
-    ct_find_first_set_bit_mp, MpBigEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice, MpMutUInt,
-    MpMutUIntSlice, MpMutUIntSlicePriv as _, MpUIntCommon, MpUIntSliceCommon as _,
-    MpUIntSlicePriv as _,
+    ct_find_first_set_bit_mp, MpBigEndianUIntByteSlice, MpMutNativeEndianUIntLimbsSlice, MpMutUInt,
+    MpMutUIntSlice, MpUIntCommon, MpUIntSlicePriv as _,
 };
 use super::montgomery_impl::{
     ct_montgomery_mul_mod_cond_mp_mp, ct_montgomery_mul_mod_mp_mp,
@@ -107,18 +106,19 @@ pub enum CtCompositeTestSmallPrimeGcdMpError {
 
 pub fn ct_composite_test_small_prime_gcd_mp<PT: MpUIntCommon>(
     p: &PT,
-    scratch: [&mut [u8]; 2],
+    scratch: [&mut [LimbType]; 2],
 ) -> Result<LimbChoice, CtCompositeTestSmallPrimeGcdMpError> {
     if p.is_empty() {
         return Ok(LimbChoice::from(1));
     }
 
-    let p_len_aligned = MpMutNativeEndianUIntByteSlice::limbs_align_len(p.len());
+    let p_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(p.len());
     for s in scratch.iter() {
-        if s.len() < p_len_aligned {
+        if s.len() < p_nlimbs {
             return Err(CtCompositeTestSmallPrimeGcdMpError::InsufficientScratchSpace);
         }
     }
+    let p_len_aligned = p_nlimbs * LIMB_BYTES;
 
     // The GCD runtime depends on the maximum of both operands' bit length.
     // Select the largest small prime product with length <= p.len().
@@ -132,14 +132,12 @@ pub fn ct_composite_test_small_prime_gcd_mp<PT: MpUIntCommon>(
     let small_prime_product = SMALL_ODD_PRIME_PRODUCTS[i];
 
     let [scratch0, scratch1] = scratch;
-    debug_assert!(scratch0.len() >= p_len_aligned);
-    debug_assert!(scratch1.len() >= p_len_aligned);
 
-    let mut gcd = MpMutNativeEndianUIntByteSlice::from_slice(scratch0).unwrap();
+    let mut gcd = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch0);
     gcd.clear_bytes_above(p_len_aligned);
     let mut gcd = gcd.shrink_to(p_len_aligned);
     gcd.copy_from(&MpBigEndianUIntByteSlice::from_slice(small_prime_product).unwrap());
-    let mut p_work_scratch = MpMutNativeEndianUIntByteSlice::from_slice(scratch1).unwrap();
+    let mut p_work_scratch = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch1);
     p_work_scratch.copy_from(p);
     let mut p_work_scratch = p_work_scratch.shrink_to(p_len_aligned);
 
@@ -164,9 +162,9 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpMutUIntSlice>() {
         let p_len = if l != 1 { l + 1 } else { l };
         let mut p = tst_mk_mp_backing_vec!(PT, p_len);
         let mut p = PT::from_slice(&mut p).unwrap();
-        let scratch_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(p_len);
-        let mut scratch0 = vec![0u8; scratch_len];
-        let mut scratch1 = vec![0u8; scratch_len];
+        let scratch_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(p_len);
+        let mut scratch0 = vec![0 as LimbType; scratch_nlimbs];
+        let mut scratch1 = vec![0 as LimbType; scratch_nlimbs];
 
         p.clear_bytes_above(0);
         let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
@@ -212,9 +210,9 @@ fn test_ct_composite_test_small_prime_gcd_mp<PT: MpMutUIntSlice>() {
     let mut p = PT::from_slice(&mut p).unwrap();
     p.set_bit_to(255, true);
     ct_sub_mp_l(&mut p, 19);
-    let scratch_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(p_len);
-    let mut scratch0 = vec![0u8; scratch_len];
-    let mut scratch1 = vec![0u8; scratch_len];
+    let scratch_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(p_len);
+    let mut scratch0 = vec![0 as LimbType; scratch_nlimbs];
+    let mut scratch1 = vec![0 as LimbType; scratch_nlimbs];
     let scratch = [scratch0.as_mut_slice(), scratch1.as_mut_slice()];
     assert_eq!(
         ct_composite_test_small_prime_gcd_mp(&p, scratch)
@@ -238,7 +236,7 @@ fn test_ct_composite_test_small_prime_gcd_le() {
 
 #[test]
 fn test_ct_composite_test_small_prime_gcd_ne() {
-    test_ct_composite_test_small_prime_gcd_mp::<MpMutNativeEndianUIntByteSlice>()
+    test_ct_composite_test_small_prime_gcd_mp::<MpMutNativeEndianUIntLimbsSlice>()
 }
 
 #[derive(Debug)]
@@ -253,7 +251,7 @@ pub fn ct_prime_test_miller_rabin_mp<BT: MpUIntCommon, PT: MpUIntCommon, RXT: Mp
     mg_base: &BT,
     p: &PT,
     mg_radix_mod_p: &RXT,
-    scratch: [&mut [u8]; 2],
+    scratch: [&mut [LimbType]; 2],
 ) -> Result<LimbChoice, CtPrimeTestMillerRabinMpError> {
     if p.test_bit(0).unwrap() == 0 {
         return Err(CtPrimeTestMillerRabinMpError::InvalidCandidate);
@@ -267,30 +265,30 @@ pub fn ct_prime_test_miller_rabin_mp<BT: MpUIntCommon, PT: MpUIntCommon, RXT: Mp
     }
     debug_assert_ne!(ct_lt_mp_mp(mg_radix_mod_p, p).unwrap(), 0);
 
-    let p_len_aligned = MpMutNativeEndianUIntByteSlice::limbs_align_len(p.len());
+    let p_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(p.len());
     for s in scratch.iter() {
-        if s.len() < p_len_aligned {
+        if s.len() < p_nlimbs {
             return Err(CtPrimeTestMillerRabinMpError::InsufficientScratchSpace);
         }
     }
     let [scratch0, scratch1] = scratch;
 
-    let mut p_minus_one = MpMutNativeEndianUIntByteSlice::from_slice(scratch0).unwrap();
+    let mut p_minus_one = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch0);
     p_minus_one.copy_from(p);
-    let mut p_minus_one = p_minus_one.shrink_to(p_len_aligned);
+    let mut p_minus_one = p_minus_one.shrink_to(p.len());
     p_minus_one.store_l(0, p_minus_one.load_l(0) ^ 1); // Minus one for odd p.
     let (p_minus_one_is_nonzero, p_minus_one_first_set_bit_pos) =
         ct_find_first_set_bit_mp(&p_minus_one);
     debug_assert!(p_minus_one_is_nonzero.unwrap() != 0);
     debug_assert!(p_minus_one_first_set_bit_pos > 0);
 
-    let mut base_pow = MpMutNativeEndianUIntByteSlice::from_slice(scratch0).unwrap();
+    let mut base_pow = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch0);
     // Initialize with a 1 in Montgomery form.
     base_pow.copy_from(mg_radix_mod_p);
-    let mut base_pow = base_pow.shrink_to(p_len_aligned);
-    let mut pow_scratch = MpMutNativeEndianUIntByteSlice::from_slice(scratch1).unwrap();
-    pow_scratch.clear_bytes_above(p_len_aligned);
-    let mut pow_scratch = pow_scratch.shrink_to(p_len_aligned);
+    let mut base_pow = base_pow.shrink_to(p.len());
+    let mut pow_scratch = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch1);
+    pow_scratch.clear_bytes_above(p.len());
+    let mut pow_scratch = pow_scratch.shrink_to(p.len());
 
     let neg_p0_inv_mod_l = ct_montgomery_neg_n0_inv_mod_l_mp(p).map_err(|e| match e {
         CtMontgomeryNegN0InvModLMpError::InvalidModulus => {
@@ -409,8 +407,10 @@ fn test_ct_prime_test_miller_rabin_mp<
         let mut mg_radix_mod_p = mg_radix2_mod_p;
         ct_montgomery_redc_mp(&mut mg_radix_mod_p, p, neg_p0_inv_mod_l).unwrap();
 
-        let mut scratch0 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(p.len())];
-        let mut scratch1 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(p.len())];
+        let mut scratch0 =
+            vec![0 as LimbType; MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(p.len())];
+        let mut scratch1 =
+            vec![0 as LimbType; MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(p.len())];
         ct_prime_test_miller_rabin_mp(
             &mg_base_mod_p,
             p,
@@ -487,11 +487,11 @@ fn test_ct_prime_test_miller_rabin_le_le_le() {
 
 #[test]
 fn test_ct_prime_test_miller_rabin_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_prime_test_miller_rabin_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }
 
@@ -845,10 +845,9 @@ impl PrimeWheelSieveLvl1 {
 fn test_prime_wheel_sieve_lvl1() {
     use super::add_impl::ct_add_mp_l;
     use super::cmp_impl::ct_is_zero_mp;
-    use super::limb::LIMB_BYTES;
 
     fn advance_candidate(
-        candidate: &mut MpMutNativeEndianUIntByteSlice,
+        candidate: &mut MpMutNativeEndianUIntLimbsSlice,
         wheel: &mut PrimeWheelSieveLvl1,
     ) {
         let candidate_is_zero = ct_is_zero_mp(candidate).unwrap() != 0;
@@ -876,31 +875,31 @@ fn test_prime_wheel_sieve_lvl1() {
         }
     }
 
-    let mut candidate = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MpMutNativeEndianUIntByteSlice::from_slice(&mut candidate).unwrap();
+    let mut candidate = [0 as LimbType; 2];
+    let mut candidate = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut candidate);
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     for _i in 0..1024 {
         advance_candidate(&mut candidate, &mut wheel);
     }
 
-    let mut candidate = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MpMutNativeEndianUIntByteSlice::from_slice(&mut candidate).unwrap();
+    let mut candidate = [0 as LimbType; 2];
+    let mut candidate = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut candidate);
     candidate.store_l(0, 1);
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     for _i in 0..1024 {
         advance_candidate(&mut candidate, &mut wheel);
     }
 
-    let mut candidate = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MpMutNativeEndianUIntByteSlice::from_slice(&mut candidate).unwrap();
+    let mut candidate = [0 as LimbType; 2];
+    let mut candidate = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut candidate);
     candidate.store_l(0, 2);
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     for _i in 0..1024 {
         advance_candidate(&mut candidate, &mut wheel);
     }
 
-    let mut candidate = [0u8; 2 * LIMB_BYTES];
-    let mut candidate = MpMutNativeEndianUIntByteSlice::from_slice(&mut candidate).unwrap();
+    let mut candidate = [0 as LimbType; 2];
+    let mut candidate = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut candidate);
     candidate.store_l(0, PrimeWheelSieveLvl1::PRIMORIAL - 2);
     let mut wheel = PrimeWheelSieveLvl1::start_geq_than(&candidate);
     advance_candidate(&mut candidate, &mut wheel);

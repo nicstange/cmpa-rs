@@ -274,8 +274,8 @@ fn test_ct_lshift_le() {
 
 #[test]
 fn test_ct_lshift_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_lshift_mp_with_aligned_lengths::<MpMutNativeEndianUIntByteSlice>();
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_lshift_mp_with_aligned_lengths::<MpMutNativeEndianUIntLimbsSlice>();
 }
 
 pub fn ct_rshift_mp<T0: MpMutUInt>(op0: &mut T0, distance: usize) -> LimbType {
@@ -521,6 +521,6 @@ fn test_ct_rshift_le() {
 
 #[test]
 fn test_ct_rshift_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_rshift_mp_with_aligned_lengths::<MpMutNativeEndianUIntByteSlice>();
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_rshift_mp_with_aligned_lengths::<MpMutNativeEndianUIntLimbsSlice>();
 }

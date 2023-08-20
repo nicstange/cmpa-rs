@@ -1,11 +1,11 @@
 use super::add_impl::{ct_add_mp_mp, ct_sub_mp_mp};
 use super::cmp_impl::{ct_is_zero_mp, ct_lt_mp_mp};
 use super::euclid_impl::{ct_inv_mod_odd_mp_mp_impl, CtInvModOddMpMpImplError};
-use super::limb::{ct_is_nonzero_l, ct_sub_l_l_b, LIMB_BITS};
+use super::limb::{ct_is_nonzero_l, ct_sub_l_l_b, LimbType, LIMB_BITS};
 use super::limbs_buffer::{
     clear_bits_above_mp, ct_clear_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs,
-    MpMutNativeEndianUIntByteSlice, MpMutUInt, MpMutUIntSlice, MpMutUIntSlicePriv as _,
-    MpUIntCommon, MpUIntCommonPriv as _, MpUIntSliceCommon as _,
+    MpMutNativeEndianUIntLimbsSlice, MpMutUInt, MpMutUIntSlice, MpUIntCommon,
+    MpUIntCommonPriv as _,
 };
 use super::mul_impl::{ct_mul_trunc_mp_mp, ct_square_trunc_mp};
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
@@ -18,7 +18,7 @@ fn ct_inv_mod_pow2_mp<RT: MpMutUIntSlice, T0: MpUIntCommon>(
     op0: &T0,
     pow2_exp: usize,
     max_pow2_exp: usize,
-    scratch: &mut [u8],
+    scratch: &mut [LimbType],
 ) {
     debug_assert!(!op0.is_empty());
     debug_assert!(pow2_exp == 0 || op0.load_l(0) & 1 == 1);
@@ -29,12 +29,12 @@ fn ct_inv_mod_pow2_mp<RT: MpMutUIntSlice, T0: MpUIntCommon>(
     let max_pow2_exp_len = (max_pow2_exp + 7) / 8;
     debug_assert!(result.len() >= max_pow2_exp_len);
     debug_assert!(
-        scratch.len() >= MpMutNativeEndianUIntByteSlice::limbs_align_len(max_pow2_exp_len)
+        scratch.len() >= MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(max_pow2_exp_len)
     );
 
     result.clear_bytes_above(max_pow2_exp_len);
     let mut result = result.shrink_to(max_pow2_exp_len);
-    let mut tmp = MpMutNativeEndianUIntByteSlice::from_slice(scratch).unwrap();
+    let mut tmp = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch);
     tmp.clear_bytes_above(max_pow2_exp_len);
     let mut tmp = tmp.shrink_to(max_pow2_exp_len);
 
@@ -97,7 +97,6 @@ fn ct_inv_mod_pow2_mp<RT: MpMutUIntSlice, T0: MpUIntCommon>(
 fn test_ct_inv_mod_pow2_mp_common<RT: MpMutUIntSlice, T0: MpMutUIntSlice>(op0_len: usize) {
     extern crate alloc;
     use super::cmp_impl::ct_is_one_mp;
-    use super::limb::LimbType;
     use alloc::vec;
 
     for i in 0..8 {
@@ -127,8 +126,8 @@ fn test_ct_inv_mod_pow2_mp_common<RT: MpMutUIntSlice, T0: MpMutUIntSlice>(op0_le
                     let mut inv_mod_pow2 = RT::from_slice(&mut inv_mod_pow2).unwrap();
                     let mut scratch =
                         vec![
-                            0u8;
-                            MpMutNativeEndianUIntByteSlice::limbs_align_len(max_pow2_exp_len)
+                            0 as LimbType;
+                            MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(max_pow2_exp_len)
                         ];
                     ct_inv_mod_pow2_mp(
                         &mut inv_mod_pow2,
@@ -204,8 +203,8 @@ fn test_ct_inv_mod_pow2_le_le() {
 #[test]
 fn test_ct_inv_mod_pow2_ne_ne() {
     test_ct_inv_mod_pow2_mp_with_aligned_lengths::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >();
 }
 
@@ -223,7 +222,7 @@ pub enum CtInvModMpMpError {
 pub fn ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUInt>(
     op0: &mut T0,
     n: &mut NT,
-    scratch: [&mut [u8]; 4],
+    scratch: [&mut [LimbType]; 4],
 ) -> Result<(), CtInvModMpMpError> {
     if n.is_empty() {
         return Err(CtInvModMpMpError::InvalidModulus);
@@ -239,20 +238,20 @@ pub fn ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUInt>(
     if ct_is_nonzero_l(!op0.load_l(0) & !n.load_l(0) & 1) != 0 {
         return Err(CtInvModMpMpError::OperandsNotCoprime);
     }
-    let n_aligned_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len());
+    let n_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len());
     for s in scratch.iter() {
-        if s.len() < n_aligned_len {
+        if s.len() < n_nlimbs {
             return Err(CtInvModMpMpError::InsufficientScratchSpace);
         }
     }
 
     let [scratch0, scratch1, scratch2, scratch3] = scratch;
-    let mut scratch0 = MpMutNativeEndianUIntByteSlice::from_slice(scratch0).unwrap();
-    scratch0.clear_bytes_above(n_aligned_len);
-    let mut scratch0 = scratch0.shrink_to(n_aligned_len);
-    let mut scratch1 = MpMutNativeEndianUIntByteSlice::from_slice(scratch1).unwrap();
-    scratch1.clear_bytes_above(n_aligned_len);
-    let mut scratch1 = scratch1.shrink_to(n_aligned_len);
+    let mut scratch0 = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch0);
+    scratch0.clear_bytes_above(n.len());
+    let mut scratch0 = scratch0.shrink_to(n.len());
+    let mut scratch1 = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch1);
+    scratch1.clear_bytes_above(n.len());
+    let mut scratch1 = scratch1.shrink_to(n.len());
 
     // The Extended Euclidean Algorithm (as it is implemented) only works for odd n.
     // 1.) Factor out powers of two to obtain n = n_{*} * 2^e.
@@ -329,12 +328,12 @@ pub fn ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUInt>(
 
     // Compute scratch0 =
     // (op0^{-1} mod 2^e) - (op0^{-1} mod n_{*}) * (n_{*}^{-1} mod 2^e).
-    ct_mul_trunc_mp_mp(&mut scratch0, n_aligned_len, &scratch1);
+    ct_mul_trunc_mp_mp(&mut scratch0, n.len(), &scratch1);
     // And take the product modulo 2^e
     ct_clear_bits_above_mp(&mut scratch0, n_pow2_exp);
 
     // Multiply by n_{*} and add to op0 to obtain the final result.
-    ct_mul_trunc_mp_mp(&mut scratch0, n_aligned_len, n);
+    ct_mul_trunc_mp_mp(&mut scratch0, n.len(), n);
     let carry = ct_add_mp_mp(op0, &scratch0);
     assert_eq!(carry, 0);
 
@@ -370,10 +369,11 @@ fn test_ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUIntSlice>() {
         use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
 
         // Reserve an extra byte for the NotCoprime checks below.
-        let mut scratch0 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len() + 1)];
-        let mut scratch1 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len() + 1)];
-        let mut scratch2 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len() + 1)];
-        let mut scratch3 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len() + 1)];
+        let scratch_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len() + 1);
+        let mut scratch0 = vec![0 as LimbType; scratch_nlimbs];
+        let mut scratch1 = vec![0 as LimbType; scratch_nlimbs];
+        let mut scratch2 = vec![0 as LimbType; scratch_nlimbs];
+        let mut scratch3 = vec![0 as LimbType; scratch_nlimbs];
 
         let mut op0_inv_mod_n = tst_mk_mp_backing_vec!(T0, n.len());
         let mut op0_inv_mod_n = T0::from_slice(&mut op0_inv_mod_n).unwrap();
@@ -397,8 +397,8 @@ fn test_ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUIntSlice>() {
 
         // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
         let mut product_buf =
-            vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(2 * n.len())];
-        let mut product = MpMutNativeEndianUIntByteSlice::from_slice(&mut product_buf).unwrap();
+            vec![0 as LimbType; MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(2 * n.len())];
+        let mut product = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut product_buf);
         product.copy_from(&op0_inv_mod_n);
         ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
         ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n).unwrap());
@@ -539,5 +539,5 @@ fn test_ct_inv_mod_le_le() {
 
 #[test]
 fn test_ct_inv_mod_ne_ne() {
-    test_ct_inv_mod_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>();
+    test_ct_inv_mod_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>();
 }

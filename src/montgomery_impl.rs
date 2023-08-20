@@ -9,8 +9,8 @@ use super::limb::{
     LIMB_BITS,
 };
 use super::limbs_buffer::{
-    ct_mp_limbs_align_len, ct_mp_nlimbs, MpMutNativeEndianUIntByteSlice, MpMutUInt, MpMutUIntSlice,
-    MpMutUIntSlicePriv as _, MpUIntCommon, MpUIntSliceCommon as _,
+    ct_mp_limbs_align_len, ct_mp_nlimbs, MpMutNativeEndianUIntLimbsSlice, MpMutUInt,
+    MpMutUIntSlice, MpUIntCommon,
 };
 
 fn ct_montgomery_radix_shift_len(n_len: usize) -> usize {
@@ -325,8 +325,8 @@ fn test_ct_montgomery_redc_le_le() {
 
 #[test]
 fn test_ct_montgomery_redc_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_montgomery_redc_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_montgomery_redc_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }
 
 #[derive(Debug)]
@@ -689,12 +689,12 @@ fn test_ct_montgomery_mul_mod_cond_le_le_le_le() {
 
 #[test]
 fn test_ct_montgomery_mul_mod_cond_ne_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_montgomery_mul_mod_cond_mp_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }
 
@@ -924,11 +924,11 @@ fn test_ct_to_montgomery_form_le_le_le() {
 
 #[test]
 fn test_ct_to_montgomery_form_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_to_montgomery_form_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }
 
@@ -946,15 +946,15 @@ fn _ct_montogmery_exp_mod_mp_mp<
     neg_n0_inv_mod_l: LimbType,
     exponent: &ET,
     exponent_nbits: usize,
-    scratch: &mut [u8],
+    scratch: &mut [LimbType],
 ) {
     debug_assert_eq!(result.nlimbs(), n.nlimbs());
 
-    let scratch_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len());
-    debug_assert!(scratch.len() >= scratch_len);
-    let mut scratch = MpMutNativeEndianUIntByteSlice::from_slice(scratch).unwrap();
-    scratch.clear_bytes_above(scratch_len);
-    let mut scratch = scratch.shrink_to(scratch_len);
+    let n_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len());
+    debug_assert!(scratch.len() >= n_nlimbs);
+    let mut scratch = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch);
+    scratch.clear_bytes_above(n.len());
+    let mut scratch = scratch.shrink_to(n.len());
 
     let exponent_nbits = exponent_nbits.min(8 * exponent.len());
     for i in 0..exponent_nbits {
@@ -997,7 +997,7 @@ pub fn ct_montogmery_exp_mod_odd_mp_mp<
     radix_mod_n: &RXT,
     exponent: &ET,
     exponent_nbits: usize,
-    scratch: &mut [u8],
+    scratch: &mut [LimbType],
 ) -> Result<(), CtMontgomeryExpModOddMpMpError> {
     if n.test_bit(0).unwrap() == 0 {
         return Err(CtMontgomeryExpModOddMpMpError::InvalidModulus);
@@ -1005,7 +1005,7 @@ pub fn ct_montogmery_exp_mod_odd_mp_mp<
     if !n.len_is_compatible_with(result.len()) {
         return Err(CtMontgomeryExpModOddMpMpError::InsufficientResultSpace);
     }
-    if scratch.len() < MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len()) {
+    if scratch.len() < MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len()) {
         return Err(CtMontgomeryExpModOddMpMpError::InsufficientScratchSpace);
     }
     if !op0.len_is_compatible_with(n.len()) {
@@ -1054,7 +1054,7 @@ pub fn ct_exp_mod_odd_mp_mp<
     n: &NT,
     exponent: &ET,
     exponent_nbits: usize,
-    scratch: &mut [u8],
+    scratch: &mut [LimbType],
 ) -> Result<(), CtExpModOddMpMpError> {
     if !n.len_is_compatible_with(result.len()) {
         return Err(CtExpModOddMpMpError::InsufficientResultSpace);
@@ -1069,8 +1069,7 @@ pub fn ct_exp_mod_odd_mp_mp<
         return Err(CtExpModOddMpMpError::InconsistentInputOperandLength);
     }
     debug_assert_eq!(op0.nlimbs(), n.nlimbs());
-    let scratch_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len());
-    if scratch.len() < scratch_len {
+    if scratch.len() < MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len()) {
         return Err(CtExpModOddMpMpError::InsufficientScratchSpace);
     }
 
@@ -1092,9 +1091,9 @@ pub fn ct_exp_mod_odd_mp_mp<
 
     // Transform op0 into Montgomery form, the function argument will get
     // overwritten to save an extra scratch buffer.
-    let mut mg_op0 = MpMutNativeEndianUIntByteSlice::from_slice(scratch).unwrap();
-    mg_op0.clear_bytes_above(scratch_len);
-    let mut mg_op0 = mg_op0.shrink_to(scratch_len);
+    let mut mg_op0 = MpMutNativeEndianUIntLimbsSlice::from_limbs(scratch);
+    mg_op0.clear_bytes_above(n.len());
+    let mut mg_op0 = mg_op0.shrink_to(n.len());
     ct_to_montgomery_form_mp(&mut mg_op0, op0, n, neg_n0_inv_mod_l, &result).unwrap();
     op0.copy_from(&mg_op0);
 
@@ -1152,7 +1151,8 @@ fn test_ct_exp_mod_odd_mp_mp<
         op0_scratch.copy_from(&op0_mod_n);
         let mut result = tst_mk_mp_backing_vec!(RT, n_len);
         let mut result = RT::from_slice(&mut result).unwrap();
-        let mut scratch = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n_len)];
+        let mut scratch =
+            vec![0 as LimbType; MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n_len)];
         ct_exp_mod_odd_mp_mp(
             &mut result,
             &mut op0_scratch,
@@ -1241,11 +1241,11 @@ fn test_ct_exp_mod_odd_le_le_le_le() {
 
 #[test]
 fn test_ct_exp_mod_odd_ne_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_exp_mod_odd_mp_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }

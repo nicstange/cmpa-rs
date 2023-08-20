@@ -223,8 +223,9 @@ fn test_ct_mul_trunc_cond_le_le() {
 
 #[test]
 fn test_ct_mul_trunc_cond_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_mul_trunc_cond_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_mul_trunc_cond_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>(
+    )
 }
 
 pub fn ct_mul_trunc_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(
@@ -503,8 +504,8 @@ fn test_ct_square_trunc_le() {
 
 #[test]
 fn test_ct_square_trunc_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_square_trunc_mp::<MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_square_trunc_mp::<MpMutNativeEndianUIntLimbsSlice>()
 }
 
 // Multiply multiprecision integer by a limb.
@@ -611,6 +612,6 @@ fn test_ct_mul_trunc_le_l() {
 
 #[test]
 fn test_ct_mul_trunc_ne_l() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_mul_trunc_mp_l::<MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_mul_trunc_mp_l::<MpMutNativeEndianUIntLimbsSlice>()
 }

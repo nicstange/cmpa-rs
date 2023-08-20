@@ -271,6 +271,6 @@ fn test_ct_lcm_le_le() {
 
 #[test]
 fn test_ct_lcm_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_lcm_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>();
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_lcm_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>();
 }

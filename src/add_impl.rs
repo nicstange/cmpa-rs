@@ -181,8 +181,8 @@ fn test_ct_add_cond_le_le() {
 
 #[test]
 fn test_ct_add_cond_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_add_cond_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_add_cond_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }
 
 pub fn ct_add_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(op0: &mut T0, op1: &T1) -> LimbType {
@@ -406,8 +406,8 @@ fn test_ct_sub_cond_le_le() {
 
 #[test]
 fn test_ct_sub_cond_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_sub_cond_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_sub_cond_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }
 
 pub fn ct_sub_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(op0: &mut T0, op1: &T1) -> LimbType {
@@ -514,6 +514,6 @@ fn test_ct_negate_cond_le() {
 
 #[test]
 fn test_ct_negate_cond_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_negate_cond_mp::<MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_negate_cond_mp::<MpMutNativeEndianUIntLimbsSlice>()
 }

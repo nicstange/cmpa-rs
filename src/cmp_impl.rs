@@ -151,8 +151,8 @@ fn test_ct_eq_le_le() {
 
 #[test]
 fn test_ct_eq_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_eq_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_eq_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }
 
 /// Compare two multiprecision integers of specified endianess for `!=`.
@@ -445,8 +445,8 @@ fn test_ct_leq_le_le() {
 
 #[test]
 fn test_ct_leq_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_leq_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_leq_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }
 
 /// Compare two multiprecision integers of specified endianess for `<`.

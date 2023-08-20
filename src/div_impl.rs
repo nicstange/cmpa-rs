@@ -6,7 +6,7 @@ use super::limb::{
     LDivisorPrivate, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
 };
 use super::limbs_buffer::{
-    ct_mp_nlimbs, find_last_set_byte_mp, CompositeLimbsBuffer, MpMutNativeEndianUIntByteSlice,
+    ct_mp_nlimbs, find_last_set_byte_mp, CompositeLimbsBuffer, MpMutNativeEndianUIntLimbsSlice,
     MpMutUInt, MpMutUIntSlice, MpUIntCommon,
 };
 use super::shift_impl::ct_lshift_mp;
@@ -598,11 +598,11 @@ fn test_ct_div_le_le_le() {
 
 #[test]
 fn test_ct_div_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_div_mp_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }
 
@@ -614,7 +614,7 @@ pub fn ct_mod_mp_mp<UT: MpMutUIntSlice, VT: MpUIntCommon>(
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
     // The division will not return an InsufficientQuotientSpace error, because
     // there is none.
-    ct_div_mp_mp::<_, _, MpMutNativeEndianUIntByteSlice>(u_h, u_l, v, None).unwrap()
+    ct_div_mp_mp::<_, _, MpMutNativeEndianUIntLimbsSlice>(u_h, u_l, v, None).unwrap()
 }
 
 #[derive(Debug)]
@@ -998,11 +998,11 @@ fn test_ct_div_pow2_le_le_le() {
 
 #[test]
 fn test_ct_div_pow2_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_div_pow2_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }
 
@@ -1017,7 +1017,7 @@ pub fn ct_mod_pow2_mp<RT: MpMutUInt, VT: MpUIntCommon>(
     v: &CtMpDivisor<VT>,
 ) -> Result<(), CtModPow2MpError> {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
-    ct_div_pow2_mp::<_, _, MpMutNativeEndianUIntByteSlice>(u_pow2_exp, r_out, v, None).map_err(
+    ct_div_pow2_mp::<_, _, MpMutNativeEndianUIntLimbsSlice>(u_pow2_exp, r_out, v, None).map_err(
         |e| {
             match e {
                 CtDivPow2MpError::InsufficientRemainderSpace => {
@@ -1493,11 +1493,11 @@ fn test_ct_div_lshifted_le_le_le() {
 
 #[test]
 fn test_ct_div_lshifted_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_div_lshifted_mp_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }
 
@@ -1510,7 +1510,7 @@ pub fn ct_mod_lshifted_mp_mp<UT: MpMutUInt, VT: MpUIntCommon>(
     v: &CtMpDivisor<VT>,
 ) -> Result<(), CtModLshiftedMpMpError> {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
-    ct_div_lshifted_mp_mp::<_, _, MpMutNativeEndianUIntByteSlice>(
+    ct_div_lshifted_mp_mp::<_, _, MpMutNativeEndianUIntLimbsSlice>(
         u,
         u_in_len,
         u_lshift_len,
@@ -1573,7 +1573,7 @@ pub fn ct_div_mp_l<UT: MpUIntCommon, QT: MpMutUInt>(
 
 pub fn ct_mod_mp_l<UT: MpUIntCommon>(u: &UT, v: &CtLDivisor) -> LimbType {
     // Specify an arbitrary MPIntMutByteSlice type for the non-existant q-argument.
-    ct_div_mp_l::<_, MpMutNativeEndianUIntByteSlice>(u, v, None)
+    ct_div_mp_l::<_, MpMutNativeEndianUIntLimbsSlice>(u, v, None)
         .map_err(|e| match e {
             CtDivMpLError::InsufficientQuotientSpace => {
                 // No quotient, no insufficient quotient space.

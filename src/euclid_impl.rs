@@ -6,9 +6,8 @@ use super::limb::{
     ct_mul_l_l, ct_sub_l_l, LimbChoice, LimbType, LIMB_BITS,
 };
 use super::limbs_buffer::{
-    ct_find_first_set_bit_mp, ct_swap_cond_mp, MpMutNativeEndianUIntByteSlice, MpMutUInt,
-    MpMutUIntSlice, MpMutUIntSlicePriv as _, MpUIntCommon, MpUIntCommonPriv as _,
-    MpUIntSliceCommon as _,
+    ct_find_first_set_bit_mp, ct_swap_cond_mp, MpMutNativeEndianUIntLimbsSlice, MpMutUInt,
+    MpMutUIntSlice, MpUIntCommon, MpUIntCommonPriv as _,
 };
 use super::montgomery_impl::{
     ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryNegN0InvModLMpError, CtMontgomeryRedcKernel,
@@ -769,8 +768,8 @@ fn test_ct_gcd_odd_le_le() {
 
 #[test]
 fn test_ct_gcd_odd_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_gcd_odd_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_gcd_odd_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }
 
 #[derive(Debug)]
@@ -958,8 +957,8 @@ fn test_ct_gcd_le_le() {
 
 #[test]
 fn test_ct_gcd_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
-    test_ct_gcd_mp_mp::<MpMutNativeEndianUIntByteSlice, MpMutNativeEndianUIntByteSlice>()
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_gcd_mp_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }
 
 #[derive(Debug)]
@@ -977,7 +976,7 @@ pub fn ct_inv_mod_odd_mp_mp_impl<RT: MpMutUIntSlice, T0: MpMutUInt, NT: MpUIntCo
     result: &mut RT,
     op0: &mut T0,
     n: &NT,
-    scratch: [&mut [u8]; 2],
+    scratch: [&mut [LimbType]; 2],
 ) -> Result<(), CtInvModOddMpMpImplError> {
     if !n.len_is_compatible_with(result.len()) {
         return Err(CtInvModOddMpMpImplError::InsufficientResultSpace);
@@ -986,9 +985,9 @@ pub fn ct_inv_mod_odd_mp_mp_impl<RT: MpMutUIntSlice, T0: MpMutUInt, NT: MpUIntCo
         return Err(CtInvModOddMpMpImplError::InconsistentInputOperandLength);
     }
 
-    let n_aligned_len = MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len());
+    let n_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len());
     for s in scratch.iter() {
-        if s.len() < n_aligned_len {
+        if s.len() < n_nlimbs {
             return Err(CtInvModOddMpMpImplError::InsufficientScratchSpace);
         }
     }
@@ -1001,10 +1000,10 @@ pub fn ct_inv_mod_odd_mp_mp_impl<RT: MpMutUIntSlice, T0: MpMutUInt, NT: MpUIntCo
     // Euclidean algorithm for the modular inversion case will be stored in
     // (result, ext_u1_scratch).
     let [f_work_scratch, ext_u1_scratch] = scratch;
-    let mut f_work_scratch = MpMutNativeEndianUIntByteSlice::from_slice(f_work_scratch).unwrap();
+    let mut f_work_scratch = MpMutNativeEndianUIntLimbsSlice::from_limbs(f_work_scratch);
     f_work_scratch.copy_from(n);
     let mut f_work_scratch = f_work_scratch.shrink_to(n.len());
-    let mut ext_u1_scratch = MpMutNativeEndianUIntByteSlice::from_slice(ext_u1_scratch).unwrap();
+    let mut ext_u1_scratch = MpMutNativeEndianUIntLimbsSlice::from_limbs(ext_u1_scratch);
     ext_u1_scratch.clear_bytes_above(n.len());
     let mut ext_u1_scratch = ext_u1_scratch.shrink_to(n.len());
 
@@ -1081,7 +1080,7 @@ pub fn ct_inv_mod_odd_mp_mp<RT: MpMutUIntSlice, T0: MpMutUInt, NT: MpUIntCommon>
     result: &mut RT,
     op0: &mut T0,
     n: &NT,
-    scratch: [&mut [u8]; 2],
+    scratch: [&mut [LimbType]; 2],
 ) -> Result<(), CtInvModOddMpMpError> {
     ct_inv_mod_odd_mp_mp_impl(result, op0, n, scratch).map_err(|e| match e {
         CtInvModOddMpMpImplError::InvalidModulus => CtInvModOddMpMpError::InvalidModulus,
@@ -1133,8 +1132,9 @@ fn test_ct_inv_mod_odd_mp_mp<RT: MpMutUIntSlice, T0: MpMutUIntSlice, NT: MpMutUI
         let mut op0_inv_mod_n = tst_mk_mp_backing_vec!(RT, n.len());
         let mut op0_inv_mod_n = RT::from_slice(&mut op0_inv_mod_n).unwrap();
 
-        let mut scratch0 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len())];
-        let mut scratch1 = vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(n.len())];
+        let n_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len());
+        let mut scratch0 = vec![0 as LimbType; n_nlimbs];
+        let mut scratch1 = vec![0 as LimbType; n_nlimbs];
 
         let r = ct_inv_mod_odd_mp_mp(
             &mut op0_inv_mod_n,
@@ -1152,8 +1152,8 @@ fn test_ct_inv_mod_odd_mp_mp<RT: MpMutUIntSlice, T0: MpMutUIntSlice, NT: MpMutUI
 
         // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
         let mut product_buf =
-            vec![0u8; MpMutNativeEndianUIntByteSlice::limbs_align_len(2 * n.len())];
-        let mut product = MpMutNativeEndianUIntByteSlice::from_slice(&mut product_buf).unwrap();
+            vec![0 as LimbType; MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(2 * n.len())];
+        let mut product = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut product_buf);
         product.copy_from(&op0_inv_mod_n);
         ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
         ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n).unwrap());
@@ -1233,10 +1233,10 @@ fn test_ct_inv_mod_odd_le_le_le() {
 
 #[test]
 fn test_ct_inv_mod_odd_ne_ne_ne() {
-    use super::limbs_buffer::MpMutNativeEndianUIntByteSlice;
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_inv_mod_odd_mp_mp::<
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
-        MpMutNativeEndianUIntByteSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
     >()
 }
