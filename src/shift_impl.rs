@@ -1,12 +1,12 @@
 use super::limb::{ct_lsb_mask_l, LimbType, LIMB_BITS};
 use super::limbs_buffer::{
-    ct_clear_bits_above_mp, ct_clear_bits_below_mp, ct_mp_nlimbs, MpIntMutByteSlice,
+    ct_clear_bits_above_mp, ct_clear_bits_below_mp, ct_mp_nlimbs, MpIntMutSlice,
 };
 use super::usize_ct_cmp::{
     ct_eq_usize_usize, ct_geq_usize_usize, ct_gt_usize_usize, ct_leq_usize_usize, ct_lt_usize_usize,
 };
 
-pub fn ct_lshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> LimbType {
+pub fn ct_lshift_mp<T0: MpIntMutSlice>(op0: &mut T0, distance: usize) -> LimbType {
     if op0.is_empty() {
         return 0;
     }
@@ -129,11 +129,9 @@ fn test_fill_limb_with_seq(first: u8) -> LimbType {
 }
 
 #[cfg(test)]
-fn test_ct_lshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
-    extern crate alloc;
+fn test_ct_lshift_mp_common<T0: MpIntMutSlice>(op0_len: usize) {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MpIntByteSliceCommon, MpIntByteSliceCommonPriv};
-    use alloc::vec;
+    use super::limbs_buffer::{MpIntSliceCommon, MpIntSliceCommonPriv};
 
     fn test_fill_limb_with_seq_lshifted(limb_index: usize, lshift_distance: usize) -> LimbType {
         let lshift_len = (lshift_distance + 7) / 8;
@@ -166,8 +164,8 @@ fn test_ct_lshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     let op0_nlimbs = ct_mp_nlimbs(op0_len);
     for i in 0..op0_nlimbs + 3 {
         for j in 0..LIMB_BITS as usize {
-            let mut op0 = vec![0u8; op0_len];
-            let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+            let mut op0 = tst_mk_mp_backing_vec!(T0, op0_len);
+            let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
             for k in 0..op0.nlimbs() {
                 let val = test_fill_limb_with_seq(1 + (k * LIMB_BYTES) as u8);
                 if k != op0.nlimbs() - 1 {
@@ -217,26 +215,26 @@ fn test_ct_lshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntByteSliceCommon;
+    use super::limbs_buffer::MpIntSliceCommon;
 
-    let mut op0: [u8; 1] = [0xff; 1];
-    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    let mut op0 = [0xffu8.into(); 1];
+    let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
     let shifted_out = ct_lshift_mp(&mut op0, 0);
     assert_eq!(op0.load_l(0), 0xff);
     assert_eq!(shifted_out, 0);
 
     for i in 1..LIMB_BYTES + 1 {
-        let mut op0: [u8; 1] = [0xff; 1];
-        let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+        let mut op0 = [0xffu8.into(); 1];
+        let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
         let shifted_out = ct_lshift_mp(&mut op0, 8 * i);
         assert_eq!(op0.load_l(0), 0);
         assert_eq!(shifted_out, 0xff << 8 * (i - 1));
     }
 
-    let mut op0: [u8; 1] = [0xff; 1];
-    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    let mut op0 = [0xffu8.into(); 1];
+    let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
     let shifted_out = ct_lshift_mp(&mut op0, 8 * (LIMB_BYTES + 1));
     assert_eq!(op0.load_l(0), 0);
     assert_eq!(shifted_out, 0);
@@ -245,12 +243,12 @@ fn test_ct_lshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
 }
 
 #[cfg(test)]
-fn test_ct_lshift_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+fn test_ct_lshift_mp_with_aligned_lengths<T0: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
 
     for i in 0..LIMB_BYTES + 3 {
-        let mut op0: [u8; 0] = [0; 0];
-        let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+        let mut op0 = [0u8.into(); 0];
+        let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
         let shifted_out = ct_lshift_mp(&mut op0, 8 * i);
         assert_eq!(shifted_out, 0);
     }
@@ -278,7 +276,7 @@ fn test_ct_lshift_ne() {
     test_ct_lshift_mp_with_aligned_lengths::<MpNativeEndianMutByteSlice>();
 }
 
-pub fn ct_rshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> LimbType {
+pub fn ct_rshift_mp<T0: MpIntMutSlice>(op0: &mut T0, distance: usize) -> LimbType {
     if op0.is_empty() {
         return 0;
     }
@@ -382,11 +380,9 @@ pub fn ct_rshift_mp<T0: MpIntMutByteSlice>(op0: &mut T0, distance: usize) -> Lim
 }
 
 #[cfg(test)]
-fn test_ct_rshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
-    extern crate alloc;
+fn test_ct_rshift_mp_common<T0: MpIntMutSlice>(op0_len: usize) {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::{MpIntByteSliceCommon, MpIntByteSliceCommonPriv};
-    use alloc::vec;
+    use super::limbs_buffer::{MpIntSliceCommon, MpIntSliceCommonPriv};
 
     // limb_index is offset by one: an index of zero is used
     // for specifiying the virtual limb rshifted into.
@@ -439,8 +435,8 @@ fn test_ct_rshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
     let op0_nlimbs = ct_mp_nlimbs(op0_len);
     for i in 0..op0_nlimbs + 3 {
         for j in 0..LIMB_BITS as usize {
-            let mut op0 = vec![0u8; op0_len];
-            let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+            let mut op0 = tst_mk_mp_backing_vec!(T0, op0_len);
+            let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
             for k in 0..op0.nlimbs() {
                 let val = test_fill_limb_with_seq(1 + (k * LIMB_BYTES) as u8);
                 if k != op0.nlimbs() - 1 {
@@ -466,26 +462,26 @@ fn test_ct_rshift_mp_common<T0: MpIntMutByteSlice>(op0_len: usize) {
 }
 
 #[cfg(test)]
-fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
+fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntByteSliceCommon;
+    use super::limbs_buffer::MpIntSliceCommon;
 
-    let mut op0: [u8; 1] = [0xff; 1];
-    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    let mut op0 = [0xffu8.into(); 1];
+    let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
     let shifted_out = ct_rshift_mp(&mut op0, 0);
     assert_eq!(op0.load_l(0), 0xff);
     assert_eq!(shifted_out, 0);
 
     for i in 1..LIMB_BYTES + 1 {
-        let mut op0: [u8; 1] = [0xff; 1];
-        let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+        let mut op0 = [0xffu8.into(); 1];
+        let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
         let shifted_out = ct_rshift_mp(&mut op0, 8 * i);
         assert_eq!(op0.load_l(0), 0);
         assert_eq!(shifted_out, 0xff << 8 * (LIMB_BYTES - i));
     }
 
-    let mut op0: [u8; 1] = [0xff; 1];
-    let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+    let mut op0 = [0xffu8.into(); 1];
+    let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
     let shifted_out = ct_rshift_mp(&mut op0, 8 * (LIMB_BYTES + 1));
     assert_eq!(op0.load_l(0), 0);
     assert_eq!(shifted_out, 0);
@@ -494,12 +490,12 @@ fn test_ct_rshift_mp_with_unaligned_lengths<T0: MpIntMutByteSlice>() {
 }
 
 #[cfg(test)]
-fn test_ct_rshift_mp_with_aligned_lengths<T0: MpIntMutByteSlice>() {
+fn test_ct_rshift_mp_with_aligned_lengths<T0: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
 
     for i in 0..LIMB_BYTES + 3 {
-        let mut op0: [u8; 0] = [0; 0];
-        let mut op0 = T0::from_bytes(op0.as_mut_slice()).unwrap();
+        let mut op0 = [0u8.into(); 0];
+        let mut op0 = T0::from_slice(op0.as_mut_slice()).unwrap();
         let shifted_out = ct_rshift_mp(&mut op0, 8 * i);
         assert_eq!(shifted_out, 0);
     }

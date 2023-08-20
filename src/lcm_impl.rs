@@ -3,7 +3,8 @@ use super::div_impl::{ct_div_mp_mp, CtMpDivisor};
 use super::euclid_impl::ct_gcd_mp_mp;
 use super::limb::{ct_lsb_mask_l, LIMB_BITS, LIMB_BYTES};
 use super::limbs_buffer::{
-    ct_find_last_set_bit_mp, ct_mp_nlimbs, MpIntByteSliceCommon, MpIntMutByteSlice,
+    ct_find_last_set_bit_mp, ct_mp_nlimbs, MpIntMutSlice, MpIntSliceCommon,
+    MpIntSliceCommonPriv as _,
 };
 use super::mul_impl::ct_mul_trunc_mp_mp;
 use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
@@ -15,13 +16,13 @@ pub enum CtLcmMpMpError {
     InconsistentInputOperandLengths,
 }
 
-pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>(
+pub fn ct_lcm_mp_mp<RT: MpIntMutSlice, T0: MpIntMutSlice, T1: MpIntMutSlice>(
     result: &mut RT,
     op0: &mut T0,
     op0_len: usize,
     op1: &mut T1,
     op1_len: usize,
-    scratch: &mut [u8],
+    scratch: &mut [T1::BackingSliceElementType],
 ) -> Result<(), CtLcmMpMpError> {
     // The Least Common Multiple (LCM) is the product divided by the GCD of the
     // operands. Be careful to maintain constant-time: the division's runtime
@@ -50,12 +51,11 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     }
 
     let prod_len = op0_len + op1_len;
-    let prod_aligned_len = T1::limbs_align_len(prod_len);
-    if scratch.len() < prod_aligned_len {
+    if scratch.len() < T1::n_backing_elements_for_len(prod_len) {
         return Err(CtLcmMpMpError::InsufficientScratchSpace);
     }
-    let (scratch, _) = scratch.split_at_mut(prod_aligned_len);
-    let mut prod_scratch = T1::from_bytes(scratch).unwrap();
+    let prod_scratch = T1::from_slice(scratch).unwrap();
+    let mut prod_scratch = prod_scratch.take(prod_len).1;
 
     // Compute the product before messing around with op0's and op1's values below.
     prod_scratch.copy_from(op0);
@@ -109,7 +109,7 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
     debug_assert_eq!(last_src_val >> src_low_rshift, 0);
     scaled_prod_high.clear_bytes_above(gcd_max_len);
     ct_rshift_mp(scaled_prod_high, 8 * gcd_max_len - scaling_shift);
-    let (_, mut scaled_prod_high) = scaled_prod_high.split_at(T1::limbs_align_len(gcd_max_len));
+    let mut scaled_prod_high = scaled_prod_high.shrink_to(gcd_max_len);
     let mut scaled_prod_low = prod_scratch;
     ct_lshift_mp(&mut scaled_prod_low, scaling_shift);
 
@@ -129,17 +129,15 @@ pub fn ct_lcm_mp_mp<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice, T1: MpIntMutBy
 }
 
 #[cfg(test)]
-fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
-    extern crate alloc;
+fn test_ct_lcm_mp_mp<RT: MpIntMutSlice, OT: MpIntMutSlice>() {
     use super::mul_impl::ct_mul_trunc_mp_l;
-    use alloc::vec;
 
     fn test_one<
-        RT: MpIntMutByteSlice,
-        OT: MpIntMutByteSlice,
-        T0: MpIntByteSliceCommon,
-        T1: MpIntByteSliceCommon,
-        GT: MpIntByteSliceCommon,
+        RT: MpIntMutSlice,
+        OT: MpIntMutSlice,
+        T0: MpIntSliceCommon,
+        T1: MpIntSliceCommon,
+        GT: MpIntSliceCommon,
     >(
         op0: &T0,
         op1: &T1,
@@ -152,20 +150,19 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
         let op1_len = op1.len() + gcd_len;
 
         let op_max_len = op0_len.max(op1_len);
-        let op_max_aligned_len = OT::limbs_align_len(op_max_len);
-        let mut op0_lcm_work = vec![0u8; op_max_aligned_len];
-        let mut op0_lcm_work = OT::from_bytes(&mut op0_lcm_work).unwrap();
+        let mut op0_lcm_work = tst_mk_mp_backing_vec!(OT, op_max_len);
+        let mut op0_lcm_work = OT::from_slice(&mut op0_lcm_work).unwrap();
         op0_lcm_work.copy_from(op0);
         ct_mul_trunc_mp_mp(&mut op0_lcm_work, op0.len(), gcd);
-        let mut op1_lcm_work = vec![0u8; op_max_aligned_len];
-        let mut op1_lcm_work = OT::from_bytes(&mut op1_lcm_work).unwrap();
+        let mut op1_lcm_work = tst_mk_mp_backing_vec!(OT, op_max_len);
+        let mut op1_lcm_work = OT::from_slice(&mut op1_lcm_work).unwrap();
         op1_lcm_work.copy_from(op1);
         ct_mul_trunc_mp_mp(&mut op1_lcm_work, op1.len(), gcd);
 
         let lcm_len = op0_len + op1_len;
-        let mut lcm = vec![0u8; RT::limbs_align_len(lcm_len)];
-        let mut lcm = RT::from_bytes(&mut lcm).unwrap();
-        let mut scratch = vec![0u8; OT::limbs_align_len(lcm_len)];
+        let mut lcm = tst_mk_mp_backing_vec!(RT, lcm_len);
+        let mut lcm = RT::from_slice(&mut lcm).unwrap();
+        let mut scratch = tst_mk_mp_backing_vec!(OT, lcm_len);
         ct_lcm_mp_mp(
             &mut lcm,
             &mut op0_lcm_work,
@@ -177,8 +174,8 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
         .unwrap();
 
         let expected_len = op0.len() + op1.len() + gcd_len;
-        let mut expected = vec![0u8; RT::limbs_align_len(expected_len)];
-        let mut expected = RT::from_bytes(&mut expected).unwrap();
+        let mut expected = tst_mk_mp_backing_vec!(RT, expected_len);
+        let mut expected = RT::from_slice(&mut expected).unwrap();
         expected.copy_from(op0);
         ct_mul_trunc_mp_mp(&mut expected, op0.len(), op1);
         ct_mul_trunc_mp_mp(&mut expected, op0.len() + op1.len(), gcd);
@@ -219,8 +216,8 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
                         let op1_shift = total_shift as usize - l - gcd_shift;
 
                         let op0_len = i + (op0_shift + 7) / 8;
-                        let mut op0 = vec![0u8; OT::limbs_align_len(op0_len)];
-                        let mut op0 = OT::from_bytes(&mut op0).unwrap();
+                        let mut op0 = tst_mk_mp_backing_vec!(OT, op0_len);
+                        let mut op0 = OT::from_slice(&mut op0).unwrap();
                         if !op0.is_empty() {
                             op0.store_l(0, 1);
                         }
@@ -230,8 +227,8 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
                         ct_lshift_mp(&mut op0, op0_shift);
 
                         let op1_len = j + (op1_shift + 7) / 8;
-                        let mut op1 = vec![0u8; OT::limbs_align_len(op1_len)];
-                        let mut op1 = OT::from_bytes(&mut op1).unwrap();
+                        let mut op1 = tst_mk_mp_backing_vec!(OT, op1_len);
+                        let mut op1 = OT::from_slice(&mut op1).unwrap();
                         if !op1.is_empty() {
                             op1.store_l(0, 1);
                         }
@@ -241,8 +238,8 @@ fn test_ct_lcm_mp_mp<RT: MpIntMutByteSlice, OT: MpIntMutByteSlice>() {
                         ct_lshift_mp(&mut op1, op1_shift);
 
                         let gcd_len = k + (gcd_shift + 7) / 8;
-                        let mut gcd = vec![0u8; OT::limbs_align_len(gcd_len)];
-                        let mut gcd = OT::from_bytes(&mut gcd).unwrap();
+                        let mut gcd = tst_mk_mp_backing_vec!(OT, gcd_len);
+                        let mut gcd = OT::from_slice(&mut gcd).unwrap();
                         if !gcd.is_empty() {
                             gcd.store_l(0, 1);
                         }

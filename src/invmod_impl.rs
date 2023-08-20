@@ -4,7 +4,7 @@ use super::euclid_impl::{ct_inv_mod_odd_mp_mp_impl, CtInvModOddMpMpImplError};
 use super::limb::{ct_is_nonzero_l, ct_sub_l_l_b, LIMB_BITS};
 use super::limbs_buffer::{
     clear_bits_above_mp, ct_clear_bits_above_mp, ct_find_first_set_bit_mp, ct_mp_nlimbs,
-    MpIntByteSliceCommon, MpIntByteSliceCommonPriv as _, MpIntMutByteSlice,
+    MpIntMutSlice, MpIntMutSlicePriv as _, MpIntSliceCommon, MpIntSliceCommonPriv as _,
     MpNativeEndianMutByteSlice,
 };
 use super::mul_impl::{ct_mul_trunc_mp_mp, ct_square_trunc_mp};
@@ -13,7 +13,7 @@ use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
 // max_pow2_exp: non-sensitive upper bound (inclusive) on pow2_exp, for CT.
 // If pow2_exp == 0, the result is all zero.
 // If op0 == 0, the result is all zero.
-fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
+fn ct_inv_mod_pow2_mp<RT: MpIntMutSlice, T0: MpIntSliceCommon>(
     result: &mut RT,
     op0: &T0,
     pow2_exp: usize,
@@ -27,15 +27,14 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
     debug_assert!(pow2_exp <= max_pow2_exp);
 
     let max_pow2_exp_len = (max_pow2_exp + 7) / 8;
-    debug_assert!(result.len() >= RT::limbs_align_len(max_pow2_exp_len));
+    debug_assert!(result.len() >= max_pow2_exp_len);
     debug_assert!(scratch.len() >= MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len));
 
     result.clear_bytes_above(max_pow2_exp_len);
-    let (_, mut result) = result.split_at(RT::limbs_align_len(max_pow2_exp_len));
-    let (scratch, _) = scratch.split_at_mut(MpNativeEndianMutByteSlice::limbs_align_len(
-        max_pow2_exp_len,
-    ));
-    let mut tmp = MpNativeEndianMutByteSlice::from_bytes(scratch).unwrap();
+    let mut result = result.shrink_to(max_pow2_exp_len);
+    let mut tmp = MpNativeEndianMutByteSlice::from_slice(scratch).unwrap();
+    tmp.clear_bytes_above(max_pow2_exp_len);
+    let mut tmp = tmp.shrink_to(max_pow2_exp_len);
 
     // Use Hensel's lemma to lift the root x == 1 of op0 * x - 1 mod 2 to a root mod
     // 2^{2^pow2_exp_bits}, with pow2_exp_bits = 8 * max_pow2_exp_len. Note that an
@@ -93,7 +92,7 @@ fn ct_inv_mod_pow2_mp<RT: MpIntMutByteSlice, T0: MpIntByteSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(op0_len: usize) {
+fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutSlice, T0: MpIntMutSlice>(op0_len: usize) {
     extern crate alloc;
     use super::cmp_impl::ct_is_one_mp;
     use super::limb::LimbType;
@@ -105,8 +104,8 @@ fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(
         for j in 0..8 {
             const MERSENNE_PRIME_13: LimbType = 8191 as LimbType;
             let op0_low = MERSENNE_PRIME_13.wrapping_mul((131087 as LimbType).wrapping_mul(j)) | 1;
-            let mut op0 = vec![0u8; T0::limbs_align_len(op0_len)];
-            let mut op0 = T0::from_bytes(&mut op0).unwrap();
+            let mut op0 = tst_mk_mp_backing_vec!(T0, op0_len);
+            let mut op0 = T0::from_slice(&mut op0).unwrap();
             let op0_vals = [op0_low, op0_high];
             for k in 0..op0.nlimbs() {
                 let op0_val = op0_vals[k.min(1)];
@@ -122,8 +121,8 @@ fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(
                 for max_pow2_exp in [pow2_exp, pow2_exp + 1, 2 * pow2_exp] {
                     let max_pow2_exp = max_pow2_exp.max(1);
                     let max_pow2_exp_len = max_pow2_exp + 7 / 8;
-                    let mut inv_mod_pow2 = vec![0u8; RT::limbs_align_len(max_pow2_exp_len)];
-                    let mut inv_mod_pow2 = RT::from_bytes(&mut inv_mod_pow2).unwrap();
+                    let mut inv_mod_pow2 = tst_mk_mp_backing_vec!(RT, max_pow2_exp_len);
+                    let mut inv_mod_pow2 = RT::from_slice(&mut inv_mod_pow2).unwrap();
                     let mut scratch =
                         vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(max_pow2_exp_len)];
                     ct_inv_mod_pow2_mp(
@@ -152,7 +151,7 @@ fn test_ct_inv_mod_pow2_mp_common<RT: MpIntMutByteSlice, T0: MpIntMutByteSlice>(
 }
 
 #[cfg(test)]
-fn test_ct_inv_mod_pow2_mp_with_aligned_lengths<RT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
+fn test_ct_inv_mod_pow2_mp_with_aligned_lengths<RT: MpIntMutSlice, NT: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
 
     for n_len in [LIMB_BYTES, 2 * LIMB_BYTES] {
@@ -161,7 +160,7 @@ fn test_ct_inv_mod_pow2_mp_with_aligned_lengths<RT: MpIntMutByteSlice, NT: MpInt
 }
 
 #[cfg(test)]
-fn test_ct_inv_mod_pow2_mp_with_unaligned_lengths<RT: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
+fn test_ct_inv_mod_pow2_mp_with_unaligned_lengths<RT: MpIntMutSlice, NT: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
 
     for n_len in [LIMB_BYTES - 1, LIMB_BYTES + 1, 2 * LIMB_BYTES - 1] {
@@ -214,7 +213,7 @@ pub enum CtInvModMpMpError {
 
 // If n == 1, the multiplicative group does not exist and the
 // result is set to zero.
-pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
+pub fn ct_inv_mod_mp_mp<T0: MpIntMutSlice, NT: MpIntMutSlice>(
     op0: &mut T0,
     n: &mut NT,
     scratch: [&mut [u8]; 4],
@@ -241,12 +240,12 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
     }
 
     let [scratch0, scratch1, scratch2, scratch3] = scratch;
-    let (scratch0, _) = &mut scratch0.split_at_mut(n_aligned_len);
-    let mut scratch0 = MpNativeEndianMutByteSlice::from_bytes(scratch0).unwrap();
-    let (scratch1, _) = &mut scratch1.split_at_mut(n_aligned_len);
-    let mut scratch1 = MpNativeEndianMutByteSlice::from_bytes(scratch1).unwrap();
-    let (scratch2, _) = &mut scratch2.split_at_mut(n_aligned_len);
-    let (scratch3, _) = &mut scratch3.split_at_mut(n_aligned_len);
+    let mut scratch0 = MpNativeEndianMutByteSlice::from_slice(scratch0).unwrap();
+    scratch0.clear_bytes_above(n_aligned_len);
+    let mut scratch0 = scratch0.shrink_to(n_aligned_len);
+    let mut scratch1 = MpNativeEndianMutByteSlice::from_slice(scratch1).unwrap();
+    scratch1.clear_bytes_above(n_aligned_len);
+    let mut scratch1 = scratch1.shrink_to(n_aligned_len);
 
     // The Extended Euclidean Algorithm (as it is implemented) only works for odd n.
     // 1.) Factor out powers of two to obtain n = n_{*} * 2^e.
@@ -353,14 +352,14 @@ pub fn ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(
 }
 
 #[cfg(test)]
-fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
+fn test_ct_inv_mod_mp_mp<T0: MpIntMutSlice, NT: MpIntMutSlice>() {
     extern crate alloc;
     use super::cmp_impl::ct_is_one_mp;
     use super::limb::LIMB_BYTES;
     use super::mul_impl::ct_mul_trunc_mp_l;
     use alloc::vec;
 
-    fn test_one<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>(op0: &T0, n: &mut NT) {
+    fn test_one<T0: MpIntMutSlice, NT: MpIntMutSlice>(op0: &T0, n: &mut NT) {
         use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
 
         // Reserve an extra byte for the NotCoprime checks below.
@@ -369,8 +368,8 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
         let mut scratch2 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
         let mut scratch3 = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(n.len() + 1)];
 
-        let mut op0_inv_mod_n = vec![0u8; T0::limbs_align_len(n.len())];
-        let mut op0_inv_mod_n = T0::from_bytes(&mut op0_inv_mod_n).unwrap();
+        let mut op0_inv_mod_n = tst_mk_mp_backing_vec!(T0, n.len());
+        let mut op0_inv_mod_n = T0::from_slice(&mut op0_inv_mod_n).unwrap();
         op0_inv_mod_n.copy_from(op0);
         ct_mod_mp_mp(None, &mut op0_inv_mod_n, &CtMpDivisor::new(n).unwrap());
 
@@ -391,7 +390,7 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
 
         // Multiply op0_inv_mod_n by op0 modulo n and verify the result comes out as 1.
         let mut product_buf = vec![0u8; MpNativeEndianMutByteSlice::limbs_align_len(2 * n.len())];
-        let mut product = MpNativeEndianMutByteSlice::from_bytes(&mut product_buf).unwrap();
+        let mut product = MpNativeEndianMutByteSlice::from_slice(&mut product_buf).unwrap();
         product.copy_from(&op0_inv_mod_n);
         ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
         ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n).unwrap());
@@ -399,12 +398,12 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
 
         // Verify that ct_inv_mod_mp_mp() correctly detects common factors and would
         // error out. Scaled by 2.
-        let mut scaled_n = vec![0u8; NT::limbs_align_len(n.len() + 1)];
-        let mut scaled_n = NT::from_bytes(&mut scaled_n).unwrap();
+        let mut scaled_n = tst_mk_mp_backing_vec!(NT, n.len() + 1);
+        let mut scaled_n = NT::from_slice(&mut scaled_n).unwrap();
         scaled_n.copy_from(n);
         ct_lshift_mp(&mut scaled_n, 1);
-        let mut scaled_op0 = vec![0u8; T0::limbs_align_len(n.len() + 1)];
-        let mut scaled_op0 = NT::from_bytes(&mut scaled_op0).unwrap();
+        let mut scaled_op0 = tst_mk_mp_backing_vec!(T0, n.len() + 1);
+        let mut scaled_op0 = T0::from_slice(&mut scaled_op0).unwrap();
         scaled_op0.copy_from(n);
         ct_lshift_mp(&mut scaled_op0, 1);
         let scratch = [
@@ -418,13 +417,13 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
             Err(CtInvModMpMpError::OperandsNotCoprime)
         ));
         // Scaled by 3.
-        let mut scaled_n = vec![0u8; NT::limbs_align_len(n.len() + 1)];
-        let mut scaled_n = NT::from_bytes(&mut scaled_n).unwrap();
+        let mut scaled_n = tst_mk_mp_backing_vec!(NT, n.len() + 1);
+        let mut scaled_n = NT::from_slice(&mut scaled_n).unwrap();
         scaled_n.copy_from(n);
         ct_mul_trunc_mp_l(&mut scaled_n, n.len(), 3);
         ct_lshift_mp(&mut scaled_n, 1);
-        let mut scaled_op0 = vec![0u8; T0::limbs_align_len(n.len() + 1)];
-        let mut scaled_op0 = NT::from_bytes(&mut scaled_op0).unwrap();
+        let mut scaled_op0 = tst_mk_mp_backing_vec!(T0, n.len() + 1);
+        let mut scaled_op0 = T0::from_slice(&mut scaled_op0).unwrap();
         scaled_op0.copy_from(n);
         ct_mul_trunc_mp_l(&mut scaled_op0, op0.len(), 3);
         let scratch = [
@@ -445,25 +444,23 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
         3 * LIMB_BYTES - 1,
         4 * LIMB_BYTES - 1,
     ] {
-        let n_len = NT::limbs_align_len(l);
-        let op0_len = T0::limbs_align_len(l);
-        let n_op0_min_len = n_len.min(op0_len);
-        let n_op0_high_min_len = (n_op0_min_len - 1) % LIMB_BYTES + 1;
+        let n_len = l;
+        let n_high_len = (n_len - 1) % LIMB_BYTES + 1;
 
-        let mut n_buf = vec![0u8; n_len];
-        let mut op0_buf = vec![0u8; op0_len];
-        let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
-        let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+        let mut n_buf = tst_mk_mp_backing_vec!(NT, n_len);
+        let mut op0_buf = tst_mk_mp_backing_vec!(T0, n_len);
+        let mut n = NT::from_slice(n_buf.as_mut_slice()).unwrap();
+        let mut op0 = T0::from_slice(op0_buf.as_mut_slice()).unwrap();
         n.store_l(0, 3);
         op0.store_l(0, 2);
         test_one(&op0, &mut n);
 
-        for i in 0..8 * LIMB_BYTES.min(n_op0_min_len) - 1 {
-            for j in 1..8 * LIMB_BYTES.min(n_op0_min_len) - 1 {
-                let mut n_buf = vec![0u8; n_len];
-                let mut op0_buf = vec![0u8; op0_len];
-                let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
-                let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+        for i in 0..8 * LIMB_BYTES.min(n_len) - 1 {
+            for j in 1..8 * LIMB_BYTES.min(n_len) - 1 {
+                let mut n_buf = tst_mk_mp_backing_vec!(NT, n_len);
+                let mut op0_buf = tst_mk_mp_backing_vec!(T0, n_len);
+                let mut n = NT::from_slice(n_buf.as_mut_slice()).unwrap();
+                let mut op0 = T0::from_slice(op0_buf.as_mut_slice()).unwrap();
                 n.set_bit_to(i, true);
                 n.set_bit_to(0, true);
                 op0.set_bit_to(j, true);
@@ -471,12 +468,12 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
             }
         }
 
-        for i in 0..8 * LIMB_BYTES.min(n_op0_min_len) - 1 {
-            for j in 1..8 * LIMB_BYTES.min(n_op0_min_len) - 1 {
-                let mut n_buf = vec![0u8; 2 * n_len];
-                let mut op0_buf = vec![0u8; 2 * op0_len];
-                let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
-                let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+        for i in 0..8 * LIMB_BYTES.min(n_len) - 1 {
+            for j in 1..8 * LIMB_BYTES.min(n_len) - 1 {
+                let mut n_buf = tst_mk_mp_backing_vec!(NT, 2 * n_len);
+                let mut op0_buf = tst_mk_mp_backing_vec!(T0, 2 * n_len);
+                let mut n = NT::from_slice(n_buf.as_mut_slice()).unwrap();
+                let mut op0 = T0::from_slice(op0_buf.as_mut_slice()).unwrap();
                 n.set_bit_to(i, true);
                 ct_lshift_mp(&mut n, 8 * n_len);
                 op0.set_bit_to(j, true);
@@ -485,36 +482,36 @@ fn test_ct_inv_mod_mp_mp<T0: MpIntMutByteSlice, NT: MpIntMutByteSlice>() {
             }
         }
 
-        let mut n_buf = vec![0u8; n_len];
-        let mut op0_buf = vec![0u8; op0_len];
-        let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
-        let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+        let mut n_buf = tst_mk_mp_backing_vec!(NT, n_len);
+        let mut op0_buf = tst_mk_mp_backing_vec!(T0, n_len);
+        let mut n = NT::from_slice(n_buf.as_mut_slice()).unwrap();
+        let mut op0 = T0::from_slice(op0_buf.as_mut_slice()).unwrap();
         n.store_l(0, 1);
-        while n.load_l(n.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
+        while n.load_l(n.nlimbs() - 1) >> 8 * (n_high_len - 1) == 0 {
             ct_mul_trunc_mp_l(&mut n, n_len, 251);
         }
         op0.store_l(0, 1);
-        while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            ct_mul_trunc_mp_l(&mut op0, op0_len, 241);
+        while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_high_len - 1) == 0 {
+            ct_mul_trunc_mp_l(&mut op0, n_len, 241);
         }
-        while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len) - 1 == 0 {
-            ct_mul_trunc_mp_l(&mut op0, op0_len, 2);
+        while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_high_len) - 1 == 0 {
+            ct_mul_trunc_mp_l(&mut op0, n_len, 2);
         }
         test_one(&op0, &mut n);
 
-        let mut n_buf = vec![0u8; 2 * n_len];
-        let mut op0_buf = vec![0u8; 2 * op0_len];
-        let mut n = NT::from_bytes(n_buf.as_mut_slice()).unwrap();
-        let mut op0 = T0::from_bytes(op0_buf.as_mut_slice()).unwrap();
+        let mut n_buf = tst_mk_mp_backing_vec!(NT, 2 * n_len);
+        let mut op0_buf = tst_mk_mp_backing_vec!(T0, 2 * n_len);
+        let mut n = NT::from_slice(n_buf.as_mut_slice()).unwrap();
+        let mut op0 = T0::from_slice(op0_buf.as_mut_slice()).unwrap();
         n.store_l(0, 1);
-        while n.load_l(ct_mp_nlimbs(n_len) - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
+        while n.load_l(ct_mp_nlimbs(n_len) - 1) >> 8 * (n_high_len - 1) == 0 {
             ct_mul_trunc_mp_l(&mut n, n_len, 251);
         }
         ct_lshift_mp(&mut n, 8 * n_len);
         op0.store_l(0, 1);
-        let n_op0_high_min_len = (2 * n_op0_min_len - 1) % LIMB_BYTES + 1;
+        let n_op0_high_min_len = (2 * n_len - 1) % LIMB_BYTES + 1;
         while op0.load_l(op0.nlimbs() - 1) >> 8 * (n_op0_high_min_len - 1) == 0 {
-            ct_mul_trunc_mp_l(&mut op0, 2 * op0_len, 241);
+            ct_mul_trunc_mp_l(&mut op0, 2 * n_len, 241);
         }
         test_one(&op0, &mut n);
     }

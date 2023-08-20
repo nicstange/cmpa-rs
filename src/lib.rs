@@ -2,6 +2,9 @@
 
 #![no_std]
 
+#[cfg(test)]
+mod test_helpers;
+
 mod add_impl;
 mod cmp_impl;
 mod div_impl;
@@ -25,8 +28,8 @@ pub use limb::{
 pub use limbs_buffer::{
     clear_bits_above_mp, clear_bits_below_mp, ct_clear_bits_above_mp, ct_clear_bits_below_mp,
     ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_swap_cond_mp, MpBigEndianByteSlice,
-    MpBigEndianMutByteSlice, MpIntByteSlice, MpIntByteSliceCommon, MpIntMutByteSlice,
-    MpLittleEndianByteSlice, MpLittleEndianMutByteSlice, MpNativeEndianByteSlice,
+    MpBigEndianMutByteSlice, MpIntByteSlice, MpIntMutByteSlice, MpIntMutSlice, MpIntSlice,
+    MpIntSliceCommon, MpLittleEndianByteSlice, MpLittleEndianMutByteSlice, MpNativeEndianByteSlice,
     MpNativeEndianMutByteSlice, UnalignedMpByteSliceLenError,
 };
 

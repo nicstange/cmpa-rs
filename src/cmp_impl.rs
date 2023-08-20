@@ -1,9 +1,9 @@
 //! Implementation of multiprecision integer comparison primitives.
 
 use super::limb::{ct_is_zero_l, ct_leq_l_l, ct_lt_or_eq_l_l, LimbChoice, LimbType};
-use super::limbs_buffer::MpIntByteSliceCommon;
 #[cfg(test)]
-use super::limbs_buffer::MpIntMutByteSlice;
+use super::limbs_buffer::MpIntMutSlice;
+use super::limbs_buffer::MpIntSliceCommon;
 
 /// Compare two multiprecision integers of specified endianess for `==`.
 ///
@@ -13,10 +13,7 @@ use super::limbs_buffer::MpIntMutByteSlice;
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_eq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
-    op0: &T0,
-    op1: &T1,
-) -> LimbChoice {
+pub fn ct_eq_mp_mp<T0: MpIntSliceCommon, T1: MpIntSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
@@ -42,24 +39,24 @@ pub fn ct_eq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_ct_eq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
+fn test_ct_eq_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
+    use super::limbs_buffer::MpIntMutSlicePriv as _;
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     op0.store_l(0, 1);
     op1.store_l(0, 1);
     assert_eq!(ct_eq_mp_mp(&op0, &op1).unwrap(), 1);
     assert_eq!(ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
     assert_eq!(ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 1);
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     op0.store_l(0, 1);
     op0.store_l(1, 2);
     op1.store_l(0, 1);
@@ -68,10 +65,10 @@ fn test_ct_eq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     assert_eq!(ct_eq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 0);
     assert_eq!(ct_eq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     op0.store_l(0, 1);
     op1.store_l(0, 2);
     assert_eq!(ct_eq_mp_mp(&op0, &op1).unwrap(), 0);
@@ -105,10 +102,7 @@ fn test_ct_eq_ne_ne() {
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_neq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
-    op0: &T0,
-    op1: &T1,
-) -> LimbChoice {
+pub fn ct_neq_mp_mp<T0: MpIntSliceCommon, T1: MpIntSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     !ct_eq_mp_mp(op0, op1)
 }
 
@@ -163,10 +157,7 @@ impl CtGeqMpMpKernel {
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_leq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
-    op0: &T0,
-    op1: &T1,
-) -> LimbChoice {
+pub fn ct_leq_mp_mp<T0: MpIntSliceCommon, T1: MpIntSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     let op0_nlimbs = op0.nlimbs();
     let op1_nlimbs = op1.nlimbs();
     let common_nlimbs = op0_nlimbs.min(op1_nlimbs);
@@ -186,14 +177,14 @@ pub fn ct_leq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
 }
 
 #[cfg(test)]
-fn test_ct_leq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
+fn test_ct_leq_mp_mp<T0: MpIntMutSlice, T1: MpIntMutSlice>() {
     use super::limb::LIMB_BYTES;
-    use super::limbs_buffer::MpIntMutByteSlicePriv as _;
+    use super::limbs_buffer::MpIntMutSlicePriv as _;
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     // [0 1]
     op0.store_l(0, 1);
     // [0 1]
@@ -202,10 +193,10 @@ fn test_ct_leq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     assert_eq!(ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
     assert_eq!(ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 1);
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     // [0 1]
     op0.store_l(0, 1);
     // [0 2]
@@ -214,10 +205,10 @@ fn test_ct_leq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     assert_eq!(ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
     assert_eq!(ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 1);
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     // [0 1]
     op0.store_l(0, 1);
     // [1 0]
@@ -226,10 +217,10 @@ fn test_ct_leq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     assert_eq!(ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
     assert_eq!(ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     // [1 0]
     op0.store_l(1, 1);
     // [0 1]
@@ -238,10 +229,10 @@ fn test_ct_leq_mp_mp<T0: MpIntMutByteSlice, T1: MpIntMutByteSlice>() {
     assert_eq!(ct_leq_mp_mp(&op0.split_at(LIMB_BYTES).1, &op1).unwrap(), 1);
     assert_eq!(ct_leq_mp_mp(&op0, &op1.split_at(LIMB_BYTES).1).unwrap(), 0);
 
-    let mut op0: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op0 = T0::from_bytes(&mut op0).unwrap();
-    let mut op1: [u8; 2 * LIMB_BYTES] = [0; 2 * LIMB_BYTES];
-    let mut op1 = T1::from_bytes(&mut op1).unwrap();
+    let mut op0 = tst_mk_mp_backing_vec!(T0, 2 * LIMB_BYTES);
+    let mut op0 = T0::from_slice(&mut op0).unwrap();
+    let mut op1 = tst_mk_mp_backing_vec!(T1, 2 * LIMB_BYTES);
+    let mut op1 = T1::from_slice(&mut op1).unwrap();
     // [1 1]
     op0.store_l(0, 1);
     op0.store_l(1, 1);
@@ -278,10 +269,7 @@ fn test_ct_leq_ne_ne() {
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_lt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
-    op0: &T0,
-    op1: &T1,
-) -> LimbChoice {
+pub fn ct_lt_mp_mp<T0: MpIntSliceCommon, T1: MpIntSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     !ct_geq_mp_mp(op0, op1)
 }
 
@@ -293,10 +281,7 @@ pub fn ct_lt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_geq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
-    op0: &T0,
-    op1: &T1,
-) -> LimbChoice {
+pub fn ct_geq_mp_mp<T0: MpIntSliceCommon, T1: MpIntSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     ct_leq_mp_mp(op1, op0)
 }
 
@@ -308,14 +293,11 @@ pub fn ct_geq_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
 ///
 /// * `op0` - The first operand as a multiprecision integer byte buffer.
 /// * `op1` - The second operand as a multiprecision integer byte buffer.
-pub fn ct_gt_mp_mp<T0: MpIntByteSliceCommon, T1: MpIntByteSliceCommon>(
-    op0: &T0,
-    op1: &T1,
-) -> LimbChoice {
+pub fn ct_gt_mp_mp<T0: MpIntSliceCommon, T1: MpIntSliceCommon>(op0: &T0, op1: &T1) -> LimbChoice {
     !ct_leq_mp_mp(op0, op1)
 }
 
-pub fn ct_is_zero_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> LimbChoice {
+pub fn ct_is_zero_mp<T0: MpIntSliceCommon>(op0: &T0) -> LimbChoice {
     let mut is_nz: LimbType = 0;
     for i in 0..op0.nlimbs() {
         let op0_val = op0.load_l(i);
@@ -324,7 +306,7 @@ pub fn ct_is_zero_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> LimbChoice {
     LimbChoice::from(ct_is_zero_l(is_nz))
 }
 
-pub fn ct_is_one_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> LimbChoice {
+pub fn ct_is_one_mp<T0: MpIntSliceCommon>(op0: &T0) -> LimbChoice {
     if op0.is_empty() {
         return LimbChoice::from(0);
     }
@@ -340,7 +322,7 @@ pub fn ct_is_one_mp<T0: MpIntByteSliceCommon>(op0: &T0) -> LimbChoice {
     LimbChoice::from(ct_is_zero_l(tail_is_not_one | head_is_nz))
 }
 
-pub fn ct_leq_mp_l<T0: MpIntByteSliceCommon>(op0: &T0, op1: LimbType) -> LimbChoice {
+pub fn ct_leq_mp_l<T0: MpIntSliceCommon>(op0: &T0, op1: LimbType) -> LimbChoice {
     if op0.is_empty() {
         return LimbChoice::from(1);
     }
