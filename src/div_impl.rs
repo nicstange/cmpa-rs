@@ -413,7 +413,6 @@ fn test_limbs_from_be_bytes<DT: MpIntMutSlice, const N: usize>(
 #[cfg(test)]
 fn test_ct_div_mp_mp<UT: MpIntMutSlice, VT: MpIntMutSlice, QT: MpIntMutSlice>() {
     use super::cmp_impl::ct_eq_mp_mp;
-    use super::limbs_buffer::MpIntMutSlicePriv as _;
 
     fn div_and_check<UT: MpIntMutSlice, VT: MpIntMutSlice, QT: MpIntMutSlice>(
         u: &UT::SelfT<'_>,
@@ -432,24 +431,51 @@ fn test_ct_div_mp_mp<UT: MpIntMutSlice, VT: MpIntMutSlice, QT: MpIntMutSlice>() 
         let mut q = tst_mk_mp_backing_vec!(QT, q_len);
         q.fill(0xffu8.into());
         let mut q = QT::from_slice(&mut q).unwrap();
-        let mut rem = tst_mk_mp_backing_vec!(UT, u.len());
-        let mut rem = UT::from_slice(&mut rem).unwrap();
-        rem.copy_from(u);
-        let (mut rem_h, mut rem_l) = if split_u {
+        let divisor = CtMpDivisor::new(v).unwrap();
+        let mut rem_buf = if split_u {
             let split_point = if UT::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
                 LIMB_BYTES + 1
             } else {
                 LIMB_BYTES
             };
-            let (rem_h, rem_l) = rem.split_at(split_point.min(u.len()));
-            (Some(rem_h), rem_l)
+            let split_point = split_point.min(u.len());
+            let mut rem_l_buf = tst_mk_mp_backing_vec!(UT, split_point);
+            let mut rem_h_buf = tst_mk_mp_backing_vec!(UT, u.len() - split_point);
+            let mut rem_composite = CompositeLimbsBuffer::new([
+                UT::from_slice(&mut rem_l_buf).unwrap(),
+                UT::from_slice(&mut rem_h_buf).unwrap(),
+            ]);
+            for i in 0..u.nlimbs() {
+                rem_composite.store(i, u.load_l(i));
+            }
+            drop(rem_composite);
+            ct_div_mp_mp(
+                Some(&mut UT::from_slice(&mut rem_h_buf).unwrap()),
+                &mut UT::from_slice(&mut rem_l_buf).unwrap(),
+                &divisor,
+                Some(&mut q),
+            )
+            .unwrap();
+            let rem_composite = CompositeLimbsBuffer::new([
+                UT::from_slice(&mut rem_l_buf).unwrap(),
+                UT::from_slice(&mut rem_h_buf).unwrap(),
+            ]);
+            let mut rem_buf = tst_mk_mp_backing_vec!(UT, u.len());
+            let mut rem = UT::from_slice(&mut rem_buf).unwrap();
+            for i in 0..u.nlimbs() {
+                rem.store_l(i, rem_composite.load(i));
+            }
+            drop(rem);
+            rem_buf
         } else {
-            (None, rem.coerce_lifetime())
+            let mut rem_buf = tst_mk_mp_backing_vec!(UT, u.len());
+            let mut rem = UT::from_slice(&mut rem_buf).unwrap();
+            rem.copy_from(u);
+            ct_div_mp_mp(None, &mut rem, &divisor, Some(&mut q)).unwrap();
+            drop(rem);
+            rem_buf
         };
-        let divisor = CtMpDivisor::new(v).unwrap();
-        ct_div_mp_mp(rem_h.as_mut(), &mut rem_l, &divisor, Some(&mut q)).unwrap();
-        drop(rem_h);
-        drop(rem_l);
+        let rem = UT::from_slice(&mut rem_buf).unwrap();
 
         // Multiply q by v again and add the remainder back, the result should match the
         // initial u. Reserve one extra limb, which is expected to come to zero.
