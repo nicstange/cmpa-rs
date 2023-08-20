@@ -957,11 +957,7 @@ pub trait MpUIntSliceCommonPriv: MpUIntCommonPriv {
     fn take(self, nbytes: usize) -> (Self, Self);
 }
 
-pub trait MpUIntSliceCommon: MpUIntSliceCommonPriv + MpUIntCommon {
-    fn limbs_align_len(nbytes: usize) -> usize {
-        Self::_limbs_align_len(nbytes)
-    }
-}
+pub trait MpUIntSliceCommon: MpUIntSliceCommonPriv + MpUIntCommon {}
 
 pub trait MpUIntSlicePriv: MpUIntSliceCommon + MpUInt {
     type SelfT<'a>: MpUIntSlice<BackingSliceElementType = Self::BackingSliceElementType>
