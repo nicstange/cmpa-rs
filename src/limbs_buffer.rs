@@ -7,7 +7,7 @@
 //! provides a couple of utilities for accessing these byte buffers in units of
 //! [`LimbType`].
 
-use core::{self, cmp, convert, fmt, marker, mem};
+use core::{self, cmp, convert, fmt, marker, mem, slice};
 
 use super::limb::{
     ct_find_first_set_bit_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_is_zero_l,
@@ -2757,4 +2757,16 @@ fn test_composite_limbs_buffer_store_le() {
 #[test]
 fn test_composite_limbs_buffer_store_ne() {
     test_composite_limbs_buffer_store_with_aligned_lengths::<MpMutNativeEndianUIntLimbsSlice>();
+}
+
+pub fn limb_slice_as_bytes_mut(limbs: &mut [LimbType]) -> &mut [u8] {
+    let len = mem::size_of_val(limbs);
+    let ptr = limbs.as_mut_ptr() as *mut u8;
+    unsafe { slice::from_raw_parts_mut(ptr, len) }
+}
+
+pub fn limb_slice_as_bytes(limbs: &[LimbType]) -> &[u8] {
+    let len = mem::size_of_val(limbs);
+    let ptr = limbs.as_ptr() as *const u8;
+    unsafe { slice::from_raw_parts(ptr, len) }
 }

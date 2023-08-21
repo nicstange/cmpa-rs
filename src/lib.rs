@@ -27,10 +27,11 @@ pub use limb::{
 
 pub use limbs_buffer::{
     clear_bits_above_mp, clear_bits_below_mp, ct_clear_bits_above_mp, ct_clear_bits_below_mp,
-    ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_swap_cond_mp, MpBigEndianUIntByteSlice,
-    MpLittleEndianUIntByteSlice, MpMutBigEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice,
-    MpMutNativeEndianUIntLimbsSlice, MpMutUInt, MpMutUIntSlice, MpNativeEndianUIntLimbsSlice,
-    MpUInt, MpUIntCommon, MpUIntSlice, MpUIntSliceCommon,
+    ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_swap_cond_mp, limb_slice_as_bytes,
+    limb_slice_as_bytes_mut, MpBigEndianUIntByteSlice, MpLittleEndianUIntByteSlice,
+    MpMutBigEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice, MpMutNativeEndianUIntLimbsSlice,
+    MpMutUInt, MpMutUIntSlice, MpNativeEndianUIntLimbsSlice, MpUInt, MpUIntCommon, MpUIntSlice,
+    MpUIntSliceCommon,
 };
 
 pub use add_impl::{
