@@ -10,8 +10,8 @@
 use core::{self, cmp, convert, fmt, marker, mem, slice};
 
 use super::limb::{
-    ct_find_first_set_bit_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_is_zero_l,
-    ct_lsb_mask_l, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
+    ct_find_first_set_bit_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_is_nonzero_l,
+    ct_is_zero_l, ct_lsb_mask_l, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
 };
 use super::usize_ct_cmp::ct_eq_usize_usize;
 
@@ -811,6 +811,39 @@ pub trait MpUIntCommonPriv: Sized {
     }
 }
 
+#[derive(Debug)]
+pub struct MpUIntCommonTryIntoNativeError {}
+
+macro_rules! _mpu_try_into_native_u {
+    ($nt:ty, $name:ident) => {
+        fn $name(&self) -> Result<$nt, MpUIntCommonTryIntoNativeError> {
+            let native_type_nlimbs = ct_mp_nlimbs(mem::size_of::<$nt>());
+            let nbytes_from_last = ((mem::size_of::<$nt>() - 1) % LIMB_BYTES) + 1;
+            let mut head_is_nonzero = 0;
+            for i in native_type_nlimbs..self.nlimbs() {
+                head_is_nonzero |= self.load_l(i);
+            }
+            let last_val = self.load_l(native_type_nlimbs - 1);
+            let last_mask = ct_lsb_mask_l(8 * nbytes_from_last as u32);
+            head_is_nonzero |= last_val & !last_mask;
+            if ct_is_nonzero_l(head_is_nonzero) != 0 {
+                return Err(MpUIntCommonTryIntoNativeError {});
+            }
+            let mut result: $nt = (last_val & last_mask) as $nt;
+            let mut i = native_type_nlimbs - 1;
+            while i > 0 {
+                i -= 1;
+                // This loop only gets executed in case
+                // LIMB_BITS < $nt::BITS. Avoid a compiler error for smaller
+                // native types due to a too large shift distance.
+                result <<= LIMB_BITS.min(<$nt>::BITS - 1);
+                result |= self.load_l_full(i) as $nt;
+            }
+            Ok(result)
+        }
+    };
+}
+
 pub trait MpUIntCommon: MpUIntCommonPriv + fmt::LowerHex {
     fn len(&self) -> usize {
         self._len()
@@ -890,9 +923,31 @@ pub trait MpUIntCommon: MpUIntCommonPriv + fmt::LowerHex {
             false
         }
     }
+
+    _mpu_try_into_native_u!(u8, try_into_u8);
+    _mpu_try_into_native_u!(u16, try_into_u16);
+    _mpu_try_into_native_u!(u32, try_into_u32);
+    _mpu_try_into_native_u!(u64, try_into_u64);
 }
 
 pub trait MpUInt: MpUIntCommon {}
+
+macro_rules! _mpu_set_to_native_u {
+    ($nt:ty, $name:ident) => {
+        fn $name(&mut self, mut value: $nt) {
+            debug_assert!(self.len() >= mem::size_of::<$nt>());
+            self.clear_bytes_above(mem::size_of::<$nt>());
+            let native_type_nlimbs = ct_mp_nlimbs(mem::size_of::<$nt>());
+            for i in 0..native_type_nlimbs {
+                self.store_l(i, (value & (!(0 as LimbType) as $nt)) as LimbType);
+                // This loop only gets executed more than once in case LIMB_BITS < $nt::BITS.
+                // Avoid a compiler error for smaller native types due to a too large
+                // shift distance.
+                value >>= LIMB_BITS.min(<$nt>::BITS - 1);
+            }
+        }
+    };
+}
 
 pub trait MpMutUInt: MpUIntCommon {
     fn store_l_full(&mut self, i: usize, value: LimbType);
@@ -932,6 +987,11 @@ pub trait MpMutUInt: MpUIntCommon {
         l |= val_mask;
         self.store_l(limb_index, l)
     }
+
+    _mpu_set_to_native_u!(u8, set_to_u8);
+    _mpu_set_to_native_u!(u16, set_to_u16);
+    _mpu_set_to_native_u!(u32, set_to_u32);
+    _mpu_set_to_native_u!(u64, set_to_u64);
 }
 
 pub trait MpUIntSliceCommonPriv: MpUIntCommonPriv {

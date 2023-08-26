@@ -30,8 +30,8 @@ pub use limbs_buffer::{
     ct_find_first_set_bit_mp, ct_find_last_set_bit_mp, ct_swap_cond_mp, limb_slice_as_bytes,
     limb_slice_as_bytes_mut, MpBigEndianUIntByteSlice, MpLittleEndianUIntByteSlice,
     MpMutBigEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice, MpMutNativeEndianUIntLimbsSlice,
-    MpMutUInt, MpMutUIntSlice, MpNativeEndianUIntLimbsSlice, MpUInt, MpUIntCommon, MpUIntSlice,
-    MpUIntSliceCommon,
+    MpMutUInt, MpMutUIntSlice, MpNativeEndianUIntLimbsSlice, MpUInt, MpUIntCommon,
+    MpUIntCommonTryIntoNativeError, MpUIntSlice, MpUIntSliceCommon,
 };
 
 pub use add_impl::{
