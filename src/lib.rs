@@ -76,4 +76,6 @@ pub use prime_impl::{
 
 pub use shift_impl::{ct_lshift_mp, ct_rshift_mp};
 
-pub use usize_ct_cmp::ct_eq_usize_usize;
+pub use usize_ct_cmp::{
+    ct_eq_usize_usize, ct_geq_usize_usize, ct_gt_usize_usize, ct_leq_usize_usize, ct_lt_usize_usize,
+};
