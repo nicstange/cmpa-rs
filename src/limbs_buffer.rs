@@ -955,6 +955,24 @@ pub trait MpMutUInt: MpUIntCommon {
     fn clear_bytes_above(&mut self, begin: usize);
     fn clear_bytes_below(&mut self, end: usize);
 
+    fn clear_bytes_above_cond(&mut self, begin: usize, cond: LimbChoice) {
+        if begin >= self.len() {
+            return;
+        }
+
+        let mask = cond.select(!0, 0);
+        let begin_limb = begin / LIMB_BYTES;
+        let begin_in_limb = begin % LIMB_BYTES;
+        let val = self.load_l(begin_limb);
+        let first_mask = !ct_lsb_mask_l(8 * begin_in_limb as u32) | mask;
+        let val = val & first_mask;
+        self.store_l(begin_limb, val);
+
+        for i in begin_limb + 1..self.nlimbs() {
+            self.store_l(i, self.load_l(i) & mask);
+        }
+    }
+
     fn copy_from<S: MpUIntCommon>(&'_ mut self, src: &S) {
         let src_nlimbs = src.nlimbs();
         let dst_nlimbs = self.nlimbs();
@@ -974,6 +992,28 @@ pub trait MpMutUInt: MpUIntCommon {
         debug_assert!(src_nlimbs < dst_nlimbs || (high_limb & !self.partial_high_mask()) == 0);
         self.store_l(common_nlimbs - 1, high_limb);
         self.clear_bytes_above(src.len());
+    }
+
+    fn copy_from_cond<S: MpUIntCommon>(&'_ mut self, src: &S, cond: LimbChoice) {
+        let src_nlimbs = src.nlimbs();
+        let dst_nlimbs = self.nlimbs();
+        debug_assert!(find_last_set_byte_mp(src) <= self.len());
+
+        if src_nlimbs == 0 {
+            self.clear_bytes_above_cond(0, cond);
+            return;
+        } else if dst_nlimbs == 0 {
+            return;
+        }
+        let common_nlimbs = src_nlimbs.min(dst_nlimbs);
+        for i in 0..common_nlimbs - 1 {
+            let val = cond.select(self.load_l_full(i), src.load_l_full(i));
+            self.store_l_full(i, val);
+        }
+        let high_limb = cond.select(self.load_l(common_nlimbs - 1), src.load_l(common_nlimbs - 1));
+        debug_assert!(src_nlimbs < dst_nlimbs || (high_limb & !self.partial_high_mask()) == 0);
+        self.store_l(common_nlimbs - 1, high_limb);
+        self.clear_bytes_above_cond(src.len(), cond);
     }
 
     fn set_bit_to(&mut self, pos: usize, val: bool) {
