@@ -4,15 +4,14 @@ use super::euclid_impl::ct_gcd_odd_mp_mp;
 use super::hexstr;
 use super::limb::{
     ct_eq_l_l, ct_geq_l_l, ct_is_zero_l, ct_lt_l_l, ct_sub_l_l_b, CtLDivisor, LimbChoice, LimbType,
-    LIMB_BITS, LIMB_BYTES,
+    LIMB_BYTES,
 };
 use super::limbs_buffer::{
     ct_find_first_set_bit_mp, MpBigEndianUIntByteSlice, MpMutNativeEndianUIntLimbsSlice, MpMutUInt,
     MpMutUIntSlice, MpUIntCommon, MpUIntSlicePriv as _,
 };
 use super::montgomery_impl::{
-    ct_montgomery_mul_mod_cond_mp_mp, ct_montgomery_mul_mod_mp_mp,
-    ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryNegN0InvModLMpError,
+    ct_montgomery_mul_mod_mp_mp, ct_montgomery_neg_n0_inv_mod_l_mp, CtMontgomeryNegN0InvModLMpError,
 };
 use super::usize_ct_cmp::{ct_eq_usize_usize, ct_lt_usize_usize};
 
@@ -303,25 +302,15 @@ pub fn ct_prime_test_miller_rabin_mp<BT: MpUIntCommon, PT: MpUIntCommon, RXT: Mp
     let mut exp_bit_pos = 8 * p.len();
     while exp_bit_pos > 1 {
         exp_bit_pos -= 1;
-
         ct_montgomery_mul_mod_mp_mp(&mut pow_scratch, &base_pow, &base_pow, p, neg_p0_inv_mod_l)
             .unwrap();
-
+        ct_montgomery_mul_mod_mp_mp(&mut base_pow, &pow_scratch, mg_base, p, neg_p0_inv_mod_l)
+            .unwrap();
+        // If the current exponent bit is zero, "undo" the latter multiplication.
         // The exponent is p - 1, p is odd, so the lsb of p - 1 is zero and there's no
         // borrow into the next bit position. exp_bit_pos != 0 by the loop's
         // condition, so simply load from the oiginal p itself.
-        let exp_bit_limb_index = exp_bit_pos / LIMB_BITS as usize;
-        let exp_bit_pos_in_limb = exp_bit_pos % LIMB_BITS as usize;
-        let exp_bit = (p.load_l(exp_bit_limb_index) >> exp_bit_pos_in_limb) & 1;
-        ct_montgomery_mul_mod_cond_mp_mp(
-            &mut base_pow,
-            &pow_scratch,
-            mg_base,
-            p,
-            neg_p0_inv_mod_l,
-            LimbChoice::from(exp_bit),
-        )
-        .unwrap();
+        base_pow.copy_from_cond(&pow_scratch, !p.test_bit(exp_bit_pos));
 
         // Compare the current power of the base against 1 and -1 (in Montgomery form).
         let mut is_one = 1;
