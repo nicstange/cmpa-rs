@@ -62,7 +62,7 @@ pub use montgomery_impl::{
     ct_exp_mod_odd_mp_mp, ct_montgomery_mul_mod_mp_mp, ct_montgomery_neg_n0_inv_mod_l_mp,
     ct_montgomery_radix2_mod_n_mp, ct_montgomery_redc_mp, ct_montogmery_exp_mod_odd_mp_mp,
     ct_to_montgomery_form_direct_mp, ct_to_montgomery_form_mp, CtExpModOddMpMpError,
-    CtMontgomeryExpModOddMpMpError, CtMontgomeryMulModCondMpMpError, CtMontgomeryMulModMpMpError,
+    CtMontgomeryExpModOddMpMpError, CtMontgomeryMulModMpMpError,
     CtMontgomeryNegN0InvModLMpError, CtMontgomeryRedcMpError, CtMontgomeryTransformationError,
     CtToMontgomeryFormMpError,
 };

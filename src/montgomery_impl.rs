@@ -330,13 +330,13 @@ fn test_ct_montgomery_redc_ne_ne() {
 }
 
 #[derive(Debug)]
-pub enum CtMontgomeryMulModCondMpMpError {
+pub enum CtMontgomeryMulModMpMpError {
     InvalidModulus,
     InsufficientResultSpace,
     InconsistentInputOperandLength,
 }
 
-pub fn ct_montgomery_mul_mod_cond_mp_mp<
+pub fn ct_montgomery_mul_mod_mp_mp<
     RT: MpMutUIntSlice,
     T0: MpUIntCommon,
     T1: MpUIntCommon,
@@ -347,25 +347,24 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
     op1: &T1,
     n: &NT,
     neg_n0_inv_mod_l: LimbType,
-    cond: LimbChoice,
-) -> Result<(), CtMontgomeryMulModCondMpMpError> {
+) -> Result<(), CtMontgomeryMulModMpMpError> {
     // This is an implementation of the "Finely Integrated Operand Scanning (FIOS)
     // Method" approach to fused multiplication and Montgomery reduction, as
     // described in "Analyzing and Comparing Montgomery Multiplication
     // Algorithm", IEEE Micro, 16(3):26-33, June 1996.
     if n.is_empty() {
-        return Err(CtMontgomeryMulModCondMpMpError::InvalidModulus);
+        return Err(CtMontgomeryMulModMpMpError::InvalidModulus);
     }
     let n0_val = n.load_l(0);
     if ct_eq_l_l(n0_val & 1, 0).unwrap() != 0 {
-        return Err(CtMontgomeryMulModCondMpMpError::InvalidModulus);
+        return Err(CtMontgomeryMulModMpMpError::InvalidModulus);
     }
     if !n.len_is_compatible_with(result.len()) {
-        return Err(CtMontgomeryMulModCondMpMpError::InsufficientResultSpace);
+        return Err(CtMontgomeryMulModMpMpError::InsufficientResultSpace);
     }
     debug_assert!(n.nlimbs() <= result.nlimbs());
     if !op0.len_is_compatible_with(n.len()) || !op1.len_is_compatible_with(n.len()) {
-        return Err(CtMontgomeryMulModCondMpMpError::InconsistentInputOperandLength);
+        return Err(CtMontgomeryMulModMpMpError::InconsistentInputOperandLength);
     }
     debug_assert!(op0.nlimbs() <= n.nlimbs());
     debug_assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
@@ -389,12 +388,6 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
         debug_assert!(result_carry <= 1); // Loop invariant.
         let op0_val = op0.load_l(i);
 
-        // If cond == false, then the Montgomery kernel's multiplication factor,
-        // MpCtMontgomeryRedcKernel will be set to zero below and repeated application
-        // of the kernel would effectively shift the result by one word to the right,
-        // pulling in result_carry from the left.
-        result_carry = cond.select(op0_val, result_carry);
-
         // Do not read the potentially partial, stale high limb directly from result,
         // use the result_high_shadow shadow instead.
         let result_val = if n_nlimbs != 1 {
@@ -402,17 +395,16 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
         } else {
             result_high_shadow
         };
-        let op1_val = cond.select(0, op1.load_l(0));
+        let op1_val = op1.load_l(0);
         let (mut op0_op1_add_carry, result_val) =
             ct_mul_add_l_l_l_c(result_val, op0_val, op1_val, 0);
 
         let mut redc_kernel =
             CtMontgomeryRedcKernel::start(LIMB_BITS, result_val, n0_val, neg_n0_inv_mod_l);
-        redc_kernel.m = cond.select(0, redc_kernel.m);
 
         let mut j = 0;
         while j + 1 < op1_nlimbs {
-            let op1_val = cond.select(0, op1.load_l(j + 1));
+            let op1_val = op1.load_l(j + 1);
 
             // Do not read the potentially partial, stale high limb directly from result,
             // use the result_high_shadow shadow instead.
@@ -453,15 +445,13 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
         debug_assert_eq!(j + 1, n_nlimbs);
 
         let mut result_val;
-        debug_assert!(cond.unwrap() == 0 || result_carry <= 1);
-        debug_assert!(cond.unwrap() == 1 || op0_op1_add_carry == 0);
+        debug_assert!(result_carry <= 1);
         (result_carry, result_val) = ct_add_l_l(result_carry, op0_op1_add_carry);
         debug_assert!(result_carry <= 1);
         debug_assert!(result_carry == 0 || result_val == 0);
 
         (result_carry, result_val) = redc_kernel.finish(result_val);
         debug_assert!(result_carry <= 1);
-        debug_assert!(cond.unwrap() == 1 || result_carry == 0);
         result_high_shadow = result_val;
     }
 
@@ -478,7 +468,6 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
 
         let mut redc_kernel =
             CtMontgomeryRedcKernel::start(LIMB_BITS, result_val, n0_val, neg_n0_inv_mod_l);
-        redc_kernel.m = cond.select(0, redc_kernel.m);
 
         let mut j = 0;
         while j + 1 < n_nlimbs {
@@ -517,7 +506,7 @@ pub fn ct_montgomery_mul_mod_cond_mp_mp<
 }
 
 #[cfg(test)]
-fn test_ct_montgomery_mul_mod_cond_mp_mp<
+fn test_ct_montgomery_mul_mod_mp_mp<
     RT: MpMutUIntSlice,
     T0: MpMutUIntSlice,
     T1: MpMutUIntSlice,
@@ -605,30 +594,12 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
                                     let mut result =
                                         RT::from_slice(_result.as_mut_slice()).unwrap();
                                     let mut mg_mul_result = result.shrink_to(n_len);
-                                    ct_montgomery_mul_mod_cond_mp_mp(
+                                    ct_montgomery_mul_mod_mp_mp(
                                         &mut mg_mul_result,
                                         &a,
                                         &b,
                                         &n,
                                         neg_n0_inv,
-                                        LimbChoice::from(0),
-                                    )
-                                    .unwrap();
-                                    let a_nlimbs = a.nlimbs();
-                                    for i in 0..a_nlimbs {
-                                        assert_eq!(mg_mul_result.load_l(i), a.load_l(i));
-                                    }
-                                    for i in a_nlimbs..mg_mul_result.nlimbs() {
-                                        assert_eq!(mg_mul_result.load_l(i), 0);
-                                    }
-
-                                    ct_montgomery_mul_mod_cond_mp_mp(
-                                        &mut mg_mul_result,
-                                        &a,
-                                        &b,
-                                        &n,
-                                        neg_n0_inv,
-                                        LimbChoice::from(1),
                                     )
                                     .unwrap();
                                     drop(mg_mul_result);
@@ -666,9 +637,9 @@ fn test_ct_montgomery_mul_mod_cond_mp_mp<
 }
 
 #[test]
-fn test_ct_montgomery_mul_mod_cond_be_be_be_be() {
+fn test_ct_montgomery_mul_mod_be_be_be_be() {
     use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
-    test_ct_montgomery_mul_mod_cond_mp_mp::<
+    test_ct_montgomery_mul_mod_mp_mp::<
         MpMutBigEndianUIntByteSlice,
         MpMutBigEndianUIntByteSlice,
         MpMutBigEndianUIntByteSlice,
@@ -677,9 +648,9 @@ fn test_ct_montgomery_mul_mod_cond_be_be_be_be() {
 }
 
 #[test]
-fn test_ct_montgomery_mul_mod_cond_le_le_le_le() {
+fn test_ct_montgomery_mul_mod_le_le_le_le() {
     use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
-    test_ct_montgomery_mul_mod_cond_mp_mp::<
+    test_ct_montgomery_mul_mod_mp_mp::<
         MpMutLittleEndianUIntByteSlice,
         MpMutLittleEndianUIntByteSlice,
         MpMutLittleEndianUIntByteSlice,
@@ -688,31 +659,14 @@ fn test_ct_montgomery_mul_mod_cond_le_le_le_le() {
 }
 
 #[test]
-fn test_ct_montgomery_mul_mod_cond_ne_ne_ne_ne() {
+fn test_ct_montgomery_mul_mod_ne_ne_ne_ne() {
     use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
-    test_ct_montgomery_mul_mod_cond_mp_mp::<
+    test_ct_montgomery_mul_mod_mp_mp::<
         MpMutNativeEndianUIntLimbsSlice,
         MpMutNativeEndianUIntLimbsSlice,
         MpMutNativeEndianUIntLimbsSlice,
         MpMutNativeEndianUIntLimbsSlice,
     >()
-}
-
-pub type CtMontgomeryMulModMpMpError = CtMontgomeryMulModCondMpMpError;
-
-pub fn ct_montgomery_mul_mod_mp_mp<
-    RT: MpMutUIntSlice,
-    T0: MpUIntCommon,
-    T1: MpUIntCommon,
-    NT: MpUIntCommon,
->(
-    result: &mut RT,
-    op0: &T0,
-    op1: &T1,
-    n: &NT,
-    neg_n0_inv_mod_l: LimbType,
-) -> Result<(), CtMontgomeryMulModMpMpError> {
-    ct_montgomery_mul_mod_cond_mp_mp(result, op0, op1, n, neg_n0_inv_mod_l, LimbChoice::from(1))
 }
 
 #[derive(Debug)]
@@ -822,13 +776,13 @@ pub fn ct_to_montgomery_form_mp<
     // All input arguments have been validated above, just unwrap().
     ct_montgomery_mul_mod_mp_mp(result, t, radix2_mod_n, n, neg_n0_inv_mod_l).map_err(
         |e| match e {
-            CtMontgomeryMulModCondMpMpError::InsufficientResultSpace => {
+            CtMontgomeryMulModMpMpError::InsufficientResultSpace => {
                 CtToMontgomeryFormMpError::InsufficientResultSpace
             }
-            CtMontgomeryMulModCondMpMpError::InvalidModulus => {
+            CtMontgomeryMulModMpMpError::InvalidModulus => {
                 CtToMontgomeryFormMpError::InvalidModulus
             }
-            CtMontgomeryMulModCondMpMpError::InconsistentInputOperandLength => {
+            CtMontgomeryMulModMpMpError::InconsistentInputOperandLength => {
                 // The multiplication's factors have been validated above, but play safe.
                 CtToMontgomeryFormMpError::InconsistentInputOperandLength
             }
