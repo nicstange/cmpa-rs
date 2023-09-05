@@ -961,15 +961,9 @@ fn _ct_montogmery_exp_mod_mp_mp<
         // Input arguments have been validated/setup by callers, just unwrap() the
         // result.
         ct_montgomery_mul_mod_mp_mp(&mut scratch, result, result, n, neg_n0_inv_mod_l).unwrap();
-        ct_montgomery_mul_mod_cond_mp_mp(
-            result,
-            &scratch,
-            op0,
-            n,
-            neg_n0_inv_mod_l,
-            exponent.test_bit(exponent_nbits - i - 1),
-        )
-        .unwrap();
+        ct_montgomery_mul_mod_mp_mp(result, &scratch, op0, n, neg_n0_inv_mod_l).unwrap();
+        // If the current exponent bit is zero, "undo" the latter multiplication.
+        result.copy_from_cond(&scratch, !exponent.test_bit(exponent_nbits - i - 1));
     }
 }
 
