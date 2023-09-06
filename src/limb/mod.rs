@@ -4,8 +4,6 @@ use core::arch::asm;
 use core::convert;
 use core::mem;
 use core::ops;
-#[cfg(feature = "zeroize")]
-use zeroize;
 
 /// The basic unit used by the multiprecision integer arithmetic implementation.
 ///
