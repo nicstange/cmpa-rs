@@ -1,5 +1,6 @@
 //! Implementation of multiprecision integer addition related primitives.
 
+use super::cmp_impl::{ct_lt_mp_mp, CtGeqMpMpKernel};
 use super::limb::{
     ct_add_l_l, ct_add_l_l_c, ct_find_last_set_byte_l, ct_sub_l_l, ct_sub_l_l_b, LimbChoice,
     LimbType, LIMB_BITS,
@@ -187,6 +188,150 @@ fn test_ct_add_cond_ne_ne() {
 
 pub fn ct_add_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(op0: &mut T0, op1: &T1) -> LimbType {
     ct_add_cond_mp_mp(op0, op1, LimbChoice::from(1))
+}
+
+#[derive(Debug)]
+pub enum CtAddModMpMpError {
+    InconsistentOperandLengths,
+}
+
+pub fn ct_add_mod_mp_mp<T0: MpMutUInt, T1: MpUIntCommon, NT: MpUIntCommon>(
+    op0: &mut T0,
+    op1: &T1,
+    n: &NT,
+) -> Result<(), CtAddModMpMpError> {
+    if !n.len_is_compatible_with(op0.len()) {
+        return Err(CtAddModMpMpError::InconsistentOperandLengths);
+    }
+    debug_assert!(op0.nlimbs() >= n.nlimbs());
+
+    debug_assert_ne!(ct_lt_mp_mp(op0, n).unwrap(), 0);
+    debug_assert_ne!(ct_lt_mp_mp(op1, n).unwrap(), 0);
+    debug_assert!(!n.is_empty());
+
+    let mut result_geq_n_kernel = CtGeqMpMpKernel::new();
+    let mut carry = 0;
+    let op1_n_common_nlimbs = op1.nlimbs().min(n.nlimbs());
+    for i in 0..op1_n_common_nlimbs {
+        let result_val;
+        (carry, result_val) = ct_add_l_l_c(op0.load_l(i), op1.load_l(i), carry);
+        result_geq_n_kernel.update(result_val, n.load_l(i));
+        if !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS || i != op0.nlimbs() - 1 {
+            op0.store_l_full(i, result_val);
+        } else {
+            op0.store_l(i, result_val & op0.partial_high_mask());
+        }
+    }
+    // Propagate the carry upwards.
+    for i in op1_n_common_nlimbs..n.nlimbs() {
+        let result_val;
+        (carry, result_val) = ct_add_l_l(op0.load_l(i), carry);
+        result_geq_n_kernel.update(result_val, n.load_l(i));
+        if !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS || i != op0.nlimbs() - 1 {
+            op0.store_l_full(i, result_val);
+        } else {
+            op0.store_l(i, result_val & op0.partial_high_mask());
+        }
+    }
+
+    // Subtract an n if the value is >= n to bring it back into range.
+    let ov = result_geq_n_kernel.finish() | LimbChoice::from(carry);
+    ct_sub_cond_mp_mp(op0, n, ov);
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn test_ct_add_mod_mp_mp<T0: MpMutUIntSlice, T1: MpMutUIntSlice, NT: MpMutUIntSlice>() {
+    use crate::limbs_buffer::MpUIntCommonPriv;
+
+    use super::cmp_impl::ct_eq_mp_mp;
+    use super::div_impl::{ct_mod_mp_mp, CtMpDivisor};
+    use super::limb::LIMB_BYTES;
+
+    let mut n = tst_mk_mp_backing_vec!(NT, LIMB_BYTES + 1);
+    let mut n = NT::from_slice(&mut n).unwrap();
+    for i in 0..n.nlimbs() {
+        if i != n.nlimbs() - 1 {
+            n.store_l_full(i, !0);
+        } else {
+            n.store_l(i, n.partial_high_mask());
+        }
+    }
+    let op0_max_len = T0::n_backing_elements_for_len(LIMB_BYTES + 1) * T0::BACKING_ELEMENT_SIZE;
+    n.clear_bytes_above(op0_max_len);
+    let n_divisor = CtMpDivisor::new(&n).unwrap();
+
+    for op0_len in 1..n.len() + 1 {
+        let mut op0 = tst_mk_mp_backing_vec!(T0, n.len());
+        let mut op0 = T0::from_slice(&mut op0).unwrap();
+        for op1_len in 1..op0_len + 1 {
+            let mut op1 = tst_mk_mp_backing_vec!(T1, op1_len);
+            let mut op1 = T1::from_slice(&mut op1).unwrap();
+            for i in 0..op0.nlimbs() {
+                if i != op0.nlimbs() - 1 {
+                    op0.store_l_full(i, !0);
+                } else {
+                    op0.store_l(i, op0.partial_high_mask());
+                }
+            }
+            op0.clear_bytes_above(op0_len);
+            ct_sub_mp_l(&mut op0, 1);
+            debug_assert_ne!(ct_lt_mp_mp(&op0, &n).unwrap(), 0);
+
+            for i in 0..op1.nlimbs() {
+                if i != op1.nlimbs() - 1 {
+                    op1.store_l_full(i, !0);
+                } else {
+                    op1.store_l(i, op1.partial_high_mask());
+                }
+            }
+            op1.clear_bytes_above(op1_len);
+            ct_sub_mp_l(&mut op1, 1);
+            debug_assert_ne!(ct_lt_mp_mp(&op1, &n).unwrap(), 0);
+
+            let mut expected = tst_mk_mp_backing_vec!(T0, op0_len + 1);
+            let mut expected = T0::from_slice(&mut expected).unwrap();
+            expected.copy_from(&op0);
+            ct_add_mp_mp(&mut expected, &op1);
+            ct_mod_mp_mp(None, &mut expected, &n_divisor);
+
+            ct_add_mod_mp_mp(&mut op0, &op1, &n).unwrap();
+            debug_assert_ne!(ct_lt_mp_mp(&op0, &n).unwrap(), 0);
+
+            assert_ne!(ct_eq_mp_mp(&expected, &op0).unwrap(), 0);
+        }
+    }
+}
+
+#[test]
+fn test_ct_add_mod_be_be_be() {
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_add_mod_mp_mp::<
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+    >();
+}
+
+#[test]
+fn test_ct_add_mod_le_le_le() {
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_add_mod_mp_mp::<
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+    >();
+}
+
+#[test]
+fn test_ct_add_mod_ne_ne_ne() {
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_add_mod_mp_mp::<
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+    >();
 }
 
 // Add a limb to a multiprecision integer.
@@ -412,6 +557,142 @@ fn test_ct_sub_cond_ne_ne() {
 
 pub fn ct_sub_mp_mp<T0: MpMutUInt, T1: MpUIntCommon>(op0: &mut T0, op1: &T1) -> LimbType {
     ct_sub_cond_mp_mp(op0, op1, LimbChoice::from(1))
+}
+
+pub type CtSubModMpMpError = CtAddModMpMpError;
+
+pub fn ct_sub_mod_mp_mp<T0: MpMutUInt, T1: MpUIntCommon, NT: MpUIntCommon>(
+    op0: &mut T0,
+    op1: &T1,
+    n: &NT,
+) -> Result<(), CtSubModMpMpError> {
+    if !n.len_is_compatible_with(op0.len()) {
+        return Err(CtSubModMpMpError::InconsistentOperandLengths);
+    }
+    debug_assert!(op0.nlimbs() >= n.nlimbs());
+
+    debug_assert_ne!(ct_lt_mp_mp(op0, n).unwrap(), 0);
+    debug_assert_ne!(ct_lt_mp_mp(op1, n).unwrap(), 0);
+    debug_assert!(!n.is_empty());
+
+    let mut borrow = 0;
+    let op1_n_common_nlimbs = op1.nlimbs().min(n.nlimbs());
+    for i in 0..op1_n_common_nlimbs {
+        let result_val;
+        (borrow, result_val) = ct_sub_l_l_b(op0.load_l(i), op1.load_l(i), borrow);
+        if !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS || i != op0.nlimbs() - 1 {
+            op0.store_l_full(i, result_val);
+        } else {
+            op0.store_l(i, result_val & op0.partial_high_mask());
+        }
+    }
+    // Propagate the borrow upwards.
+    for i in op1_n_common_nlimbs..n.nlimbs() {
+        let result_val;
+        (borrow, result_val) = ct_sub_l_l(op0.load_l(i), borrow);
+        if !T0::SUPPORTS_UNALIGNED_BUFFER_LENGTHS || i != op0.nlimbs() - 1 {
+            op0.store_l_full(i, result_val);
+        } else {
+            op0.store_l(i, result_val & op0.partial_high_mask());
+        }
+    }
+
+    // Add an n back if negative to bring the result back into range.
+    ct_add_cond_mp_mp(op0, n, LimbChoice::from(borrow));
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn test_ct_sub_mod_mp_mp<T0: MpMutUIntSlice, T1: MpMutUIntSlice, NT: MpMutUIntSlice>() {
+    use crate::limbs_buffer::MpUIntCommonPriv;
+    use super::cmp_impl::ct_eq_mp_mp;
+    use super::limb::LIMB_BYTES;
+
+    let mut n = tst_mk_mp_backing_vec!(NT, LIMB_BYTES + 1);
+    let mut n = NT::from_slice(&mut n).unwrap();
+    for i in 0..n.nlimbs() {
+        if i != n.nlimbs() - 1 {
+            n.store_l_full(i, !0);
+        } else {
+            n.store_l(i, n.partial_high_mask());
+        }
+    }
+    let op0_max_len = T0::n_backing_elements_for_len(LIMB_BYTES + 1) * T0::BACKING_ELEMENT_SIZE;
+    n.clear_bytes_above(op0_max_len);
+
+    for op0_len in 1..n.len() + 1 {
+        let mut op0 = tst_mk_mp_backing_vec!(T0, n.len());
+        let mut op0 = T0::from_slice(&mut op0).unwrap();
+        for op1_len in 1..(op0_len + 1).min(n.len()) + 1 {
+            let mut op1 = tst_mk_mp_backing_vec!(T1, op1_len);
+            let mut op1 = T1::from_slice(&mut op1).unwrap();
+            for i in 0..op0.nlimbs() {
+                if i != op0.nlimbs() - 1 {
+                    op0.store_l_full(i, !0);
+                } else {
+                    op0.store_l(i, op0.partial_high_mask());
+                }
+            }
+            op0.clear_bytes_above(op0_len);
+            ct_sub_mp_l(&mut op0, 1);
+            debug_assert_ne!(ct_lt_mp_mp(&op0, &n).unwrap(), 0);
+
+            for i in 0..op1.nlimbs() {
+                if i != op1.nlimbs() - 1 {
+                    op1.store_l_full(i, !0);
+                } else {
+                    op1.store_l(i, op1.partial_high_mask());
+                }
+            }
+            op1.clear_bytes_above(op1_len);
+            ct_sub_mp_l(&mut op1, 1);
+            debug_assert_ne!(ct_lt_mp_mp(&op1, &n).unwrap(), 0);
+
+            let mut expected = tst_mk_mp_backing_vec!(T0, n.len() + 1);
+            let mut expected = T0::from_slice(&mut expected).unwrap();
+            expected.copy_from(&op0);
+            let borrow = ct_sub_mp_mp(&mut expected, &op1);
+            if borrow != 0 {
+                ct_add_mp_mp(&mut expected, &n);
+            }
+
+            ct_sub_mod_mp_mp(&mut op0, &op1, &n).unwrap();
+            debug_assert_ne!(ct_lt_mp_mp(&op0, &n).unwrap(), 0);
+
+            assert_ne!(ct_eq_mp_mp(&expected, &op0).unwrap(), 0);
+        }
+    }
+}
+
+#[test]
+fn test_ct_sub_mod_be_be_be() {
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_sub_mod_mp_mp::<
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+        MpMutBigEndianUIntByteSlice,
+    >();
+}
+
+#[test]
+fn test_ct_sub_mod_le_le_le() {
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_sub_mod_mp_mp::<
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+        MpMutLittleEndianUIntByteSlice,
+    >();
+}
+
+#[test]
+fn test_ct_sub_mod_ne_ne_ne() {
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_sub_mod_mp_mp::<
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+        MpMutNativeEndianUIntLimbsSlice,
+    >();
 }
 
 // Subtract a limb from a multiprecision integer.
