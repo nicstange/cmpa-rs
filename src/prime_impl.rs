@@ -375,7 +375,7 @@ fn test_ct_prime_test_miller_rabin_mp<
         let mut base_mod_p = tst_mk_mp_backing_vec!(BT, base.len());
         let mut base_mod_p = BT::from_slice(&mut base_mod_p).unwrap();
         base_mod_p.copy_from(base);
-        ct_mod_mp_mp(None, &mut base_mod_p, &CtMpDivisor::new(p).unwrap());
+        ct_mod_mp_mp(None, &mut base_mod_p, &CtMpDivisor::new(p, None).unwrap());
 
         let mut mg_radix2_mod_p = tst_mk_mp_backing_vec!(RXT, p.len());
         let mut mg_radix2_mod_p = RXT::from_slice(&mut mg_radix2_mod_p).unwrap();

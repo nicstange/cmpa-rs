@@ -114,7 +114,7 @@ pub fn ct_lcm_mp_mp<RT: MpMutUInt, T0: MpMutUInt, T1: MpMutUIntSlice>(
     ct_lshift_mp(&mut scaled_prod_low, scaling_shift);
 
     // Finally, do the division and be done.
-    let gcd = CtMpDivisor::new(gcd).unwrap();
+    let gcd = CtMpDivisor::new(gcd, None).unwrap();
     ct_div_mp_mp(
         Some(&mut scaled_prod_high),
         &mut scaled_prod_low,

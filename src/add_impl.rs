@@ -260,7 +260,7 @@ fn test_ct_add_mod_mp_mp<T0: MpMutUIntSlice, T1: MpMutUIntSlice, NT: MpMutUIntSl
     }
     let op0_max_len = T0::n_backing_elements_for_len(LIMB_BYTES + 1) * T0::BACKING_ELEMENT_SIZE;
     n.clear_bytes_above(op0_max_len);
-    let n_divisor = CtMpDivisor::new(&n).unwrap();
+    let n_divisor = CtMpDivisor::new(&n, None).unwrap();
 
     for op0_len in 1..n.len() + 1 {
         let mut op0 = tst_mk_mp_backing_vec!(T0, n.len());

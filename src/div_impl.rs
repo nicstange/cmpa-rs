@@ -1,5 +1,6 @@
 #[cfg(test)]
 extern crate alloc;
+
 use super::limb::{
     ct_add_l_l, ct_eq_l_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_gt_l_l,
     ct_lsb_mask_l, ct_mul_l_l, ct_mul_sub_l_l_l_b, ct_sub_l_l, CtLDivisor, DoubleLimb,
@@ -16,6 +17,7 @@ use alloc::vec;
 
 pub struct CtMpDivisor<'a, VT: MpUIntCommon> {
     v: &'a VT,
+    v_decrement: Option<LimbType>,
     v_len: usize,
     scaling_shift: u32,
     scaling_low_src_rshift: u32,
@@ -31,18 +33,42 @@ pub enum CtMpDivisorError {
 }
 
 impl<'a, VT: MpUIntCommon> CtMpDivisor<'a, VT> {
-    pub fn new(v: &'a VT) -> Result<Self, CtMpDivisorError> {
-        // Find the index of the highest set limb in v. For divisors, constant time
-        // evaluation doesn't really matter, probably, as far as the number of zero
-        // high bytes is concerned. Also, the long division algorithm's runtime
-        // depends highly on the divisor's length anyway.
-        let v_len = find_last_set_byte_mp(v);
+    pub fn new(v: &'a VT, v_decrement: Option<LimbType>) -> Result<Self, CtMpDivisorError> {
+        // Find the index of the highest set limb in v, reduced by v_decrement. For
+        // divisors, constant time evaluation doesn't really matter, probably,
+        // as far as the number of zero high bytes is concerned. Also, the long
+        // division algorithm's runtime depends highly on the divisor's length
+        // anyway.
+        if v.is_empty() {
+            return Err(CtMpDivisorError::DivisorIsZero);
+        }
+        let (v_len, v_head) = if let Some(v_decrement) = v_decrement {
+            let mut v_decrement_borrow = v_decrement;
+            let mut v_len = 0;
+            let mut v_head = 0;
+            for i in 0..v.nlimbs() {
+                let v_val;
+                (v_decrement_borrow, v_val) = ct_sub_l_l(v.load_l(i), v_decrement_borrow);
+                let v_val_is_zero = ct_eq_l_l(v_val, 0);
+                v_len = v_val_is_zero
+                    .select_usize(i * LIMB_BYTES + ct_find_last_set_byte_l(v_val), v_len);
+                v_head = v_val_is_zero.select(v_val, v_head);
+            }
+            if v_decrement_borrow != 0 {
+                // Not exactly zero, but in a "saturating" subtraction sense.
+                return Err(CtMpDivisorError::DivisorIsZero);
+            }
+            (v_len, v_head)
+        } else {
+            let v_len = find_last_set_byte_mp(v);
+            let v_head = v.load_l(ct_mp_nlimbs(v_len) - 1);
+            (v_len, v_head)
+        };
         if ct_is_zero_usize(v_len) != 0 {
             return Err(CtMpDivisorError::DivisorIsZero);
         }
         let v_nlimbs = ct_mp_nlimbs(v_len);
 
-        let v_head = v.load_l(v_nlimbs - 1);
         let v_head_width = ct_find_last_set_bit_l(v_head);
         debug_assert_ne!(v_head_width, 0);
 
@@ -52,18 +78,31 @@ impl<'a, VT: MpUIntCommon> CtMpDivisor<'a, VT> {
         let scaling_low_src_mask = ct_lsb_mask_l(scaling_shift);
 
         // Read-only v won't get scaled in-place, but on the fly as needed. For now,
-        // scale v by only to calculate the two scaled head limbs of v,
+        // scale v only to calculate the two scaled head limbs of v,
         // as are needed for the q estimates. For scaling by shifting (as opposed to
         // by multiplication of a scaling factor), only the highest three limbs
-        // contribute to the highest two scaled limbs.
+        // contribute to the highest two scaled limbs. if v_decrement is set,
+        // v_decrement_borrow still needs to get propagated all the way up
+        // though.
+        let mut v_decrement_borrow = if let Some(v_decrement) = v_decrement {
+            let mut v_decrement_borrow = v_decrement;
+            for i in 0..v_nlimbs - 3.min(v_nlimbs) {
+                (v_decrement_borrow, _) = ct_sub_l_l(v.load_l_full(i), v_decrement_borrow);
+            }
+            v_decrement_borrow
+        } else {
+            0
+        };
         let mut scaled_v_carry = 0;
         // If v_nlimbs == 1, it will remain zero on purpose.
         let mut scaled_v_tail_head = 0; // Silence the compiler.
         let mut scaled_v_head = 0;
         for i in v_nlimbs - 3.min(v_nlimbs)..v_nlimbs {
             scaled_v_tail_head = scaled_v_head;
+            let v_val;
+            (v_decrement_borrow, v_val) = ct_sub_l_l(v.load_l(i), v_decrement_borrow);
             (scaled_v_carry, scaled_v_head) = Self::_scale_val(
-                v.load_l(i),
+                v_val,
                 scaling_shift,
                 scaling_low_src_rshift,
                 scaling_low_src_mask,
@@ -76,6 +115,7 @@ impl<'a, VT: MpUIntCommon> CtMpDivisor<'a, VT> {
 
         Ok(Self {
             v,
+            v_decrement,
             v_len,
             scaling_shift,
             scaling_low_src_rshift,
@@ -183,8 +223,15 @@ impl<'a, VT: MpUIntCommon> CtMpDivisor<'a, VT> {
         )
     }
 
-    fn scaled_v_val(&self, i: usize, carry: LimbType) -> (LimbType, LimbType) {
-        self.scale_val(self.v.load_l(i), carry)
+    fn scaled_v_val(
+        &self,
+        i: usize,
+        v_decrement_borrow: LimbType,
+        carry: LimbType,
+    ) -> (LimbType, LimbType, LimbType) {
+        let (v_decrement_borrow, v_val) = ct_sub_l_l(self.v.load_l(i), v_decrement_borrow);
+        let (carry, scaled_v_val) = self.scale_val(v_val, carry);
+        (v_decrement_borrow, carry, scaled_v_val)
     }
 
     fn unscale_val(&self, val: LimbType, last_higher_val: LimbType) -> LimbType {
@@ -200,15 +247,17 @@ impl<'a, VT: MpUIntCommon> CtMpDivisor<'a, VT> {
         &self,
         op0: LimbType,
         i: usize,
+        v_decrement_borrow: LimbType,
         carry: LimbType,
         cond: LimbChoice,
-    ) -> (LimbType, LimbType) {
-        let (carry0, scaled_v_val) = self.scaled_v_val(i, carry);
+    ) -> (LimbType, LimbType, LimbType) {
+        let (v_decrement_borrow, carry0, scaled_v_val) =
+            self.scaled_v_val(i, v_decrement_borrow, carry);
         let carry0 = cond.select(0, carry0);
         let scaled_v_val = cond.select(0, scaled_v_val);
         let (carry1, result) = ct_add_l_l(op0, scaled_v_val);
         let carry = carry0 + carry1;
-        (carry, result)
+        (v_decrement_borrow, carry, result)
     }
 
     fn sub_scaled_qv_val(
@@ -216,12 +265,14 @@ impl<'a, VT: MpUIntCommon> CtMpDivisor<'a, VT> {
         op0: LimbType,
         i: usize,
         q: LimbType,
+        v_decrement_borrow: LimbType,
         scaled_v_carry: LimbType,
         borrow: LimbType,
-    ) -> (LimbType, LimbType, LimbType) {
-        let (scaled_v_carry, scaled_v_val) = self.scaled_v_val(i, scaled_v_carry);
+    ) -> (LimbType, LimbType, LimbType, LimbType) {
+        let (v_decrement_borrow, scaled_v_carry, scaled_v_val) =
+            self.scaled_v_val(i, v_decrement_borrow, scaled_v_carry);
         let (borrow, result) = ct_mul_sub_l_l_l_b(op0, q, scaled_v_val, borrow);
-        (borrow, result, scaled_v_carry)
+        (v_decrement_borrow, scaled_v_carry, borrow, result)
     }
 }
 
@@ -345,12 +396,13 @@ pub fn ct_div_mp_mp<UT: MpMutUIntSlice, VT: MpUIntCommon, QT: MpMutUInt>(
         };
 
         // Subtract q * v from u at position j.
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut scaled_v_carry = 0;
         let mut borrow = 0;
         for i in 0..v_nlimbs {
             let mut u_val = u_parts.load(j + i);
-            (borrow, u_val, scaled_v_carry) =
-                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
+            (v_decrement_borrow, scaled_v_carry, borrow, u_val) =
+                v.sub_scaled_qv_val(u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
             u_parts.store(j + i, u_val);
         }
         debug_assert_eq!(scaled_v_carry, 0);
@@ -370,10 +422,12 @@ pub fn ct_div_mp_mp<UT: MpMutUIntSlice, VT: MpUIntCommon, QT: MpMutUInt>(
                 return Err(CtDivMpMpError::InsufficientQuotientSpace);
             }
         }
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut carry = 0;
         for i in 0..v_nlimbs {
             let mut u_val = u_parts.load(j + i);
-            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
+            (v_decrement_borrow, carry, u_val) =
+                v.add_scaled_v_val_cond(u_val, i, v_decrement_borrow, carry, over_estimated);
             u_parts.store(j + i, u_val);
         }
         let u_val = u_parts.load(j + v_nlimbs);
@@ -417,12 +471,20 @@ fn test_ct_div_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlice>
     fn div_and_check<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlice>(
         u: &UT::SelfT<'_>,
         v: &VT::SelfT<'_>,
+        v_decrement: Option<LimbType>,
         split_u: bool,
     ) {
-        use super::add_impl::ct_add_mp_mp;
+        use super::add_impl::{ct_add_mp_mp, ct_sub_mp_l};
         use super::mul_impl::ct_mul_trunc_mp_mp;
 
-        let v_len = find_last_set_byte_mp(v);
+        let mut decremented_v = tst_mk_mp_backing_vec!(VT, v.len());
+        let mut decremented_v = VT::from_slice(&mut decremented_v).unwrap();
+        decremented_v.copy_from(v);
+        if let Some(v_decrement) = v_decrement {
+            ct_sub_mp_l(&mut decremented_v, v_decrement);
+        }
+
+        let v_len = find_last_set_byte_mp(&decremented_v);
         let q_len = if u.len() >= v_len {
             u.len() - v_len + 1
         } else {
@@ -431,7 +493,7 @@ fn test_ct_div_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlice>
         let mut q = tst_mk_mp_backing_vec!(QT, q_len);
         q.fill(0xffu8.into());
         let mut q = QT::from_slice(&mut q).unwrap();
-        let divisor = CtMpDivisor::new(v).unwrap();
+        let divisor = CtMpDivisor::new(v, v_decrement).unwrap();
         let mut rem_buf = if split_u {
             let split_point = if UT::SUPPORTS_UNALIGNED_BUFFER_LENGTHS {
                 LIMB_BYTES + 1
@@ -482,7 +544,7 @@ fn test_ct_div_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlice>
         let mut result = tst_mk_mp_backing_vec!(UT, u.len() + LIMB_BYTES);
         let mut result = UT::from_slice(&mut result).unwrap();
         result.copy_from(&q);
-        ct_mul_trunc_mp_mp(&mut result, q_len, v);
+        ct_mul_trunc_mp_mp(&mut result, q_len, &decremented_v);
         let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
         assert_eq!(ct_eq_mp_mp(u, &result).unwrap(), 1);
@@ -492,57 +554,64 @@ fn test_ct_div_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlice>
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 1>([1]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
 
     let mut u = test_limbs_from_be_bytes::<UT, 2>([1, 0]);
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 1>([3]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
+    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
 
     let mut u = test_limbs_from_be_bytes::<UT, 6>([!0, !0, !1, !0, !0, !0]);
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
+    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
 
     let mut u = test_limbs_from_be_bytes::<UT, 6>([!0, !0, !1, !0, !0, !1]);
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
+    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
 
     let mut u = test_limbs_from_be_bytes::<UT, 6>([0, 0, 0, 0, 0, 0]);
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
+    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
 
     let mut u = test_limbs_from_be_bytes::<UT, 6>([0, 0, 0, 0, 0, !1]);
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 3>([!0, !0, !0]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
+    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
 
     let mut u = test_limbs_from_be_bytes::<UT, 6>([!0, !0, !0, !0, !0, 0]);
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 3>([0, 1, 0]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
+    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
 
     let mut u = test_limbs_from_be_bytes::<UT, 6>([!0, !0, !0, !0, !1, 0]);
     let u = UT::from_slice(u.as_mut_slice()).unwrap();
     let mut v = test_limbs_from_be_bytes::<VT, 3>([0, 2, 0]);
     let v = VT::from_slice(v.as_mut_slice()).unwrap();
-    div_and_check::<UT, VT, QT>(&u, &v, false);
-    div_and_check::<UT, VT, QT>(&u, &v, true);
+    div_and_check::<UT, VT, QT>(&u, &v, None, false);
+    div_and_check::<UT, VT, QT>(&u, &v, None, true);
+    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
 
     const N_MAX_LIMBS: u32 = 3;
     for i in 0..N_MAX_LIMBS * LIMB_BITS + 1 {
@@ -569,8 +638,11 @@ fn test_ct_div_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlice>
                 let mut v = VT::from_slice(&mut v).unwrap();
                 v.set_bit_to(j1 as usize, true);
                 v.set_bit_to(j2 as usize, true);
-                div_and_check::<UT, VT, QT>(&u, &v, false);
-                div_and_check::<UT, VT, QT>(&u, &v, true);
+                div_and_check::<UT, VT, QT>(&u, &v, None, false);
+                div_and_check::<UT, VT, QT>(&u, &v, None, true);
+                if j1 != 0 {
+                    div_and_check::<UT, VT, QT>(&u, &v, Some(1), false);
+                }
             }
         }
     }
@@ -785,6 +857,7 @@ pub fn ct_div_pow2_mp<RT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
         // to eventually turn out zero anyway.
         // In case v_nlimbs < 2, this initialization of u_val reflects the extension by
         // a zero limb on the right, which will land in r_out_head_shadow[0] below.
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut scaled_v_carry = 0;
         let mut borrow = 0;
         let mut i = 0;
@@ -796,8 +869,8 @@ pub fn ct_div_pow2_mp<RT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
             while i + 2 < v_nlimbs {
                 let mut u_val = next_u_val;
                 next_u_val = r_out.load_l_full(i);
-                (borrow, u_val, scaled_v_carry) =
-                    v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
+                (v_decrement_borrow, scaled_v_carry, borrow, u_val) =
+                    v.sub_scaled_qv_val(u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
                 r_out.store_l_full(i, u_val);
                 i += 1;
             }
@@ -806,8 +879,8 @@ pub fn ct_div_pow2_mp<RT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
             // higher limb, r_out_head_shadow[0].
             {
                 let mut u_val = next_u_val;
-                (borrow, u_val, scaled_v_carry) =
-                    v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
+                (v_decrement_borrow, scaled_v_carry, borrow, u_val) =
+                    v.sub_scaled_qv_val(u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
                 i += 1;
                 u_val
             }
@@ -825,8 +898,8 @@ pub fn ct_div_pow2_mp<RT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
         {
             let cur_u_val = r_out_head_shadow[0];
             r_out_head_shadow[0] = u_val;
-            (borrow, u_val, scaled_v_carry) =
-                v.sub_scaled_qv_val(cur_u_val, i, q, scaled_v_carry, borrow);
+            (_, scaled_v_carry, borrow, u_val) =
+                v.sub_scaled_qv_val(cur_u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
             debug_assert_eq!(scaled_v_carry, 0);
             let cur_u_val = r_out_head_shadow[1];
             r_out_head_shadow[1] = u_val;
@@ -846,12 +919,14 @@ pub fn ct_div_pow2_mp<RT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
                 return Err(CtDivPow2MpError::InsufficientQuotientSpace);
             }
         }
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut carry = 0;
         let mut i = 0;
         // Update the tail maintained in r_out[v_nlimbs - 3:0], if any:
         while i + 2 < v_nlimbs {
             let mut u_val = r_out.load_l_full(i);
-            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
+            (v_decrement_borrow, carry, u_val) =
+                v.add_scaled_v_val_cond(u_val, i, v_decrement_borrow, carry, over_estimated);
             r_out.store_l_full(i, u_val);
             i += 1;
         }
@@ -865,7 +940,8 @@ pub fn ct_div_pow2_mp<RT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
         for k in 0..r_out_head_shadow_cur_sliding_window_overlap {
             let k = 2 - r_out_head_shadow_cur_sliding_window_overlap + k;
             let mut u_val = r_out_head_shadow[k];
-            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
+            (v_decrement_borrow, carry, u_val) =
+                v.add_scaled_v_val_cond(u_val, i, v_decrement_borrow, carry, over_estimated);
             r_out_head_shadow[k] = u_val;
             i += 1;
         }
@@ -904,12 +980,20 @@ fn test_ct_div_pow2_mp<RT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlic
     fn div_and_check<RT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlice>(
         u_pow2_exp: usize,
         v: &VT::SelfT<'_>,
+        v_decrement: Option<LimbType>,
     ) {
-        use super::add_impl::ct_add_mp_mp;
+        use super::add_impl::{ct_add_mp_mp, ct_sub_mp_l};
         use super::mul_impl::ct_mul_trunc_mp_mp;
 
+        let mut decremented_v = tst_mk_mp_backing_vec!(VT, v.len());
+        let mut decremented_v = VT::from_slice(&mut decremented_v).unwrap();
+        decremented_v.copy_from(v);
+        if let Some(v_decrement) = v_decrement {
+            ct_sub_mp_l(&mut decremented_v, v_decrement);
+        }
+
         let u_len = (u_pow2_exp + 1 + 8 - 1) / 8;
-        let v_len = find_last_set_byte_mp(v);
+        let v_len = find_last_set_byte_mp(&decremented_v);
         let q_len = if u_len >= v_len { u_len - v_len + 1 } else { 0 };
 
         let mut q = tst_mk_mp_backing_vec!(QT, q_len);
@@ -921,7 +1005,7 @@ fn test_ct_div_pow2_mp<RT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlic
         ct_div_pow2_mp(
             u_pow2_exp as usize,
             &mut rem,
-            &CtMpDivisor::new(v).unwrap(),
+            &CtMpDivisor::new(v, v_decrement).unwrap(),
             Some(&mut q),
         )
         .unwrap();
@@ -932,7 +1016,7 @@ fn test_ct_div_pow2_mp<RT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlic
         result.fill(0xffu8.into());
         let mut result = QT::from_slice(&mut result).unwrap();
         result.copy_from(&q);
-        ct_mul_trunc_mp_mp(&mut result, q_len, v);
+        ct_mul_trunc_mp_mp(&mut result, q_len, &decremented_v);
         let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
         let u_nlimbs = ct_mp_nlimbs(u_len);
@@ -951,7 +1035,10 @@ fn test_ct_div_pow2_mp<RT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlic
             let mut v = VT::from_slice(v.as_mut_slice()).unwrap();
             v.store_l(0, v0);
             for i in 0..5 * LIMB_BITS as usize {
-                div_and_check::<RT, VT, QT>(i, &v);
+                div_and_check::<RT, VT, QT>(i, &v, None);
+                if v0 != 1 {
+                    div_and_check::<RT, VT, QT>(i, &v, Some(1));
+                }
             }
         }
     }
@@ -969,7 +1056,10 @@ fn test_ct_div_pow2_mp<RT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutUIntSlic
                 v.store_l(0, v_l);
                 v.store_l(1, v_h);
                 for i in 0..6 * LIMB_BITS as usize {
-                    div_and_check::<RT, VT, QT>(i, &v);
+                    div_and_check::<RT, VT, QT>(i, &v, None);
+                    if v_l != 0 && v_h != 0 {
+                        div_and_check::<RT, VT, QT>(i, &v, Some(v_l + 1));
+                    }
                 }
             }
         }
@@ -1189,20 +1279,21 @@ pub fn ct_div_lshifted_mp_mp<UT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
         };
 
         // Subtract q * v at limb position j upwards in u[].
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut scaled_v_carry = 0;
         let mut borrow = 0;
         let mut i = 0;
         while i < v_nlimbs && j + i < u_nlimbs - 1 {
             let mut u_val = u.load_l_full(j + i);
-            (borrow, u_val, scaled_v_carry) =
-                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
+            (v_decrement_borrow, scaled_v_carry, borrow, u_val) =
+                v.sub_scaled_qv_val(u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
             u.store_l_full(j + i, u_val);
             i += 1;
         }
         while i < v_nlimbs {
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
-            (borrow, u_val, scaled_v_carry) =
-                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
+            (v_decrement_borrow, scaled_v_carry, borrow, u_val) =
+                v.sub_scaled_qv_val(u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
             i += 1;
         }
@@ -1231,17 +1322,20 @@ pub fn ct_div_lshifted_mp_mp<UT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
                 return Err(CtDivLshiftedMpMpError::InsufficientQuotientSpace);
             }
         }
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut carry = 0;
         let mut i = 0;
         while i < v_nlimbs && j + i < u_nlimbs - 1 {
             let mut u_val = u.load_l_full(j + i);
-            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
+            (v_decrement_borrow, carry, u_val) =
+                v.add_scaled_v_val_cond(u_val, i, v_decrement_borrow, carry, over_estimated);
             u.store_l_full(j + i, u_val);
             i += 1;
         }
         while i < v_nlimbs {
             let mut u_val = u_head_high_shadow[j + i - (u_nlimbs - 1)];
-            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
+            (v_decrement_borrow, carry, u_val) =
+                v.add_scaled_v_val_cond(u_val, i, v_decrement_borrow, carry, over_estimated);
             u_head_high_shadow[j + i - (u_nlimbs - 1)] = u_val;
             i += 1;
         }
@@ -1309,13 +1403,14 @@ pub fn ct_div_lshifted_mp_mp<UT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
         // high limb. This effectively moves the sliding window one limb to the
         // right.
         let mut next_u_val = 0; // The zero shifted in on the right.
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut scaled_v_carry = 0;
         let mut borrow = 0;
         for i in 0..v_nlimbs - 1 {
             let mut u_val = next_u_val;
             next_u_val = u.load_l_full(i);
-            (borrow, u_val, scaled_v_carry) =
-                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
+            (v_decrement_borrow, scaled_v_carry, borrow, u_val) =
+                v.sub_scaled_qv_val(u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
             u.store_l_full(i, u_val);
         }
         // u[v_nlimbs - 1] is maintained in the u_high_shadow shadow, handle it
@@ -1324,8 +1419,8 @@ pub fn ct_div_lshifted_mp_mp<UT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
             let i = v_nlimbs - 1;
             let mut u_val = next_u_val;
             next_u_val = u_high_shadow;
-            (borrow, u_val, scaled_v_carry) =
-                v.sub_scaled_qv_val(u_val, i, q, scaled_v_carry, borrow);
+            (_, scaled_v_carry, borrow, u_val) =
+                v.sub_scaled_qv_val(u_val, i, q, v_decrement_borrow, scaled_v_carry, borrow);
             debug_assert_eq!(scaled_v_carry, 0);
             u_high_shadow = u_val;
         }
@@ -1344,10 +1439,12 @@ pub fn ct_div_lshifted_mp_mp<UT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
             }
         }
 
+        let mut v_decrement_borrow = v.v_decrement.unwrap_or(0);
         let mut carry = 0;
         for i in 0..v_nlimbs - 1 {
             let mut u_val = u.load_l_full(i);
-            (carry, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
+            (v_decrement_borrow, carry, u_val) =
+                v.add_scaled_v_val_cond(u_val, i, v_decrement_borrow, carry, over_estimated);
             u.store_l_full(i, u_val);
         }
         // u[v_nlimbs - 1] is maintained in the u_high_shadow shadow, handle it
@@ -1355,7 +1452,8 @@ pub fn ct_div_lshifted_mp_mp<UT: MpMutUInt, VT: MpUIntCommon, QT: MpMutUInt>(
         {
             let i = v_nlimbs - 1;
             let mut u_val = u_high_shadow;
-            (_, u_val) = v.add_scaled_v_val_cond(u_val, i, carry, over_estimated);
+            (_, _, u_val) =
+                v.add_scaled_v_val_cond(u_val, i, v_decrement_borrow, carry, over_estimated);
             u_high_shadow = u_val;
         }
     }
@@ -1390,13 +1488,21 @@ fn test_ct_div_lshifted_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutU
         u_in_len: usize,
         u_lshift_len: usize,
         v: &VT::SelfT<'_>,
+        v_decrement: Option<LimbType>,
     ) {
-        use super::add_impl::ct_add_mp_mp;
+        use super::add_impl::{ct_add_mp_mp, ct_sub_mp_l};
         use super::cmp_impl::ct_eq_mp_mp;
         use super::mul_impl::ct_mul_trunc_mp_mp;
         use super::shift_impl::ct_rshift_mp;
 
-        let v_len = find_last_set_byte_mp(v);
+        let mut decremented_v = tst_mk_mp_backing_vec!(VT, v.len());
+        let mut decremented_v = VT::from_slice(&mut decremented_v).unwrap();
+        decremented_v.copy_from(v);
+        if let Some(v_decrement) = v_decrement {
+            ct_sub_mp_l(&mut decremented_v, v_decrement);
+        }
+
+        let v_len = find_last_set_byte_mp(&decremented_v);
         let virtual_u_len = u_in_len + u_lshift_len;
         let q_len = virtual_u_len + 1 - v_len;
         let mut q = tst_mk_mp_backing_vec!(QT, q_len);
@@ -1409,7 +1515,7 @@ fn test_ct_div_lshifted_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutU
             &mut rem,
             u_in_len,
             u_lshift_len,
-            &CtMpDivisor::new(v).unwrap(),
+            &CtMpDivisor::new(v, v_decrement).unwrap(),
             Some(&mut q),
         )
         .unwrap();
@@ -1420,7 +1526,7 @@ fn test_ct_div_lshifted_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutU
         result.fill(0xffu8.into());
         let mut result = UT::from_slice(&mut result).unwrap();
         result.copy_from(&q);
-        ct_mul_trunc_mp_mp(&mut result, q_len, v);
+        ct_mul_trunc_mp_mp(&mut result, q_len, &decremented_v);
         let carry = ct_add_mp_mp(&mut result, &rem);
         assert_eq!(carry, 0);
         for i in 0..ct_mp_nlimbs(u_lshift_len + 1) - 1 {
@@ -1444,7 +1550,14 @@ fn test_ct_div_lshifted_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutU
         for j1 in 0..i + 1 {
             for j2 in 0..j1 + 1 {
                 let v_len = ((j1 + 1) as usize + 8 - 1) / 8;
-                for u_lshift_len in 0..2 * LIMB_BYTES {
+                for u_lshift_len in [
+                    0,
+                    LIMB_BYTES - 1,
+                    LIMB_BYTES,
+                    LIMB_BYTES + 1,
+                    2 * LIMB_BYTES - 1,
+                    2 * LIMB_BYTES,
+                ] {
                     let mut u = tst_mk_mp_backing_vec!(UT, u_len.max(v_len));
                     let mut u = UT::from_slice(&mut u).unwrap();
                     if i != 0 {
@@ -1463,8 +1576,14 @@ fn test_ct_div_lshifted_mp_mp<UT: MpMutUIntSlice, VT: MpMutUIntSlice, QT: MpMutU
                     let mut v = tst_mk_mp_backing_vec!(VT, v_len);
                     let mut v = VT::from_slice(&mut v).unwrap();
                     v.store_l((j1 / LIMB_BITS) as usize, 1 << (j1 % LIMB_BITS));
-                    v.store_l((j2 / LIMB_BITS) as usize, 1 << (j2 % LIMB_BITS));
-                    div_and_check::<UT, VT, QT>(&u, u_len, u_lshift_len, &v);
+                    v.store_l(
+                        (j2 / LIMB_BITS) as usize,
+                        v.load_l((j2 / LIMB_BITS) as usize) | 1 << (j2 % LIMB_BITS),
+                    );
+                    div_and_check::<UT, VT, QT>(&u, u_len, u_lshift_len, &v, None);
+                    if j1 != 0 {
+                        div_and_check::<UT, VT, QT>(&u, u_len, u_lshift_len, &v, Some(1));
+                    }
                 }
             }
         }

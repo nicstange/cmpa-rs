@@ -294,7 +294,7 @@ fn test_ct_montgomery_redc_mp<TT: MpMutUIntSlice, NT: MpMutUIntSlice>() {
                     t.store_l(1, t_high);
 
                     // All montgomery operations are defined mod n, compute t mod n
-                    ct_mod_mp_mp(None, &mut t, &CtMpDivisor::new(&n).unwrap());
+                    ct_mod_mp_mp(None, &mut t, &CtMpDivisor::new(&n, None).unwrap());
                     let t_low = t.load_l(0);
                     let t_high = t.load_l(1);
 
@@ -549,7 +549,7 @@ fn test_ct_montgomery_mul_mod_mp_mp<
                 let mut r_mod_n = tst_mk_mp_backing_vec!(RT, 3 * LIMB_BYTES);
                 let mut r_mod_n = RT::from_slice(r_mod_n.as_mut_slice()).unwrap();
                 r_mod_n.store_l_full(ct_montgomery_radix_shift_mp_nlimbs(n_len), 1);
-                ct_mod_mp_mp(None, &mut r_mod_n, &CtMpDivisor::new(&n).unwrap());
+                ct_mod_mp_mp(None, &mut r_mod_n, &CtMpDivisor::new(&n, None).unwrap());
                 let r_mod_n = r_mod_n.shrink_to(n.len());
 
                 for k in 0..4 {
@@ -563,7 +563,7 @@ fn test_ct_montgomery_mul_mod_mp_mp<
                         a.store_l(0, a_low);
                         a.store_l(1, a_high);
                         // All montgomery operations are defined mod n, compute a mod n
-                        ct_mod_mp_mp(None, &mut a, &CtMpDivisor::new(&n).unwrap());
+                        ct_mod_mp_mp(None, &mut a, &CtMpDivisor::new(&n, None).unwrap());
                         drop(a);
                         for s in 0..4 {
                             let b_high = MERSENNE_PRIME_13
@@ -577,7 +577,7 @@ fn test_ct_montgomery_mul_mod_mp_mp<
                                 b.store_l(0, b_low);
                                 b.store_l(1, b_high);
                                 // All montgomery operations are defined mod n, compute b mod n
-                                ct_mod_mp_mp(None, &mut b, &CtMpDivisor::new(&n).unwrap());
+                                ct_mod_mp_mp(None, &mut b, &CtMpDivisor::new(&n, None).unwrap());
                                 drop(b);
 
                                 for op_len in [0, 1 * LIMB_BYTES, n_len] {
@@ -610,7 +610,11 @@ fn test_ct_montgomery_mul_mod_mp_mp<
                                     // the conventional product by r^-1 mod n, which is
                                     // not known without implementing Euklid's algorithm.
                                     ct_mul_trunc_mp_mp(&mut result, n.len(), &r_mod_n);
-                                    ct_mod_mp_mp(None, &mut result, &CtMpDivisor::new(&n).unwrap());
+                                    ct_mod_mp_mp(
+                                        None,
+                                        &mut result,
+                                        &CtMpDivisor::new(&n, None).unwrap(),
+                                    );
                                     drop(result);
 
                                     let mut _expected = tst_mk_mp_backing_vec!(RT, 4 * LIMB_BYTES);
@@ -621,7 +625,7 @@ fn test_ct_montgomery_mul_mod_mp_mp<
                                     ct_mod_mp_mp(
                                         None,
                                         &mut expected,
-                                        &CtMpDivisor::new(&n).unwrap(),
+                                        &CtMpDivisor::new(&n, None).unwrap(),
                                     );
                                     drop(expected);
 
@@ -687,7 +691,7 @@ pub fn ct_to_montgomery_form_direct_mp<TT: MpMutUInt, NT: MpUIntCommon>(
     }
     debug_assert!(t.nlimbs() >= n.nlimbs());
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
-    let n = CtMpDivisor::new(n).map_err(|e| match e {
+    let n = CtMpDivisor::new(n, None).map_err(|e| match e {
         CtMpDivisorError::DivisorIsZero => {
             // n had been checked for being odd above, so should be unreachable, but play
             // safe.
@@ -721,7 +725,7 @@ pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpMutUIntSlice, NT: MpUIntCommon>(
     debug_assert_eq!(radix2_mod_n_out.nlimbs(), n.nlimbs());
 
     let radix_shift_len = ct_montgomery_radix_shift_len(n.len());
-    let n = CtMpDivisor::new(n).map_err(|e| match e {
+    let n = CtMpDivisor::new(n, None).map_err(|e| match e {
         CtMpDivisorError::DivisorIsZero => {
             // n had been checked for being odd above, so should be unreachable, but play
             // safe.
@@ -839,7 +843,7 @@ fn test_ct_to_montgomery_form_mp<TT: MpMutUIntSlice, NT: MpMutUIntSlice, RX2T: M
                         a.store_l(0, a_low);
                         a.store_l(1, a_high);
                         // All montgomery operations are defined mod n, compute a mod n
-                        ct_mod_mp_mp(None, &mut a, &CtMpDivisor::new(&n).unwrap());
+                        ct_mod_mp_mp(None, &mut a, &CtMpDivisor::new(&n, None).unwrap());
                         let mut a = a.shrink_to(n_len);
 
                         let mut result = tst_mk_mp_backing_vec!(TT, n_len);
@@ -1092,7 +1096,7 @@ fn test_ct_exp_mod_odd_mp_mp<
         let mut op0_mod_n = tst_mk_mp_backing_vec!(T0, n_len.max(op0.len()));
         let mut op0_mod_n = T0::from_slice(&mut op0_mod_n).unwrap();
         op0_mod_n.copy_from(op0);
-        ct_mod_mp_mp(None, &mut op0_mod_n, &CtMpDivisor::new(n).unwrap());
+        ct_mod_mp_mp(None, &mut op0_mod_n, &CtMpDivisor::new(n, None).unwrap());
 
         let mut op0_scratch = tst_mk_mp_backing_vec!(T0, n_len);
         let mut op0_scratch = T0::from_slice(&mut op0_scratch).unwrap();
@@ -1119,10 +1123,10 @@ fn test_ct_exp_mod_odd_mp_mp<
         expected.store_l(0, 1);
         for i in 0..8 * exponent.len() {
             ct_square_trunc_mp(&mut expected, n_len);
-            ct_mod_mp_mp(None, &mut expected, &CtMpDivisor::new(n).unwrap());
+            ct_mod_mp_mp(None, &mut expected, &CtMpDivisor::new(n, None).unwrap());
             if exponent.test_bit(8 * exponent.len() - i - 1).unwrap() != 0 {
                 ct_mul_trunc_mp_mp(&mut expected, n_len, &op0_mod_n);
-                ct_mod_mp_mp(None, &mut expected, &CtMpDivisor::new(n).unwrap());
+                ct_mod_mp_mp(None, &mut expected, &CtMpDivisor::new(n, None).unwrap());
             }
         }
         assert_ne!(ct_eq_mp_mp(&result, &expected).unwrap(), 0);

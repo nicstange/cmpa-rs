@@ -378,7 +378,7 @@ fn test_ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUIntSlice>() {
         let mut op0_inv_mod_n = tst_mk_mp_backing_vec!(T0, n.len());
         let mut op0_inv_mod_n = T0::from_slice(&mut op0_inv_mod_n).unwrap();
         op0_inv_mod_n.copy_from(op0);
-        ct_mod_mp_mp(None, &mut op0_inv_mod_n, &CtMpDivisor::new(n).unwrap());
+        ct_mod_mp_mp(None, &mut op0_inv_mod_n, &CtMpDivisor::new(n, None).unwrap());
 
         let scratch = [
             scratch0.as_mut_slice(),
@@ -401,7 +401,7 @@ fn test_ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUIntSlice>() {
         let mut product = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut product_buf);
         product.copy_from(&op0_inv_mod_n);
         ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
-        ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n).unwrap());
+        ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n, None).unwrap());
         assert_eq!(ct_is_one_mp(&product).unwrap(), 1);
 
         // Verify that ct_inv_mod_mp_mp() correctly detects common factors and would

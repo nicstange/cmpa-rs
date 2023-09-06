@@ -1127,7 +1127,7 @@ fn test_ct_inv_mod_odd_mp_mp<RT: MpMutUIntSlice, T0: MpMutUIntSlice, NT: MpMutUI
         let mut op0_work_scratch = tst_mk_mp_backing_vec!(T0, op0.len());
         let mut op0_work_scratch = T0::from_slice(&mut op0_work_scratch).unwrap();
         op0_work_scratch.copy_from(op0);
-        ct_mod_mp_mp(None, &mut op0_work_scratch, &CtMpDivisor::new(n).unwrap());
+        ct_mod_mp_mp(None, &mut op0_work_scratch, &CtMpDivisor::new(n, None).unwrap());
 
         let mut op0_inv_mod_n = tst_mk_mp_backing_vec!(RT, n.len());
         let mut op0_inv_mod_n = RT::from_slice(&mut op0_inv_mod_n).unwrap();
@@ -1156,7 +1156,7 @@ fn test_ct_inv_mod_odd_mp_mp<RT: MpMutUIntSlice, T0: MpMutUIntSlice, NT: MpMutUI
         let mut product = MpMutNativeEndianUIntLimbsSlice::from_limbs(&mut product_buf);
         product.copy_from(&op0_inv_mod_n);
         ct_mul_trunc_mp_mp(&mut product, n.len(), op0);
-        ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n).unwrap());
+        ct_mod_mp_mp(None, &mut product, &CtMpDivisor::new(n, None).unwrap());
         assert_eq!(ct_is_one_mp(&product).unwrap(), 1);
     }
 
