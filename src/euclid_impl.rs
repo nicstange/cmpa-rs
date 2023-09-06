@@ -597,7 +597,7 @@ fn ct_gcd_ext_odd_mp_mp<
 
 #[derive(Debug)]
 pub enum CtGcdOddMpMpError {
-    InconsistentInputOperandLengths,
+    InconsistentOperandLengths,
     InvalidInputOperandValue,
 }
 
@@ -609,7 +609,7 @@ pub fn ct_gcd_odd_mp_mp<FT: MpMutUInt, GT: MpMutUInt>(
         return Err(CtGcdOddMpMpError::InvalidInputOperandValue);
     }
     if !f.len_is_compatible_with(g.len()) || !g.len_is_compatible_with(f.len()) {
-        return Err(CtGcdOddMpMpError::InconsistentInputOperandLengths);
+        return Err(CtGcdOddMpMpError::InconsistentOperandLengths);
     }
 
     let gcd_is_neg = ct_gcd_ext_odd_mp_mp(|_, _| {}, f, g);
@@ -775,7 +775,7 @@ fn test_ct_gcd_odd_ne_ne() {
 #[derive(Debug)]
 pub enum CtGcdMpMpError {
     InsufficientResultSpace,
-    InconsistentInputOperandLengths,
+    InconsistentOperandLengths,
 }
 
 pub fn ct_gcd_mp_mp<T0: MpMutUInt, T1: MpMutUInt>(
@@ -787,7 +787,7 @@ pub fn ct_gcd_mp_mp<T0: MpMutUInt, T1: MpMutUInt>(
         return Err(CtGcdMpMpError::InsufficientResultSpace);
     }
     if !op0.len_is_compatible_with(op1.len()) || !op1.len_is_compatible_with(op0.len()) {
-        return Err(CtGcdMpMpError::InconsistentInputOperandLengths);
+        return Err(CtGcdMpMpError::InconsistentOperandLengths);
     }
 
     // The GCD implementation requires the first operand to be odd. Factor out
@@ -966,7 +966,7 @@ pub enum CtInvModOddMpMpImplError {
     InvalidModulus,
     InsufficientResultSpace,
     InsufficientScratchSpace,
-    InconsistentInputOperandLength,
+    InconsistentOperandLengths,
     OperandsNotCoprime,
 }
 
@@ -982,7 +982,7 @@ pub fn ct_inv_mod_odd_mp_mp_impl<RT: MpMutUIntSlice, T0: MpMutUInt, NT: MpUIntCo
         return Err(CtInvModOddMpMpImplError::InsufficientResultSpace);
     }
     if !op0.len_is_compatible_with(n.len()) || !n.len_is_compatible_with(op0.len()) {
-        return Err(CtInvModOddMpMpImplError::InconsistentInputOperandLength);
+        return Err(CtInvModOddMpMpImplError::InconsistentOperandLengths);
     }
 
     let n_nlimbs = MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len());
@@ -1072,7 +1072,7 @@ pub enum CtInvModOddMpMpError {
     InvalidModulus,
     InsufficientResultSpace,
     InsufficientScratchSpace,
-    InconsistentInputOperandLength,
+    InconsistentOperandLengths,
     OperandsNotCoprime,
 }
 
@@ -1090,8 +1090,8 @@ pub fn ct_inv_mod_odd_mp_mp<RT: MpMutUIntSlice, T0: MpMutUInt, NT: MpUIntCommon>
         CtInvModOddMpMpImplError::InsufficientScratchSpace => {
             CtInvModOddMpMpError::InsufficientScratchSpace
         }
-        CtInvModOddMpMpImplError::InconsistentInputOperandLength => {
-            CtInvModOddMpMpError::InconsistentInputOperandLength
+        CtInvModOddMpMpImplError::InconsistentOperandLengths => {
+            CtInvModOddMpMpError::InconsistentOperandLengths
         }
         CtInvModOddMpMpImplError::OperandsNotCoprime => CtInvModOddMpMpError::OperandsNotCoprime,
     })?;

@@ -13,7 +13,7 @@ use super::shift_impl::{ct_lshift_mp, ct_rshift_mp};
 pub enum CtLcmMpMpError {
     InsufficientResultSpace,
     InsufficientScratchSpace,
-    InconsistentInputOperandLengths,
+    InconsistentOperandLengths,
 }
 
 pub fn ct_lcm_mp_mp<RT: MpMutUInt, T0: MpMutUInt, T1: MpMutUIntSlice>(
@@ -41,7 +41,7 @@ pub fn ct_lcm_mp_mp<RT: MpMutUInt, T0: MpMutUInt, T1: MpMutUIntSlice>(
     // are required to allocate the larger of the two operand's length for both.
     // This way, they can be reused as scratch buffers later on.
     if !op0.len_is_compatible_with(op1.len()) || !op1.len_is_compatible_with(op0.len()) {
-        return Err(CtLcmMpMpError::InconsistentInputOperandLengths);
+        return Err(CtLcmMpMpError::InconsistentOperandLengths);
     }
 
     debug_assert_eq!(op0.len(), op1.len());

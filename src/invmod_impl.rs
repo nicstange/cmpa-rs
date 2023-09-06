@@ -213,7 +213,7 @@ pub enum CtInvModMpMpError {
     InvalidModulus,
     InsufficientResultSpace,
     InsufficientScratchSpace,
-    InconsistentInputOperandLength,
+    InconsistentOperandLengths,
     OperandsNotCoprime,
 }
 
@@ -230,7 +230,7 @@ pub fn ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUInt>(
     if !n.len_is_compatible_with(op0.len()) {
         return Err(CtInvModMpMpError::InsufficientResultSpace);
     } else if !op0.len_is_compatible_with(n.len()) {
-        return Err(CtInvModMpMpError::InconsistentInputOperandLength);
+        return Err(CtInvModMpMpError::InconsistentOperandLengths);
     }
 
     // Verify if both, op0 and n, have factors of two in common and
@@ -306,10 +306,10 @@ pub fn ct_inv_mod_mp_mp<T0: MpMutUIntSlice, NT: MpMutUInt>(
                     debug_assert!(false);
                     CtInvModMpMpError::InsufficientScratchSpace
                 }
-                CtInvModOddMpMpImplError::InconsistentInputOperandLength => {
+                CtInvModOddMpMpImplError::InconsistentOperandLengths => {
                     // Cannot happen, the lengths of op0 and n had been checked for being compatible
                     // above. But play safe.
-                    CtInvModMpMpError::InconsistentInputOperandLength
+                    CtInvModMpMpError::InconsistentOperandLengths
                 }
             };
             return Err(e);

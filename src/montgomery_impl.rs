@@ -333,7 +333,7 @@ fn test_ct_montgomery_redc_ne_ne() {
 pub enum CtMontgomeryMulModMpMpError {
     InvalidModulus,
     InsufficientResultSpace,
-    InconsistentInputOperandLength,
+    InconsistentOperandLengths,
 }
 
 pub fn ct_montgomery_mul_mod_mp_mp<
@@ -364,7 +364,7 @@ pub fn ct_montgomery_mul_mod_mp_mp<
     }
     debug_assert!(n.nlimbs() <= result.nlimbs());
     if !op0.len_is_compatible_with(n.len()) || !op1.len_is_compatible_with(n.len()) {
-        return Err(CtMontgomeryMulModMpMpError::InconsistentInputOperandLength);
+        return Err(CtMontgomeryMulModMpMpError::InconsistentOperandLengths);
     }
     debug_assert!(op0.nlimbs() <= n.nlimbs());
     debug_assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
@@ -745,7 +745,7 @@ pub fn ct_montgomery_radix2_mod_n_mp<RX2T: MpMutUIntSlice, NT: MpUIntCommon>(
 pub enum CtToMontgomeryFormMpError {
     InvalidModulus,
     InsufficientResultSpace,
-    InconsistentInputOperandLength,
+    InconsistentOperandLengths,
     InconsistentRadix2ModNLenth,
 }
 
@@ -765,7 +765,7 @@ pub fn ct_to_montgomery_form_mp<
     // disambiguate which of the two factors has a length inconsistent with n,
     // if any, check that here.
     if !t.len_is_compatible_with(n.len()) {
-        return Err(CtToMontgomeryFormMpError::InconsistentInputOperandLength);
+        return Err(CtToMontgomeryFormMpError::InconsistentOperandLengths);
     }
     if !radix2_mod_n.len_is_compatible_with(n.len()) {
         return Err(CtToMontgomeryFormMpError::InconsistentRadix2ModNLenth);
@@ -782,9 +782,9 @@ pub fn ct_to_montgomery_form_mp<
             CtMontgomeryMulModMpMpError::InvalidModulus => {
                 CtToMontgomeryFormMpError::InvalidModulus
             }
-            CtMontgomeryMulModMpMpError::InconsistentInputOperandLength => {
+            CtMontgomeryMulModMpMpError::InconsistentOperandLengths => {
                 // The multiplication's factors have been validated above, but play safe.
-                CtToMontgomeryFormMpError::InconsistentInputOperandLength
+                CtToMontgomeryFormMpError::InconsistentOperandLengths
             }
         },
     )?;
@@ -926,7 +926,7 @@ pub enum CtMontgomeryExpModOddMpMpError {
     InvalidModulus,
     InsufficientResultSpace,
     InsufficientScratchSpace,
-    InconsistentInputOperandLength,
+    InconsistentOperandLengths,
     InconsistendRadixModNLengh,
 }
 
@@ -957,7 +957,7 @@ pub fn ct_montogmery_exp_mod_odd_mp_mp<
         return Err(CtMontgomeryExpModOddMpMpError::InsufficientScratchSpace);
     }
     if !op0.len_is_compatible_with(n.len()) {
-        return Err(CtMontgomeryExpModOddMpMpError::InconsistentInputOperandLength);
+        return Err(CtMontgomeryExpModOddMpMpError::InconsistentOperandLengths);
     }
     debug_assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
     if !radix_mod_n.len_is_compatible_with(n.len()) {
@@ -988,7 +988,7 @@ pub enum CtExpModOddMpMpError {
     InvalidModulus,
     InsufficientResultSpace,
     InsufficientScratchSpace,
-    InconsistentInputOperandLength,
+    InconsistentOperandLengths,
 }
 
 pub fn ct_exp_mod_odd_mp_mp<
@@ -1008,13 +1008,13 @@ pub fn ct_exp_mod_odd_mp_mp<
         return Err(CtExpModOddMpMpError::InsufficientResultSpace);
     }
     if !op0.len_is_compatible_with(n.len()) {
-        return Err(CtExpModOddMpMpError::InconsistentInputOperandLength);
+        return Err(CtExpModOddMpMpError::InconsistentOperandLengths);
     }
     debug_assert!(ct_lt_mp_mp(op0, n).unwrap() != 0);
     if !n.len_is_compatible_with(op0.len()) {
         // op0 will get transformed in-place into Montgomery form. So the
         // backing byte slice must be large enough.
-        return Err(CtExpModOddMpMpError::InconsistentInputOperandLength);
+        return Err(CtExpModOddMpMpError::InconsistentOperandLengths);
     }
     debug_assert_eq!(op0.nlimbs(), n.nlimbs());
     if scratch.len() < MpMutNativeEndianUIntLimbsSlice::nlimbs_for_len(n.len()) {
