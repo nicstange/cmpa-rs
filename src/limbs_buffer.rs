@@ -1194,6 +1194,12 @@ impl<'a> fmt::LowerHex for MpBigEndianUIntByteSlice<'a> {
     }
 }
 
+impl<'a, 'b> From<&'a MpMutBigEndianUIntByteSlice<'b>> for MpBigEndianUIntByteSlice<'a> {
+    fn from(value: &'a MpMutBigEndianUIntByteSlice<'b>) -> Self {
+        Self { bytes: value.bytes }
+    }
+}
+
 pub struct MpMutBigEndianUIntByteSlice<'a> {
     bytes: &'a mut [u8],
 }
@@ -1373,6 +1379,12 @@ impl<'a> MpUIntSlice for MpLittleEndianUIntByteSlice<'a> {
 impl<'a> fmt::LowerHex for MpLittleEndianUIntByteSlice<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_lower_hex(f)
+    }
+}
+
+impl<'a, 'b> From<&'a MpMutLittleEndianUIntByteSlice<'b>> for MpLittleEndianUIntByteSlice<'a> {
+    fn from(value: &'a MpMutLittleEndianUIntByteSlice<'b>) -> Self {
+        Self { bytes: value.bytes }
     }
 }
 
@@ -1565,6 +1577,12 @@ impl<'a> MpUIntSlice for MpNativeEndianUIntLimbsSlice<'a> {
 impl<'a> fmt::LowerHex for MpNativeEndianUIntLimbsSlice<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_lower_hex(f)
+    }
+}
+
+impl<'a, 'b> From<&'a MpMutNativeEndianUIntLimbsSlice<'b>> for MpNativeEndianUIntLimbsSlice<'a> {
+    fn from(value: &'a MpMutNativeEndianUIntLimbsSlice<'b>) -> Self {
+        Self { limbs: value.limbs }
     }
 }
 
