@@ -1,6 +1,6 @@
 //! Implementation of multiprecision integer addition related primitives.
 
-use super::cmp_impl::{ct_lt_mp_mp, CtGeqMpMpKernel};
+use super::cmp_impl::{ct_is_zero_mp, ct_lt_mp_mp, CtGeqMpMpKernel};
 use super::limb::{
     ct_add_l_l, ct_add_l_l_c, ct_find_last_set_byte_l, ct_sub_l_l, ct_sub_l_l_b, LimbChoice,
     LimbType, LIMB_BITS,
@@ -605,9 +605,9 @@ pub fn ct_sub_mod_mp_mp<T0: MpMutUInt, T1: MpUIntCommon, NT: MpUIntCommon>(
 
 #[cfg(test)]
 fn test_ct_sub_mod_mp_mp<T0: MpMutUIntSlice, T1: MpMutUIntSlice, NT: MpMutUIntSlice>() {
-    use crate::limbs_buffer::MpUIntCommonPriv;
     use super::cmp_impl::ct_eq_mp_mp;
     use super::limb::LIMB_BYTES;
+    use crate::limbs_buffer::MpUIntCommonPriv;
 
     let mut n = tst_mk_mp_backing_vec!(NT, LIMB_BYTES + 1);
     let mut n = NT::from_slice(&mut n).unwrap();
@@ -743,7 +743,7 @@ pub fn ct_negate_cond_mp<T0: MpMutUInt>(op0: &mut T0, cond: LimbChoice) {
 
 #[cfg(test)]
 fn test_ct_negate_cond_mp<T0: MpMutUIntSlice>() {
-    use super::cmp_impl::{ct_is_one_mp, ct_is_zero_mp};
+    use super::cmp_impl::ct_is_one_mp;
     use super::limb::LIMB_BYTES;
     use super::limbs_buffer::MpUIntCommonPriv as _;
 
@@ -797,4 +797,103 @@ fn test_ct_negate_cond_le() {
 fn test_ct_negate_cond_ne() {
     use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
     test_ct_negate_cond_mp::<MpMutNativeEndianUIntLimbsSlice>()
+}
+
+pub fn ct_negate_mp<T0: MpMutUInt>(op0: &mut T0) {
+    ct_negate_cond_mp(op0, LimbChoice::from(1))
+}
+
+pub type CtNegateModMpError = CtAddModMpMpError;
+
+pub fn ct_negate_mod_mp<T0: MpMutUInt, NT: MpUIntCommon>(
+    op0: &mut T0,
+    n: &NT,
+) -> Result<(), CtNegateModMpError> {
+    if !n.len_is_compatible_with(op0.len()) {
+        return Err(CtNegateModMpError::InconsistentOperandLengths);
+    }
+    debug_assert_ne!(ct_lt_mp_mp(op0, n).unwrap(), 0);
+
+    let op0_is_nonzero = !ct_is_zero_mp(op0);
+    ct_negate_cond_mp(op0, op0_is_nonzero);
+    ct_add_cond_mp_mp(op0, n, op0_is_nonzero);
+    Ok(())
+}
+
+#[cfg(test)]
+fn test_ct_negate_mod_mp<T0: MpMutUIntSlice, NT: MpMutUIntSlice>() {
+    use super::limb::LIMB_BYTES;
+    use crate::limbs_buffer::MpUIntCommonPriv;
+    use crate::shift_impl::ct_rshift_mp;
+
+    let n_max_len = T0::n_backing_elements_for_len(LIMB_BYTES + 1) * NT::BACKING_ELEMENT_SIZE;
+    for n_len in 1..n_max_len {
+        let mut n = tst_mk_mp_backing_vec!(NT, n_len);
+        let mut n = NT::from_slice(&mut n).unwrap();
+        let mut n_limb_val = 0;
+        for _ in 0..LIMB_BYTES {
+            n_limb_val <<= 8;
+            n_limb_val |= 0xcc;
+        }
+        for i in 0..n.nlimbs() {
+            if i != n.nlimbs() - 1 {
+                n.store_l_full(i, n_limb_val);
+            } else {
+                n.store_l(i, n_limb_val & n.partial_high_mask());
+            }
+        }
+
+        let mut op0 = tst_mk_mp_backing_vec!(T0, n.len());
+        let mut op0 = T0::from_slice(&mut op0).unwrap();
+        let mut result = tst_mk_mp_backing_vec!(T0, n.len());
+        let mut result = T0::from_slice(&mut result).unwrap();
+
+        // Negate a zero.
+        ct_negate_mod_mp(&mut result, &n).unwrap();
+        assert_ne!(ct_is_zero_mp(&result).unwrap(), 0);
+
+        // Negate a one.
+        op0.set_to_u8(1);
+        result.copy_from(&op0);
+        ct_negate_mod_mp(&mut result, &n).unwrap();
+        // Adding the original value should result in a sum of zero.
+        ct_add_mod_mp_mp(&mut result, &op0, &n).unwrap();
+        assert_ne!(ct_is_zero_mp(&result).unwrap(), 0);
+
+        // Negate n - 1.
+        op0.copy_from(&n);
+        ct_sub_mp_l(&mut op0, 1);
+        result.copy_from(&op0);
+        ct_negate_mod_mp(&mut result, &n).unwrap();
+        // Adding the original value should result in a sum of zero.
+        ct_add_mod_mp_mp(&mut result, &op0, &n).unwrap();
+        assert_ne!(ct_is_zero_mp(&result).unwrap(), 0);
+
+        // Negate n / 2.
+        op0.copy_from(&n);
+        ct_rshift_mp(&mut op0, 1);
+        result.copy_from(&op0);
+        ct_negate_mod_mp(&mut result, &n).unwrap();
+        // Adding the original value should result in a sum of zero.
+        ct_add_mod_mp_mp(&mut result, &op0, &n).unwrap();
+        assert_ne!(ct_is_zero_mp(&result).unwrap(), 0);
+    }
+}
+
+#[test]
+fn test_ct_negate_mod_be() {
+    use super::limbs_buffer::MpMutBigEndianUIntByteSlice;
+    test_ct_negate_mod_mp::<MpMutBigEndianUIntByteSlice, MpMutBigEndianUIntByteSlice>()
+}
+
+#[test]
+fn test_ct_negate_mod_le() {
+    use super::limbs_buffer::MpMutLittleEndianUIntByteSlice;
+    test_ct_negate_mod_mp::<MpMutLittleEndianUIntByteSlice, MpMutLittleEndianUIntByteSlice>()
+}
+
+#[test]
+fn test_ct_negate_mod_ne() {
+    use super::limbs_buffer::MpMutNativeEndianUIntLimbsSlice;
+    test_ct_negate_mod_mp::<MpMutNativeEndianUIntLimbsSlice, MpMutNativeEndianUIntLimbsSlice>()
 }

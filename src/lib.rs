@@ -36,7 +36,8 @@ pub use limbs_buffer::{
 
 pub use add_impl::{
     ct_add_cond_mp_mp, ct_add_mod_mp_mp, ct_add_mp_l, ct_add_mp_mp, ct_negate_cond_mp,
-    ct_sub_mod_mp_mp, ct_sub_mp_l, ct_sub_mp_mp, CtAddModMpMpError, CtSubModMpMpError,
+    ct_negate_mod_mp, ct_negate_mp, ct_sub_mod_mp_mp, ct_sub_mp_l, ct_sub_mp_mp, CtAddModMpMpError,
+    CtNegateModMpError, CtSubModMpMpError,
 };
 
 pub use cmp_impl::{
