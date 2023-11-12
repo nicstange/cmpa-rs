@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2023 SUSE LLC
+// Author: Nicolai Stange <nstange@suse.de>
+
 use core::array;
 
 use super::cmp_impl::{ct_gt_mp_mp, ct_is_one_mp, ct_is_zero_mp, ct_lt_mp_mp, CtGeqMpMpKernel};

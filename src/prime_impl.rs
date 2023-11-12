@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2023 SUSE LLC
+// Author: Nicolai Stange <nstange@suse.de>
+
 use super::cmp_impl::{ct_is_one_mp, ct_leq_mp_l, ct_lt_mp_mp};
 use super::div_impl::ct_mod_mp_l;
 use super::euclid_impl::ct_gcd_odd_mp_mp;

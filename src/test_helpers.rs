@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2023 SUSE LLC
+// Author: Nicolai Stange <nstange@suse.de>
+
 #![macro_use]
 
 macro_rules! tst_mk_mp_backing_vec {

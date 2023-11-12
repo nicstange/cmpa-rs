@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2023 SUSE LLC
+// Author: Nicolai Stange <nstange@suse.de>
+
 //! Basic arithmetic primitive implementations optimized for the x86_64
 //! architecture.
 //!

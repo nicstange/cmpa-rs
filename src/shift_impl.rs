@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2023 SUSE LLC
+// Author: Nicolai Stange <nstange@suse.de>
+
 use super::limb::{ct_lsb_mask_l, LimbType, LIMB_BITS};
 #[cfg(test)]
 use super::limbs_buffer::MpMutUIntSlice;

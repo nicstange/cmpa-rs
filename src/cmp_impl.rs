@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2023 SUSE LLC
+// Author: Nicolai Stange <nstange@suse.de>
+
 //! Implementation of multiprecision integer comparison primitives.
 
 use super::limb::{ct_is_zero_l, ct_leq_l_l, ct_lt_or_eq_l_l, LimbChoice, LimbType};

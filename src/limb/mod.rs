@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2023 SUSE LLC
+// Author: Nicolai Stange <nstange@suse.de>
+
 //! Definitions and arithmetic primitives related to [LimbType], the basic unit
 //! of multiprecision integer arithmetic.
 use core::arch::asm;
