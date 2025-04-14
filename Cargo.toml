@@ -6,9 +6,9 @@ edition = "2021"
 [features]
 default = ["enable_arch_math_asm", "zeroize"]
 enable_arch_math_asm = []
-zeroize = []
+zeroize = ["dep:zeroize"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-zeroize = { version = "1.6.0", default-features = false }
+zeroize = { version = "1.8.1", optional = true, default-features = false }
