@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2023 SUSE LLC
+// Copyright 2023-2025 SUSE LLC
 // Author: Nicolai Stange <nstange@suse.de>
 
 //! Accessors for multiprecision integers as stored in byte buffers of certain
@@ -1014,7 +1014,10 @@ pub trait MpMutUInt: MpUIntCommon {
             let val = cond.select(self.load_l_full(i), src.load_l_full(i));
             self.store_l_full(i, val);
         }
-        let high_limb = cond.select(self.load_l(common_nlimbs - 1), src.load_l(common_nlimbs - 1));
+        let high_limb = cond.select(
+            self.load_l(common_nlimbs - 1),
+            src.load_l(common_nlimbs - 1),
+        );
         debug_assert!(src_nlimbs < dst_nlimbs || (high_limb & !self.partial_high_mask()) == 0);
         self.store_l(common_nlimbs - 1, high_limb);
         self.clear_bytes_above_cond(src.len(), cond);
@@ -1115,6 +1118,7 @@ pub trait MpMutUIntSlice: MpMutUIntSlicePriv + MpMutUInt {
     }
 }
 
+#[derive(Clone)]
 pub struct MpBigEndianUIntByteSlice<'a> {
     bytes: &'a [u8],
 }
@@ -1168,7 +1172,10 @@ impl<'a> MpUIntSliceCommonPriv for MpBigEndianUIntByteSlice<'a> {
 impl<'a> MpUIntSliceCommon for MpBigEndianUIntByteSlice<'a> {}
 
 impl<'a> MpUIntSlicePriv for MpBigEndianUIntByteSlice<'a> {
-    type SelfT<'b> = MpBigEndianUIntByteSlice<'b> where Self: 'b;
+    type SelfT<'b>
+        = MpBigEndianUIntByteSlice<'b>
+    where
+        Self: 'b;
 
     type FromSliceError = convert::Infallible;
 
@@ -1201,6 +1208,12 @@ impl<'a> fmt::LowerHex for MpBigEndianUIntByteSlice<'a> {
 impl<'a, 'b> From<&'a MpMutBigEndianUIntByteSlice<'b>> for MpBigEndianUIntByteSlice<'a> {
     fn from(value: &'a MpMutBigEndianUIntByteSlice<'b>) -> Self {
         Self { bytes: value.bytes }
+    }
+}
+
+impl<'a> From<MpBigEndianUIntByteSlice<'a>> for &'a [u8] {
+    fn from(value: MpBigEndianUIntByteSlice<'a>) -> Self {
+        value.bytes
     }
 }
 
@@ -1273,7 +1286,10 @@ impl<'a> MpUIntSliceCommonPriv for MpMutBigEndianUIntByteSlice<'a> {
 impl<'a> MpUIntSliceCommon for MpMutBigEndianUIntByteSlice<'a> {}
 
 impl<'a> MpMutUIntSlicePriv for MpMutBigEndianUIntByteSlice<'a> {
-    type SelfT<'b> = MpMutBigEndianUIntByteSlice<'b> where Self: 'b;
+    type SelfT<'b>
+        = MpMutBigEndianUIntByteSlice<'b>
+    where
+        Self: 'b;
 
     type FromSliceError = convert::Infallible;
 
@@ -1303,6 +1319,19 @@ impl<'a> fmt::LowerHex for MpMutBigEndianUIntByteSlice<'a> {
     }
 }
 
+impl<'a, 'b> From<&'a mut MpMutBigEndianUIntByteSlice<'b>> for &'a mut [u8] {
+    fn from(value: &'a mut MpMutBigEndianUIntByteSlice<'b>) -> Self {
+        &mut value.bytes
+    }
+}
+
+impl<'a, 'b> From<&'a MpMutBigEndianUIntByteSlice<'b>> for &'a [u8] {
+    fn from(value: &'a MpMutBigEndianUIntByteSlice<'b>) -> Self {
+        &value.bytes
+    }
+}
+
+#[derive(Clone)]
 pub struct MpLittleEndianUIntByteSlice<'a> {
     bytes: &'a [u8],
 }
@@ -1356,7 +1385,10 @@ impl<'a> MpUIntSliceCommonPriv for MpLittleEndianUIntByteSlice<'a> {
 impl<'a> MpUIntSliceCommon for MpLittleEndianUIntByteSlice<'a> {}
 
 impl<'a> MpUIntSlicePriv for MpLittleEndianUIntByteSlice<'a> {
-    type SelfT<'b> = MpLittleEndianUIntByteSlice<'b> where Self: 'b;
+    type SelfT<'b>
+        = MpLittleEndianUIntByteSlice<'b>
+    where
+        Self: 'b;
 
     type FromSliceError = convert::Infallible;
 
@@ -1389,6 +1421,12 @@ impl<'a> fmt::LowerHex for MpLittleEndianUIntByteSlice<'a> {
 impl<'a, 'b> From<&'a MpMutLittleEndianUIntByteSlice<'b>> for MpLittleEndianUIntByteSlice<'a> {
     fn from(value: &'a MpMutLittleEndianUIntByteSlice<'b>) -> Self {
         Self { bytes: value.bytes }
+    }
+}
+
+impl<'a> From<MpLittleEndianUIntByteSlice<'a>> for &'a [u8] {
+    fn from(value: MpLittleEndianUIntByteSlice<'a>) -> Self {
+        value.bytes
     }
 }
 
@@ -1461,7 +1499,10 @@ impl<'a> MpUIntSliceCommonPriv for MpMutLittleEndianUIntByteSlice<'a> {
 impl<'a> MpUIntSliceCommon for MpMutLittleEndianUIntByteSlice<'a> {}
 
 impl<'a> MpMutUIntSlicePriv for MpMutLittleEndianUIntByteSlice<'a> {
-    type SelfT<'b> = MpMutLittleEndianUIntByteSlice<'b> where Self: 'b;
+    type SelfT<'b>
+        = MpMutLittleEndianUIntByteSlice<'b>
+    where
+        Self: 'b;
 
     type FromSliceError = convert::Infallible;
 
@@ -1488,6 +1529,18 @@ impl<'a> MpMutUIntSlice for MpMutLittleEndianUIntByteSlice<'a> {
 impl<'a> fmt::LowerHex for MpMutLittleEndianUIntByteSlice<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_lower_hex(f)
+    }
+}
+
+impl<'a, 'b> From<&'a mut MpMutLittleEndianUIntByteSlice<'b>> for &'a mut [u8] {
+    fn from(value: &'a mut MpMutLittleEndianUIntByteSlice<'b>) -> Self {
+        &mut value.bytes
+    }
+}
+
+impl<'a, 'b> From<&'a MpMutLittleEndianUIntByteSlice<'b>> for &'a [u8] {
+    fn from(value: &'a MpMutLittleEndianUIntByteSlice<'b>) -> Self {
+        &value.bytes
     }
 }
 
@@ -1553,7 +1606,10 @@ impl<'a> MpUIntSliceCommonPriv for MpNativeEndianUIntLimbsSlice<'a> {
 impl<'a> MpUIntSliceCommon for MpNativeEndianUIntLimbsSlice<'a> {}
 
 impl<'a> MpUIntSlicePriv for MpNativeEndianUIntLimbsSlice<'a> {
-    type SelfT<'b> = MpNativeEndianUIntLimbsSlice<'b> where Self: 'b;
+    type SelfT<'b>
+        = MpNativeEndianUIntLimbsSlice<'b>
+    where
+        Self: 'b;
 
     type FromSliceError = convert::Infallible;
 
@@ -1690,7 +1746,10 @@ impl<'a> MpUIntSliceCommonPriv for MpMutNativeEndianUIntLimbsSlice<'a> {
 impl<'a> MpUIntSliceCommon for MpMutNativeEndianUIntLimbsSlice<'a> {}
 
 impl<'a> MpMutUIntSlicePriv for MpMutNativeEndianUIntLimbsSlice<'a> {
-    type SelfT<'b> = MpMutNativeEndianUIntLimbsSlice<'b> where Self: 'b;
+    type SelfT<'b>
+        = MpMutNativeEndianUIntLimbsSlice<'b>
+    where
+        Self: 'b;
 
     type FromSliceError = convert::Infallible;
 
