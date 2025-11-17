@@ -1186,7 +1186,9 @@ impl<'a> MpUIntSlicePriv for MpBigEndianUIntByteSlice<'a> {
     }
 
     fn _shrink_to(&self, nbytes: usize) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes.split_at(self.bytes.len() - nbytes).1).unwrap()
+        MpBigEndianUIntByteSlice {
+            bytes: &self.bytes[self.bytes.len() - nbytes..],
+        }
     }
 }
 
@@ -1297,7 +1299,10 @@ impl<'a> MpMutUIntSlicePriv for MpMutBigEndianUIntByteSlice<'a> {
     }
 
     fn _shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes.split_at_mut(self.bytes.len() - nbytes).1).unwrap()
+        let l = self.bytes.len();
+        MpMutBigEndianUIntByteSlice {
+            bytes: &mut self.bytes[l - nbytes..],
+        }
     }
 }
 
@@ -1395,7 +1400,9 @@ impl<'a> MpUIntSlicePriv for MpLittleEndianUIntByteSlice<'a> {
     }
 
     fn _shrink_to(&self, nbytes: usize) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes.split_at(nbytes).0).unwrap()
+        MpLittleEndianUIntByteSlice {
+            bytes: &self.bytes[..nbytes],
+        }
     }
 }
 
@@ -1506,7 +1513,9 @@ impl<'a> MpMutUIntSlicePriv for MpMutLittleEndianUIntByteSlice<'a> {
     }
 
     fn _shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes.split_at_mut(nbytes).0).unwrap()
+        MpMutLittleEndianUIntByteSlice {
+            bytes: &mut self.bytes[..nbytes],
+        }
     }
 }
 
@@ -1613,7 +1622,9 @@ impl<'a> MpUIntSlicePriv for MpNativeEndianUIntLimbsSlice<'a> {
 
     fn _shrink_to(&self, nbytes: usize) -> Self::SelfT<'_> {
         let nlimbs = Self::n_backing_elements_for_len(nbytes);
-        Self::from_slice(self.limbs.split_at(nlimbs).0).unwrap()
+        MpNativeEndianUIntLimbsSlice {
+            limbs: &self.limbs[..nlimbs],
+        }
     }
 }
 
@@ -1748,7 +1759,9 @@ impl<'a> MpMutUIntSlicePriv for MpMutNativeEndianUIntLimbsSlice<'a> {
 
     fn _shrink_to(&mut self, nbytes: usize) -> Self::SelfT<'_> {
         let nlimbs = Self::n_backing_elements_for_len(nbytes);
-        Self::from_slice(self.limbs.split_at_mut(nlimbs).0).unwrap()
+        MpMutNativeEndianUIntLimbsSlice {
+            limbs: &mut self.limbs[..nlimbs],
+        }
     }
 }
 
