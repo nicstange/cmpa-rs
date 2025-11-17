@@ -1192,7 +1192,7 @@ impl<'a> MpUIntSlicePriv for MpBigEndianUIntByteSlice<'a> {
 
 impl<'a> MpUIntSlice for MpBigEndianUIntByteSlice<'a> {
     fn coerce_lifetime(&self) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes).unwrap()
+        MpBigEndianUIntByteSlice { bytes: &self.bytes }
     }
 }
 
@@ -1303,7 +1303,9 @@ impl<'a> MpMutUIntSlicePriv for MpMutBigEndianUIntByteSlice<'a> {
 
 impl<'a> MpMutUIntSlice for MpMutBigEndianUIntByteSlice<'a> {
     fn coerce_lifetime(&mut self) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes).unwrap()
+        MpMutBigEndianUIntByteSlice {
+            bytes: &mut self.bytes,
+        }
     }
 }
 
@@ -1399,7 +1401,7 @@ impl<'a> MpUIntSlicePriv for MpLittleEndianUIntByteSlice<'a> {
 
 impl<'a> MpUIntSlice for MpLittleEndianUIntByteSlice<'a> {
     fn coerce_lifetime(&self) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes).unwrap()
+        MpLittleEndianUIntByteSlice { bytes: &self.bytes }
     }
 }
 
@@ -1510,7 +1512,9 @@ impl<'a> MpMutUIntSlicePriv for MpMutLittleEndianUIntByteSlice<'a> {
 
 impl<'a> MpMutUIntSlice for MpMutLittleEndianUIntByteSlice<'a> {
     fn coerce_lifetime(&mut self) -> Self::SelfT<'_> {
-        Self::from_slice(self.bytes).unwrap()
+        MpMutLittleEndianUIntByteSlice {
+            bytes: &mut self.bytes,
+        }
     }
 }
 
@@ -1615,7 +1619,7 @@ impl<'a> MpUIntSlicePriv for MpNativeEndianUIntLimbsSlice<'a> {
 
 impl<'a> MpUIntSlice for MpNativeEndianUIntLimbsSlice<'a> {
     fn coerce_lifetime(&self) -> Self::SelfT<'_> {
-        Self::from_slice(self.limbs).unwrap()
+        MpNativeEndianUIntLimbsSlice { limbs: &self.limbs }
     }
 }
 
@@ -1750,7 +1754,9 @@ impl<'a> MpMutUIntSlicePriv for MpMutNativeEndianUIntLimbsSlice<'a> {
 
 impl<'a> MpMutUIntSlice for MpMutNativeEndianUIntLimbsSlice<'a> {
     fn coerce_lifetime(&mut self) -> Self::SelfT<'_> {
-        Self::from_slice(self.limbs).unwrap()
+        MpMutNativeEndianUIntLimbsSlice {
+            limbs: &mut self.limbs,
+        }
     }
 }
 
