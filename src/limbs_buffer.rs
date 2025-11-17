@@ -1127,6 +1127,10 @@ impl<'a> MpBigEndianUIntByteSlice<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> Self {
         Self { bytes }
     }
+
+    pub fn as_bytes<'b>(&'b self) -> &'b [u8] {
+        &self.bytes
+    }
 }
 
 impl<'a> MpUIntCommonPriv for MpBigEndianUIntByteSlice<'a> {
@@ -1223,6 +1227,14 @@ pub struct MpMutBigEndianUIntByteSlice<'a> {
 impl<'a> MpMutBigEndianUIntByteSlice<'a> {
     pub fn from_bytes(bytes: &'a mut [u8]) -> Self {
         Self { bytes }
+    }
+
+    pub fn as_bytes<'b>(&'b self) -> &'b [u8] {
+        &self.bytes
+    }
+
+    pub fn as_bytes_mut<'b>(&'b mut self) -> &'b mut [u8] {
+        &mut self.bytes
     }
 }
 
@@ -1341,6 +1353,10 @@ impl<'a> MpLittleEndianUIntByteSlice<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> Self {
         Self { bytes }
     }
+
+    pub fn as_bytes<'b>(&'b self) -> &'b [u8] {
+        &self.bytes
+    }
 }
 
 impl<'a> MpUIntCommonPriv for MpLittleEndianUIntByteSlice<'a> {
@@ -1437,6 +1453,14 @@ pub struct MpMutLittleEndianUIntByteSlice<'a> {
 impl<'a> MpMutLittleEndianUIntByteSlice<'a> {
     pub fn from_bytes(bytes: &'a mut [u8]) -> Self {
         Self { bytes }
+    }
+
+    pub fn as_bytes<'b>(&'b self) -> &'b [u8] {
+        &self.bytes
+    }
+
+    pub fn as_bytes_mut<'b>(&'b mut self) -> &'b mut [u8] {
+        &mut self.bytes
     }
 }
 
