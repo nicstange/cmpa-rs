@@ -14,8 +14,8 @@
 use core::{self, cmp, convert, fmt, marker, mem, slice};
 
 use super::limb::{
-    ct_find_first_set_bit_l, ct_find_last_set_bit_l, ct_find_last_set_byte_l, ct_is_nonzero_l,
-    ct_is_zero_l, ct_lsb_mask_l, LimbChoice, LimbType, LIMB_BITS, LIMB_BYTES,
+    LIMB_BITS, LIMB_BYTES, LimbChoice, LimbType, ct_find_first_set_bit_l, ct_find_last_set_bit_l,
+    ct_find_last_set_byte_l, ct_is_nonzero_l, ct_is_zero_l, ct_lsb_mask_l,
 };
 use super::usize_ct_cmp::ct_eq_usize_usize;
 
@@ -1124,11 +1124,8 @@ pub struct MpBigEndianUIntByteSlice<'a> {
 }
 
 impl<'a> MpBigEndianUIntByteSlice<'a> {
-    pub fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> <Self as MpUIntSlicePriv>::SelfT<'c>
-    where
-        Self: 'c,
-    {
-        Self::from_slice(bytes).unwrap()
+    pub fn from_bytes(bytes: &'a [u8]) -> Self {
+        Self { bytes }
     }
 }
 
@@ -1222,11 +1219,8 @@ pub struct MpMutBigEndianUIntByteSlice<'a> {
 }
 
 impl<'a> MpMutBigEndianUIntByteSlice<'a> {
-    pub fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> <Self as MpMutUIntSlicePriv>::SelfT<'c>
-    where
-        Self: 'c,
-    {
-        Self::from_slice(bytes).unwrap()
+    pub fn from_bytes(bytes: &'a mut [u8]) -> Self {
+        Self { bytes }
     }
 }
 
@@ -1337,11 +1331,8 @@ pub struct MpLittleEndianUIntByteSlice<'a> {
 }
 
 impl<'a> MpLittleEndianUIntByteSlice<'a> {
-    pub fn from_bytes<'b: 'c, 'c>(bytes: &'b [u8]) -> <Self as MpUIntSlicePriv>::SelfT<'c>
-    where
-        Self: 'c,
-    {
-        Self::from_slice(bytes).unwrap()
+    pub fn from_bytes(bytes: &'a [u8]) -> Self {
+        Self { bytes }
     }
 }
 
@@ -1435,11 +1426,8 @@ pub struct MpMutLittleEndianUIntByteSlice<'a> {
 }
 
 impl<'a> MpMutLittleEndianUIntByteSlice<'a> {
-    pub fn from_bytes<'b: 'c, 'c>(bytes: &'b mut [u8]) -> <Self as MpMutUIntSlicePriv>::SelfT<'c>
-    where
-        Self: 'c,
-    {
-        Self::from_slice(bytes).unwrap()
+    pub fn from_bytes(bytes: &'a mut [u8]) -> Self {
+        Self { bytes }
     }
 }
 
@@ -1549,11 +1537,8 @@ pub struct MpNativeEndianUIntLimbsSlice<'a> {
 }
 
 impl<'a> MpNativeEndianUIntLimbsSlice<'a> {
-    pub fn from_limbs<'b: 'c, 'c>(limbs: &'b [LimbType]) -> <Self as MpUIntSlicePriv>::SelfT<'c>
-    where
-        Self: 'c,
-    {
-        Self::from_slice(limbs).unwrap()
+    pub fn from_limbs(limbs: &'a [LimbType]) -> Self {
+        Self { limbs }
     }
 
     pub fn nlimbs_for_len(nbytes: usize) -> usize {
@@ -1651,13 +1636,8 @@ pub struct MpMutNativeEndianUIntLimbsSlice<'a> {
 }
 
 impl<'a> MpMutNativeEndianUIntLimbsSlice<'a> {
-    pub fn from_limbs<'b: 'c, 'c>(
-        limbs: &'b mut [LimbType],
-    ) -> <Self as MpMutUIntSlicePriv>::SelfT<'c>
-    where
-        Self: 'c,
-    {
-        Self::from_slice(limbs).unwrap()
+    pub fn from_limbs(limbs: &'a mut [LimbType]) -> Self {
+        Self { limbs }
     }
 
     pub fn nlimbs_for_len(nbytes: usize) -> usize {
