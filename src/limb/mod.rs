@@ -1081,10 +1081,10 @@ impl LDivisorPrivate for CtLDivisor {
         // 2^(LIMB_BITS). Dismissing this carry is equivalent to a subtracting
         // 2^(LIMB_BITS). So, n_adj will equal
         // u10 + u1 * v_norm
-        // = u1 * 2^(LIMB_BITS - 1) + u0 * (LIMB_BITS - l) + u1 * v_norm
+        // = u1 * 2^(LIMB_BITS - 1) + u0 * 2^(LIMB_BITS - l) + u1 * v_norm
         // = u1 * (2^(LIMB_BITS - 1) + v_norm) + u0 * ...
         // = u1 * (2^LIMB_BITS + v_norm - 2^(LIMB_BITS - 1)) + u0 * ...
-        // and, after dismisiing the carry
+        // and, after dismissing the carry
         // = u1 * (v_norm - 2^(LIMB_BITS - 1)) + u0 * ...
         let n_adj = u10.wrapping_add(LimbChoice::from(u1).select(0, v_norm));
 
