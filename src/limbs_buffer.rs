@@ -1128,7 +1128,7 @@ impl<'a> MpBigEndianUIntByteSlice<'a> {
         Self { bytes }
     }
 
-    pub fn as_bytes<'b>(&'b self) -> &'b [u8] {
+    pub fn as_bytes(&self) -> &'a [u8] {
         &self.bytes
     }
 }
@@ -1354,7 +1354,7 @@ impl<'a> MpLittleEndianUIntByteSlice<'a> {
         Self { bytes }
     }
 
-    pub fn as_bytes<'b>(&'b self) -> &'b [u8] {
+    pub fn as_bytes(&self) -> &'a [u8] {
         &self.bytes
     }
 }
