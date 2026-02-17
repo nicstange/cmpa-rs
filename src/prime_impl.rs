@@ -625,14 +625,15 @@ impl PrimeWheelSieveLvl0 {
     const PRIMORIAL: u8 = first_primes_primorial(Self::PRIMORIAL_NFACTORS) as u8;
 
     const fn assert_all_offsets_are_first_primes() {
-        // The next prime not a factor of the level 0 primorial squared is >= the
-        // primorial. It follows that all numbers less than the primorial have a
-        // square root < that next prime. It follows in turn that any composite
-        // number < the primorial has factors only < that next prime, i.e.
-        // exactly the factors of the primorial. For the wheel sieve in general, the set
-        // of offsets is defined to be the set of numbers < the primorial, that have no
-        // factor in common with it. By the preceeding, these cannot be
-        // composite, i.e. must be prime.
+        // By choice of parameters, the next prime not a factor of the level 0 primorial
+        // squared is >= the primorial. It follows that all numbers less than
+        // the primorial have a square root < that next prime. It follows in
+        // turn that any composite number < the primorial has at
+        // least one factor < that next prime, i.e. some common factor with the
+        // primorial. For the wheel sieve in general, the set of offsets is
+        // defined to be the set of numbers < the primorial, that have no factor
+        // in common with it. By the preceeding, these cannot be composite, i.e.
+        // must be prime.
         assert!(
             (FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64
                 * FIRST_PRIMES[Self::PRIMORIAL_NFACTORS] as u64)
