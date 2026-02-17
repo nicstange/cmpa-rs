@@ -585,11 +585,11 @@ fn test_cnst_find_first_ge_than() {
 }
 
 // Maximum number of primorial factors such that the result is <= max.
-const fn first_primes_primorial_nfactors_for_max(max: u64) -> usize {
-    let mut prod: u64 = 1;
+const fn first_primes_primorial_nfactors_for_max(max: LimbType) -> usize {
+    let mut prod: LimbType = 1;
     let mut n = 0;
     while n < FIRST_PRIMES.len() {
-        let next_p = FIRST_PRIMES[n] as u64;
+        let next_p = FIRST_PRIMES[n] as LimbType;
         if max / next_p < prod {
             break;
         }
@@ -601,7 +601,7 @@ const fn first_primes_primorial_nfactors_for_max(max: u64) -> usize {
 }
 
 const fn first_primes_primorial(n: usize) -> LimbType {
-    debug_assert!(n <= first_primes_primorial_nfactors_for_max(u64::MAX));
+    debug_assert!(n <= first_primes_primorial_nfactors_for_max(LimbType::MAX));
     let mut prod: LimbType = 1;
     let mut i = 0;
     while i < n {
@@ -772,7 +772,7 @@ pub struct PrimeWheelSieveLvl1 {
 }
 
 impl PrimeWheelSieveLvl1 {
-    const PRIMORIAL_NFACTORS: usize = first_primes_primorial_nfactors_for_max(!(0 as LimbType));
+    const PRIMORIAL_NFACTORS: usize = first_primes_primorial_nfactors_for_max(LimbType::MAX);
     const PRIMORIAL: LimbType = first_primes_primorial(Self::PRIMORIAL_NFACTORS);
 
     pub fn start_geq_than<LBT: MpUIntCommon>(lower_bound: &LBT) -> Self {
